@@ -195,7 +195,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val textView: TextView = view.findViewById(R.id.detailTextView)
 
         private val patternsForZwspInsertion = listOf(
-            Regex("(\\d+)</strong>") to "$1$zwsp</strong>", 
+            Regex("(\\d+)</strong>") to "$1$zwsp", 
             Regex("(無念)") to "$1$zwsp",
             Regex("(Name)") to "$1$zwsp",
             Regex("(としあき)") to "$1$zwsp",
@@ -370,6 +370,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             textView.text = spannableBuilder
             textView.movementMethod = object : LinkMovementMethod() { 
                 override fun handleMovementKey(widget: TextView?, buffer: Spannable?, keyCode: Int, movementMetaState: Int, event: KeyEvent?): Boolean {
+                    // Per documentation, returning false for unhandled keys is fine for LinkMovementMethod.
+                    // This can prevent focus issues with RecyclerView items if not handled carefully.
                     return false 
                 }
 
@@ -389,46 +391,62 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val layout = widget.layout
                         val line = layout.getLineForVertical(y)
                         if (line < 0 || line >= layout.lineCount) {
+                            Log.d("CustomLinkMovement", "Invalid line: $line")
                             return super.onTouchEvent(widget, buffer, event)
                         }
                         val off = layout.getOffsetForHorizontal(line, x.toFloat())
                          if (off < 0 || off > buffer.length) { 
+                             Log.d("CustomLinkMovement", "Invalid offset: $off, buffer length: ${buffer.length}")
                              return super.onTouchEvent(widget, buffer, event)
                         }
 
                         val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
+                        Log.d("LinkMovementMethod", "onTouchEvent: Found ${spans.size} spans at position.") // ★ログ1
+                        spans.forEachIndexed { index, span ->
+                            Log.d("LinkMovementMethod", "  Span $index: ${span.javaClass.simpleName}, Text: '${buffer.subSequence(buffer.getSpanStart(span), buffer.getSpanEnd(span))}'") // ★ログ2
+                        }
+
                         if (spans.isNotEmpty()) {
-                            Log.d("CustomLinkMovement", "Found ${spans.size} ClickableSpan(s) at offset $off.")
                             val sodaNeSpan = spans.firstOrNull { it is SodaNeClickableSpan }
                             if (sodaNeSpan != null) {
-                                Log.d("CustomLinkMovement", "Handling SodaNeClickableSpan: $sodaNeSpan")
+                                Log.d("LinkMovementMethod", "onTouchEvent: SodaNeClickableSpan will be clicked.") // ★ログ3
                                 sodaNeSpan.onClick(widget)
                                 return true
                             }
-                            
-                            val urlSpan = spans.firstOrNull { it is URLSpan }
+
+                            val urlSpan = spans.firstOrNull { it is URLSpan } 
                             if (urlSpan != null) {
-                                val url = (urlSpan as URLSpan).url
-                                Log.d("CustomLinkMovement", "Found URLSpan with URL: $url")
-                                if (url != null && url.startsWith("javascript:")) {
-                                    Log.d("CustomLinkMovement", "Ignoring javascript: link: $url")
-                                } else {
-                                    Log.d("CustomLinkMovement", "Handling URLSpan: $url")
+                                val urlValue =  (urlSpan as URLSpan).getURL()
+                                if (urlValue != null && !urlValue.startsWith("javascript:")) {
+                                    Log.d("LinkMovementMethod", "onTouchEvent: URLSpan will be clicked: $urlValue") // ★ログ4
                                     urlSpan.onClick(widget)
+                                    return true
+                                } else {
+                                    Log.d("LinkMovementMethod", "onTouchEvent: JavaScript URLSpan found and skipped: $urlValue") // ★ログ5
                                 }
-                                return true
                             }
 
-                            val otherClickableSpan = spans.firstOrNull { it !is SodaNeClickableSpan && it !is URLSpan }
-                            if (otherClickableSpan != null) {
-                                Log.d("CustomLinkMovement", "Handling other ClickableSpan: $otherClickableSpan")
-                                otherClickableSpan.onClick(widget)
+                            val otherClickableSpans = spans
+                                .filter { it !is SodaNeClickableSpan && !(it is URLSpan && (it as URLSpan).url?.startsWith("javascript:") == false) }
+                             Log.d("LinkMovementMethod", "onTouchEvent: Filtered otherClickableSpans count: ${otherClickableSpans.size}") // ★ログ6
+
+                            val target = otherClickableSpans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
+
+                            if (target != null) {
+                                Log.d("LinkMovementMethod", "onTouchEvent: Target ClickableSpan (minByOrNull) will be clicked. Type: ${target.javaClass.simpleName}, Text: '${buffer.subSequence(buffer.getSpanStart(target), buffer.getSpanEnd(target))}'") // ★ログ7
+                                target.onClick(widget)
                                 return true
+                            } else {
+                                Log.d("LinkMovementMethod", "onTouchEvent: No specific target found after filtering.") // ★ログ8
+                                // Fallback if only javascript URL or no specific span was found
+                                if (urlSpan != null && (urlSpan as URLSpan).url?.startsWith("javascript:") == true) {
+                                    // Potentially handle javascript: if needed, or just consume the event
+                                    Log.d("LinkMovementMethod", "Fallback: Consuming event for javascript: URL span.")
+                                    return true // Event consumed
+                                }
                             }
-                            spans.first().onClick(widget) 
-                            return true
                         } else {
-                            Log.d("CustomLinkMovement", "No ClickableSpan found at offset $off")
+                             Log.d("LinkMovementMethod", "onTouchEvent: No spans found at position.") // ★ログ9
                         }
                     }
                     return super.onTouchEvent(widget, buffer, event)
@@ -524,19 +542,45 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     }
                 }
                 promptTextView.text = spannableBuilder
-                promptTextView.movementMethod = LinkMovementMethod.getInstance()
+                // ① LinkMovementMethod を差し替え
+                promptTextView.movementMethod = object : LinkMovementMethod() {
+                    override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
+                        if (event.action == MotionEvent.ACTION_UP) {
+                            var x = event.x.toInt()
+                            var y = event.y.toInt()
+                            x -= widget.totalPaddingLeft
+                            y -= widget.totalPaddingTop
+                            x += widget.scrollX
+                            y += widget.scrollY
+                            val layout = widget.layout
+                            val line = layout.getLineForVertical(y)
+                            val off = layout.getOffsetForHorizontal(line, x.toFloat())
+                            val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
 
-                promptTextView.setOnClickListener {
-                    val context = itemView.context
-                    val intent = Intent(context, MediaViewActivity::class.java)
-                    intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
-                    intent.putExtra(DetailAdapter.EXTRA_TEXT, promptText)
-                    context.startActivity(intent)
+                            // まず ClickableSpan（= ファイル名など）を最優先で処理
+                            if (spans.isNotEmpty()) {
+                                // 最も範囲が短い（=よりピンポイント）Spanを優先
+                                val target = spans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
+                                target?.onClick(widget)
+                                return true
+                            }
+
+                            // ここに来たらリンクが無いタップ → 既存の全文表示にフォールバック
+                            val context = widget.context
+                            val intent = Intent(context, MediaViewActivity::class.java)
+                            intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
+                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString()) // widget.text should be promptText
+                            context.startActivity(intent)
+                            return true
+                        }
+                        return super.onTouchEvent(widget, buffer, event)
+                    }
                 }
+                // ② 既存の setOnClickListener は削除 (この行の上の promptTextView.setOnClickListener { ... } を削除済)
             } else {
                 promptTextView.isVisible = false
                 promptTextView.text = null
-                promptTextView.setOnClickListener(null)
+                // promptTextView.setOnClickListener(null) // 既にOnClickListenerは設定しない方針
             }
 
             imageView.setOnLongClickListener {
@@ -642,19 +686,45 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     }
                 }
                 promptTextView.text = spannableBuilder
-                promptTextView.movementMethod = LinkMovementMethod.getInstance()
+                // ① LinkMovementMethod を差し替え
+                promptTextView.movementMethod = object : LinkMovementMethod() {
+                    override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
+                        if (event.action == MotionEvent.ACTION_UP) {
+                            var x = event.x.toInt()
+                            var y = event.y.toInt()
+                            x -= widget.totalPaddingLeft
+                            y -= widget.totalPaddingTop
+                            x += widget.scrollX
+                            y += widget.scrollY
+                            val layout = widget.layout
+                            val line = layout.getLineForVertical(y)
+                            val off = layout.getOffsetForHorizontal(line, x.toFloat())
+                            val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
 
-                promptTextView.setOnClickListener {
-                    val context = itemView.context
-                    val intent = Intent(context, MediaViewActivity::class.java)
-                    intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
-                    intent.putExtra(DetailAdapter.EXTRA_TEXT, promptText)
-                    context.startActivity(intent)
+                            // まず ClickableSpan（= ファイル名など）を最優先で処理
+                            if (spans.isNotEmpty()) {
+                                // 最も範囲が短い（=よりピンポイント）Spanを優先
+                                val target = spans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
+                                target?.onClick(widget)
+                                return true
+                            }
+
+                            // ここに来たらリンクが無いタップ → 既存の全文表示にフォールバック
+                            val context = widget.context
+                            val intent = Intent(context, MediaViewActivity::class.java)
+                            intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
+                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString()) // widget.text should be promptText
+                            context.startActivity(intent)
+                            return true
+                        }
+                        return super.onTouchEvent(widget, buffer, event)
+                    }
                 }
+                 // ② 既存の setOnClickListener は削除 (この行の上の promptTextView.setOnClickListener { ... } を削除済)
             } else {
                 promptTextView.isVisible = false
                 promptTextView.text = null
-                promptTextView.setOnClickListener(null)
+                // promptTextView.setOnClickListener(null) // 既にOnClickListenerは設定しない方針
             }
 
             playerView.setOnLongClickListener {

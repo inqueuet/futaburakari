@@ -18,6 +18,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.hutaburakari.databinding.ActivityDetailBinding
 import java.util.ArrayDeque
 import android.text.Html // Html.fromHtml のために必要
+import java.util.regex.Pattern
+// kotlin.text.Regex と RegexOption は標準ライブラリのため、通常は明示的なimportは不要
 
 class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
@@ -35,6 +37,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     companion object {
         const val EXTRA_URL = "extra_url"
         private const val REQUEST_CODE_REPLY = 1 // リクエストコードを追加
+        // FILENAME_PATTERN は新しい正規表現に置き換えられるため、ここではコメントアウトまたは削除してもよい
+        // private val FILENAME_PATTERN = Pattern.compile("\\.(png|jpe?g|gif|webp)$", Pattern.CASE_INSENSITIVE)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -194,38 +198,58 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private fun setupRecyclerView() {
         detailAdapter = DetailAdapter()
         layoutManager = LinearLayoutManager(this@DetailActivity)
-        detailAdapter.onQuoteClickListener = customLabel@ {
-            currentQuotedText ->
-            val contentList = viewModel.detailContent.value ?: return@customLabel
-            val currentFirstVisibleItemPosition = layoutManager.findFirstVisibleItemPosition()
-            if (currentFirstVisibleItemPosition != RecyclerView.NO_POSITION) {
-                val firstVisibleItemView = layoutManager.findViewByPosition(currentFirstVisibleItemPosition)
-                val offset = firstVisibleItemView?.top ?: 0
-                if (scrollHistory.size == 2) {
-                    scrollHistory.removeFirst()
-                }
-                scrollHistory.addLast(Pair(currentFirstVisibleItemPosition, offset))
-            }
-            val targetPosition = contentList.indexOfFirst { content ->
-                when (content) {
-                    is DetailContent.Text -> Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(currentQuotedText, ignoreCase = true)
-                    is DetailContent.Image -> {
-                        (content.fileName?.equals(currentQuotedText, ignoreCase = true) == true ||
-                                content.imageUrl.substringAfterLast('/').equals(currentQuotedText, ignoreCase = true) ||
-                                content.prompt?.contains(currentQuotedText, ignoreCase = true) == true)
+        detailAdapter.onQuoteClickListener = clickListenerLambda@{ quotedText ->
+            val mediaExt = setOf("jpg","jpeg","png","gif","webp","webm","mp4","mov","avi","flv","mkv")
+            val isMediaFile = quotedText.substringAfterLast('.', "").lowercase() in mediaExt
+
+            if (isMediaFile) {
+                currentUrl?.let { url ->
+                    val threadId = url.substringAfterLast("/").substringBefore(".htm")
+                    val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                    val boardPostUrl = boardBasePath + "futaba.php"
+
+                    Log.d("DetailActivity", "FileName Clicked (Extension Check): $quotedText")
+                    val intent = Intent(this, ReplyActivity::class.java).apply {
+                        putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
+                        putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+                        putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
+                        putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, ">$quotedText") // Prepend ">" to the filename
                     }
-                    is DetailContent.Video -> {
-                        (content.fileName?.equals(currentQuotedText, ignoreCase = true) == true ||
-                                content.videoUrl.substringAfterLast('/').equals(currentQuotedText, ignoreCase = true) ||
-                                content.prompt?.contains(currentQuotedText, ignoreCase = true) == true)
-                    }
-                    is DetailContent.ThreadEndTime -> false
+                    startActivityForResult(intent, REQUEST_CODE_REPLY)
                 }
-            }
-            if (targetPosition != -1) {
-                binding.detailRecyclerView.smoothScrollToPosition(targetPosition)
             } else {
-                showToastOnUiThread("引用元が見つかりません: $currentQuotedText", Toast.LENGTH_SHORT)
+                // それ以外は既存のスクロール検索に流す
+                val contentList = viewModel.detailContent.value ?: return@clickListenerLambda
+                val currentFirstVisibleItemPosition = layoutManager.findFirstVisibleItemPosition()
+                if (currentFirstVisibleItemPosition != RecyclerView.NO_POSITION) {
+                    val firstVisibleItemView = layoutManager.findViewByPosition(currentFirstVisibleItemPosition)
+                    val offset = firstVisibleItemView?.top ?: 0
+                    if (scrollHistory.size == 2) {
+                        scrollHistory.removeFirst()
+                    }
+                    scrollHistory.addLast(Pair(currentFirstVisibleItemPosition, offset))
+                }
+                val targetPosition = contentList.indexOfFirst { content ->
+                    when (content) {
+                        is DetailContent.Text -> Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(quotedText, ignoreCase = true)
+                        is DetailContent.Image -> {
+                            (content.fileName?.equals(quotedText, ignoreCase = true) == true ||
+                                    content.imageUrl.substringAfterLast('/').equals(quotedText, ignoreCase = true) ||
+                                    content.prompt?.contains(quotedText, ignoreCase = true) == true)
+                        }
+                        is DetailContent.Video -> {
+                            (content.fileName?.equals(quotedText, ignoreCase = true) == true ||
+                                    content.videoUrl.substringAfterLast('/').equals(quotedText, ignoreCase = true) ||
+                                    content.prompt?.contains(quotedText, ignoreCase = true) == true)
+                        }
+                        is DetailContent.ThreadEndTime -> false
+                    }
+                }
+                if (targetPosition != -1) {
+                    binding.detailRecyclerView.smoothScrollToPosition(targetPosition)
+                } else {
+                    showToastOnUiThread("引用元が見つかりません: $quotedText", Toast.LENGTH_SHORT)
+                }
             }
         }
         detailAdapter.onSodaNeClickListener = {
