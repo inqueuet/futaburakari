@@ -10,6 +10,7 @@ import android.view.MenuItem
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat // Added import
 import androidx.core.view.isVisible
@@ -20,6 +21,9 @@ import androidx.media3.ui.PlayerView
 import coil.load
 import com.example.hutaburakari.databinding.ActivityMediaViewBinding // ViewBindingを生成後にインポート
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MediaViewActivity : AppCompatActivity() {
 
@@ -41,6 +45,26 @@ class MediaViewActivity : AppCompatActivity() {
         const val TYPE_TEXT = "text" // プロンプト表示用
     }
 
+    // ActivityResultLauncher for creating a text file
+    private val createTextFileLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri: Uri? ->
+        uri?.let {
+            // Handle the URI for the created file (e.g., write text to it)
+            val textToSave = currentText ?: currentPrompt ?: ""
+            if (textToSave.isNotEmpty()) {
+                try {
+                    contentResolver.openOutputStream(it)?.use { outputStream ->
+                        outputStream.write(textToSave.toByteArray())
+                        Toast.makeText(this, "テキストを保存しました", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(this, "テキストの保存に失敗しました: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Toast.makeText(this, "保存するテキストがありません", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false) // Added for edge-to-edge
@@ -58,7 +82,7 @@ class MediaViewActivity : AppCompatActivity() {
 
         when (currentType) {
             TYPE_IMAGE -> {
-                binding.scrollContainer.isVisible = false // Added
+                binding.scrollContainer.isVisible = false
                 binding.imageView.isVisible = true
                 binding.playerView.isVisible = false
                 binding.textView.isVisible = false
@@ -69,12 +93,11 @@ class MediaViewActivity : AppCompatActivity() {
                         error(android.R.drawable.ic_dialog_alert)
                     }
                 }
-                // 画像の場合はプロンプト(currentText または currentPrompt)をToolbarのSubtitleなどに表示することも検討
                 supportActionBar?.title = "画像ビューア"
                 currentText?.let { supportActionBar?.subtitle = it }
             }
             TYPE_VIDEO -> {
-                binding.scrollContainer.isVisible = false // Added
+                binding.scrollContainer.isVisible = false
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = true
                 binding.textView.isVisible = false
@@ -82,14 +105,13 @@ class MediaViewActivity : AppCompatActivity() {
                 supportActionBar?.title = "動画ビューア"
                 currentText?.let { supportActionBar?.subtitle = it }
             }
-            TYPE_TEXT -> { // プロンプト表示用
-                binding.scrollContainer.isVisible = true // Added
+            TYPE_TEXT -> {
+                binding.scrollContainer.isVisible = true
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = false
                 binding.textView.isVisible = true
                 binding.textView.text = currentText ?: currentPrompt ?: "テキストがありません"
                 supportActionBar?.title = "テキストビューア"
-                // テキストの場合はスクロール可能にするためにScrollViewで囲むことを検討 (レイアウト側で)
             }
             else -> {
                 Toast.makeText(this, "不明なメディアタイプです", Toast.LENGTH_LONG).show()
@@ -109,13 +131,29 @@ class MediaViewActivity : AppCompatActivity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.media_view_menu, menu) // メニューファイルを作成する必要あり
-        // タイプによってメニュー項目を制御する場合はここで
-        menu.findItem(R.id.action_save_media)?.isVisible = (currentType == TYPE_IMAGE || currentType == TYPE_VIDEO)
-        menu.findItem(R.id.action_copy_text)?.isVisible = (currentType == TYPE_TEXT || currentPrompt != null || currentText != null)
-
+        menuInflater.inflate(R.menu.media_view_menu, menu) // Ensure this is media_view_menu.xml
+        when (currentType) {
+            TYPE_TEXT -> {
+                menu.findItem(R.id.action_copy_text)?.isVisible = true
+                menu.findItem(R.id.action_save_text)?.isVisible = true
+                menu.findItem(R.id.action_save_media)?.isVisible = false
+            }
+            TYPE_IMAGE, TYPE_VIDEO -> {
+                // copy_text can be visible if there's a prompt/text associated with image/video
+                val hasTextContent = !(currentText.isNullOrEmpty() && currentPrompt.isNullOrEmpty())
+                menu.findItem(R.id.action_copy_text)?.isVisible = hasTextContent
+                menu.findItem(R.id.action_save_text)?.isVisible = false // Text save only for TYPE_TEXT
+                menu.findItem(R.id.action_save_media)?.isVisible = true
+            }
+            else -> { // Should not happen if type is validated in onCreate
+                menu.findItem(R.id.action_copy_text)?.isVisible = false
+                menu.findItem(R.id.action_save_text)?.isVisible = false
+                menu.findItem(R.id.action_save_media)?.isVisible = false
+            }
+        }
         return true
     }
+
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
@@ -124,40 +162,68 @@ class MediaViewActivity : AppCompatActivity() {
                 true
             }
             R.id.action_copy_text -> {
-                val textToCopy = currentText ?: currentPrompt
-                if (!textToCopy.isNullOrEmpty()) {
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Copied Content", textToCopy)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(this, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
+                copyTextToClipboard()
+                true
+            }
+            R.id.action_save_text -> {
+                val defaultName = buildDefaultFileName()
+                // Ensure currentText or currentPrompt is not null before launching
+                if (currentText != null || currentPrompt != null) {
+                    createTextFileLauncher.launch("$defaultName.txt")
                 } else {
-                    Toast.makeText(this, "コピーするテキストがありません", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "保存するテキストがありません", Toast.LENGTH_SHORT).show()
                 }
                 true
             }
             R.id.action_save_media -> {
                 when (currentType) {
-                    TYPE_IMAGE -> {
-                        currentUrl?.let { url ->
-                            lifecycleScope.launch {
-                                MediaSaver.saveImage(this@MediaViewActivity, url)
-                            }
-                        }
-                    }
-                    TYPE_VIDEO -> {
-                        currentUrl?.let { url ->
-                            lifecycleScope.launch {
-                                MediaSaver.saveVideo(this@MediaViewActivity, url)
-                            }
-                        }
-                    }
-                    else -> Toast.makeText(this, "このメディアは保存できません", Toast.LENGTH_SHORT).show()
+                    TYPE_IMAGE -> saveImage()
+                    TYPE_VIDEO -> saveVideo()
+                    else -> Toast.makeText(this, "このタイプのメディアは保存できません", Toast.LENGTH_SHORT).show()
                 }
                 true
             }
             else -> super.onOptionsItemSelected(item)
         }
     }
+
+    private fun copyTextToClipboard() {
+        val textToCopy = currentText ?: currentPrompt
+        if (!textToCopy.isNullOrEmpty()) {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Copied Content", textToCopy)
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(this, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "コピーするテキストがありません", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun saveImage() {
+        currentUrl?.let { url ->
+            lifecycleScope.launch {
+                MediaSaver.saveImage(this@MediaViewActivity, url)
+            }
+        } ?: Toast.makeText(this, "画像URLがありません", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveVideo() {
+        currentUrl?.let { url ->
+            lifecycleScope.launch {
+                MediaSaver.saveVideo(this@MediaViewActivity, url)
+            }
+        } ?: Toast.makeText(this, "動画URLがありません", Toast.LENGTH_SHORT).show()
+    }
+
+
+    private fun buildDefaultFileName(): String {
+        val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+        val timestamp = sdf.format(Date())
+        // You can use a portion of the text content if available, sanitized for filename
+        val textHint = (currentText ?: currentPrompt)?.take(15)?.replace(Regex("[^a-zA-Z0-9_]"), "_") ?: "text"
+        return "${textHint}_$timestamp"
+    }
+
 
     override fun onPause() {
         super.onPause()

@@ -8,6 +8,14 @@
         android:icon="@drawable/copy_text_24"
         app:showAsAction="ifRoom" />
 
+    <!-- テキスト保存専用 -->
+    <item
+        android:id="@+id/action_save_text"
+        android:title="テキストを保存"
+        android:icon="@drawable/save_24"
+        app:showAsAction="ifRoom" />
+
+    <!-- 画像・動画保存用 -->
     <item
         android:id="@+id/action_save_media"
         android:title="保存"
