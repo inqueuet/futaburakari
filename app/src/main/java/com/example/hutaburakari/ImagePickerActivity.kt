@@ -24,7 +24,7 @@ class ImagePickerActivity : AppCompatActivity() {
             val imageUri: Uri? = result.data?.data
             imageUri?.let {
                 val intent = Intent(this, ImageEditActivity::class.java).apply {
-                    putExtra(ImageEditActivity.EXTRA_IMAGE_URI, it.toString())
+                    putExtra(ImageEditActivity.EXTRA_IMAGE_URI, it) // it (Uri) を直接渡す
                 }
                 startActivity(intent)
                 finish()
