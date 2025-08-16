@@ -26,13 +26,12 @@
         android:layout_height="match_parent"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-        <ImageView
+        <com.example.hutaburakari.widget.ZoomableImageView
             android:id="@+id/imageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:scaleType="fitCenter"
-            android:visibility="gone"
-            tools:srcCompat="@tools:sample/avatars" />
+            android:contentDescription="@string/image"
+            android:background="@android:color/black" />
 
         <androidx.media3.ui.PlayerView
             android:id="@+id/playerView"
@@ -41,15 +40,19 @@
             android:visibility="gone" />
 
         <ScrollView
+            android:id="@+id/scrollContainer"
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_height="match_parent"
+            android:fillViewport="true"
+            android:visibility="gone">
+
             <TextView
                 android:id="@+id/textView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:padding="16dp"
                 android:textSize="18sp"
-                android:visibility="gone"
+                android:visibility="visible"
                 tools:text="これはプロンプトまたはテキストコンテンツです。" />
         </ScrollView>
 

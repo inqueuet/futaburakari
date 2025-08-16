@@ -30,6 +30,7 @@
     <string name="copy_prompt">プロンプトをコピー</string>
 
     <string name="scroll_back">直前まで戻る</string>
+    <string name="image">画像</string>
 
     <!-- <string name="reload">Reload</string> -->
 </resources>
