@@ -58,6 +58,7 @@ class MediaViewActivity : AppCompatActivity() {
 
         when (currentType) {
             TYPE_IMAGE -> {
+                binding.scrollContainer.isVisible = false // Added
                 binding.imageView.isVisible = true
                 binding.playerView.isVisible = false
                 binding.textView.isVisible = false
@@ -73,6 +74,7 @@ class MediaViewActivity : AppCompatActivity() {
                 currentText?.let { supportActionBar?.subtitle = it }
             }
             TYPE_VIDEO -> {
+                binding.scrollContainer.isVisible = false // Added
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = true
                 binding.textView.isVisible = false
@@ -81,6 +83,7 @@ class MediaViewActivity : AppCompatActivity() {
                 currentText?.let { supportActionBar?.subtitle = it }
             }
             TYPE_TEXT -> { // プロンプト表示用
+                binding.scrollContainer.isVisible = true // Added
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = false
                 binding.textView.isVisible = true
