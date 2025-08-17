@@ -22,6 +22,13 @@ class EditingEngine(
         xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) // 透明に戻す=消す
     }
 
+    private var mosaicAlpha: Int = 255 // ★ 追加
+
+    /** モザイクのアルファ値を設定 */
+    fun setMosaicAlpha(alpha: Int) { // ★ 追加
+        this.mosaicAlpha = alpha.coerceIn(0, 255)
+    }
+
     /** モザイクをこの中心と直径で“見せる”（マスクに白円） */
     fun applyMosaic(cxImage: Float, cyImage: Float, diameterPx: Float) {
         val r = diameterPx / 2f
@@ -42,7 +49,10 @@ class EditingEngine(
         // モザイクにマスクを掛けてから載せる
         c.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         c.drawBitmap(mosaicFull, 0f, 0f, null)
-        val pMask = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
+        val pMask = Paint().apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+            alpha = mosaicAlpha // ★ 追加
+        }
         c.drawBitmap(maskBitmap, 0f, 0f, pMask)
         c.restore()
         return out
@@ -52,7 +62,10 @@ class EditingEngine(
     fun drawMosaicWithMask(canvas: Canvas) {
         canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         canvas.drawBitmap(mosaicFull, 0f, 0f, null)
-        val pMask = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
+        val pMask = Paint().apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+            alpha = mosaicAlpha // ★ 追加
+        }
         canvas.drawBitmap(maskBitmap, 0f, 0f, pMask)
         canvas.restore()
     }
