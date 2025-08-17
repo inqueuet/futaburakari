@@ -462,7 +462,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             AlertDialog.Builder(context)
                 .setItems(arrayOf("テキストをコピー")) { _, _ ->
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Copied Text", textToCopy)
+                    // 各行の先頭に "> " を追加
+                    val modifiedText = textToCopy.lines().joinToString("\n") { "> $it" }
+                    val clip = ClipData.newPlainText("Copied Text", modifiedText)
                     clipboard.setPrimaryClip(clip)
                     Toast.makeText(context, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
                 }
