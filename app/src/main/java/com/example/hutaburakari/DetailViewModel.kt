@@ -6,7 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
-import com.example.hutaburakari.cache.DetailCacheManager // ★★★ この行を追加 ★★★
+import com.example.hutaburakari.cache.DetailCacheManager
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -145,6 +145,13 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                             Log.e("DetailViewModel", "Skipping malformed media URL. Base: '$url', Href: '$hrefAttr'", e)
                         }
                     }
+
+                    // ★★★ ここからが変更点 ★★★
+                    // 5件解析するごとに、UIに途中経過を通知する
+                    if (index > 0 && index % 5 == 0) {
+                        _detailContent.postValue(progressivelyLoadedContent.toList())
+                    }
+                    // ★★★ ここまで ★★★
                 }
 
                 val scriptElements = document.select("script")
@@ -170,6 +177,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                     progressivelyLoadedContent.add(DetailContent.ThreadEndTime(id = "thread_end_time_${itemIdCounter++}", endTime = it))
                 }
 
+                // ★ 最後に、残りのアイテムと最終結果を通知する
                 _detailContent.postValue(progressivelyLoadedContent.toList())
                 _isLoading.value = false
 
