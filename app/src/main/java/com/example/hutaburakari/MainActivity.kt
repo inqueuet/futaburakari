@@ -12,22 +12,25 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
-import androidx.core.view.WindowCompat // Added import
+import androidx.core.view.WindowCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.example.hutaburakari.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.URL
 
-class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // SearchView.OnQueryTextListener を実装
+class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
     private lateinit var imageAdapter: ImageAdapter
     private var currentSelectedUrl: String? = null
-    private var allItems: List<ImageItem> = emptyList() // 全アイテムを保持するリスト
+    private var allItems: List<ImageItem> = emptyList()
 
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -39,7 +42,6 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
         if (uri != null) {
             lifecycleScope.launch {
                 Log.d("MainActivity", "Selected image URI: $uri")
-                // MetadataExtractor.extract に context を渡すように変更
                 val promptInfo = MetadataExtractor.extract(this@MainActivity, uri.toString())
                 Log.d("MainActivity", "Extracted prompt info: $promptInfo")
 
@@ -55,7 +57,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false) // Added for edge-to-edge
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -82,7 +84,6 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
                     applyCatalogSettings(boardBaseUrl)
                 } else {
                     Log.e("MainActivity", "Cannot derive boardBaseUrl from: $url. Skipping applyCatalogSettings.")
-                    // Consider showing a user-facing error or using a default if appropriate
                 }
                 viewModel.fetchImagesFromUrl(url)
             }
@@ -148,7 +149,6 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
         }
     }
 
-    // SearchView.OnQueryTextListener の実装
     override fun onQueryTextSubmit(query: String?): Boolean {
         return false
     }
@@ -209,8 +209,31 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
         }
     }
 
+    // ▼▼▼ 修正: クラッシュしないように、より安全なコードに変更 ▼▼▼
     private fun setupClickListener() {
         imageAdapter.onItemClick = { item ->
+            // ① クリック時のベースURLと画像URLを安全に取得
+            val baseUrlString = currentSelectedUrl
+            val imageUrlString = item.imageUrl
+
+            // ② 両方がnullや空でない場合のみプリフェッチを実行
+            if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
+                try {
+                    val absoluteUrl = URL(URL(baseUrlString), imageUrlString).toString()
+                    Log.d("MainActivity_Prefetch", "Resolved absolute URL: $absoluteUrl")
+
+                    val imageLoader = this.imageLoader
+                    val request = ImageRequest.Builder(this)
+                        .data(absoluteUrl)
+                        .lifecycle(lifecycle = null)
+                        .build()
+                    imageLoader.enqueue(request)
+                } catch (e: Exception) { // MalformedURLExceptionだけでなく、あらゆる例外を捕捉
+                    Log.e("MainActivity_Prefetch", "Prefetch failed for base:'$baseUrlString', image:'$imageUrlString'", e)
+                }
+            }
+
+            // 画面遷移は通常通り行う
             val intent = Intent(this, DetailActivity::class.java).apply {
                 putExtra(DetailActivity.EXTRA_URL, item.detailUrl)
                 putExtra("EXTRA_TITLE", item.title)
@@ -219,6 +242,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
         }
     }
 
+
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { isLoading ->
             binding.progressBar.isVisible = isLoading
@@ -226,8 +250,8 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener { // Se
         }
 
         viewModel.images.observe(this) { items ->
-            allItems = items // 全アイテムを更新
-            filterImages(null) // 初期表示時はフィルターなし
+            allItems = items
+            filterImages(null)
         }
 
         viewModel.error.observe(this) { errorMessage ->

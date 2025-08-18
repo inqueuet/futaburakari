@@ -9,12 +9,10 @@
 
     <ImageView
         android:id="@+id/detailImageView"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="start"
         android:adjustViewBounds="true"
         android:contentDescription="詳細画像" />
-
     <TextView
         android:id="@+id/promptTextView"
         android:layout_width="match_parent"
