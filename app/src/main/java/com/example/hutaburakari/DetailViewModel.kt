@@ -16,14 +16,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.MalformedURLException
 import java.net.URL
+import org.jsoup.nodes.Element // Added import
 
 class DetailViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _detailContent = MutableLiveData<List<DetailContent>>()
     val detailContent: LiveData<List<DetailContent>> = _detailContent
 
-    private val _error = MutableLiveData<String>()
-    val error: LiveData<String> = _error
+    private val _error = MutableLiveData<String?>()
+    val error: LiveData<String?> = _error
 
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
@@ -55,50 +56,62 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 val document = withContext(Dispatchers.IO) {
                     NetworkClient.fetchDocument(getApplication(), url)
                 }
-                val contentBlocks = document.select("div.thre, table:has(td.rtd)")
-                Log.d("DetailViewModel", "fetchDetails: Found ${contentBlocks.size} content blocks. forceRefresh: $forceRefresh, URL: $url")
-                if (contentBlocks.isNotEmpty()) {
-                    Log.d("DetailViewModel", "fetchDetails: First content block HTML (sample for forceRefresh=$forceRefresh): ${contentBlocks.first()?.outerHtml()?.take(500)}")
-                }
+                
+                // ▼▼▼▼▼ ここから下のブロックを全て置き換える ▼▼▼▼▼
 
                 val progressivelyLoadedContent = mutableListOf<DetailContent>()
                 val promptJobs = mutableListOf<Deferred<Pair<Int, String?>>>()
 
-                _detailContent.postValue(emptyList()) // Initially set empty list or placeholder
+                _detailContent.postValue(emptyList()) // UIを一旦クリア
 
-                contentBlocks.forEach { block ->
-                    // --- ここから追加 ---
-                    val targetResNumForDebug = "1343546834" // 「そうだね」を押した投稿の番号
-                    val cnoElement = block.select("span.cno").firstOrNull()
-                    val sodElementId = block.select("a.sod").firstOrNull()?.id()
+                // スレッド全体のコンテナを取得
+                val threadContainer = document.selectFirst("div.thre")
 
-                    var isTargetBlock = false
-                    if (cnoElement != null && cnoElement.text().contains(targetResNumForDebug)) {
-                        isTargetBlock = true
-                    }
-                    if (!isTargetBlock && sodElementId != null && sodElementId == "sd$targetResNumForDebug") {
-                        isTargetBlock = true
-                    }
-                     if (!isTargetBlock && block.attr("data-res") == targetResNumForDebug) {
-                        isTargetBlock = true
-                    }
+                if (threadContainer == null) {
+                    _error.value = "スレッドが見つかりませんでした。"
+                    _isLoading.value = false
+                    _detailContent.postValue(emptyList())
+                    return@launch
+                }
+                
+                // 処理対象となる全ての投稿（OP + 返信）をリストアップする
+                val postBlocks = mutableListOf<Element>()
+                postBlocks.add(threadContainer) // 最初の投稿(OP)としてコンテナ自体を追加
+                postBlocks.addAll(threadContainer.select("table:has(td.rtd)")) // コンテナ内の返信(table)を全て追加
 
-                    if (isTargetBlock) {
-                        Log.d("DetailViewModel", "fetchDetails: HTML for resNum $targetResNumForDebug (forceRefresh=$forceRefresh, URL=$url): ${block.outerHtml()}")
-                    }
-                    // --- ここまで追加 ---
+                // 全ての投稿をループ処理
+                postBlocks.forEachIndexed { index, block ->
+                    val isOp = (index == 0) // 最初の要素がOP
 
-                    val textBlock = block.clone()
+                    // --- 1. テキストコンテンツの解析 ---
+                    val textSourceElement = if (isOp) {
+                        // OPの場合、子要素の返信テーブルを除外したクローンを作成する
+                        block.clone().apply { select("table").remove() }
+                    } else {
+                        // 返信の場合、ブロック（table）そのものを使用する
+                        block
+                    }
+                    
+                    val textBlock = textSourceElement.clone()
+                    // メディアファイルへのリンクはテキストコンテンツから除外する
                     val mediaLinkForTextExclusion = block.select("a[target=_blank]").firstOrNull { a ->
                         val href = a.attr("href").lowercase()
                         href.endsWith(".png") || href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".gif") || href.endsWith(".webp") || href.endsWith(".webm") || href.endsWith(".mp4")
                     }
-                    mediaLinkForTextExclusion?.let { link -> textBlock.select("a[href=\'\'\'${link.attr("href")}\'\'\']").remove() }
-                    val html = textBlock.selectFirst(".rtd")?.html() ?: ""
+                    mediaLinkForTextExclusion?.let { link -> textBlock.select("a[href='''${link.attr("href")}''']").remove() }
+
+                    // HTMLコンテンツを抽出
+                    val html = if (isOp) {
+                        textBlock.html() // OPの場合、クローンのinnerHTMLを取得
+                    } else {
+                        textBlock.selectFirst(".rtd")?.html() ?: "" // 返信の場合、.rtdセルのinnerHTMLを取得
+                    }
+
                     if (html.isNotBlank()) {
                         progressivelyLoadedContent.add(DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html))
                     }
 
+                    // --- 2. メディアコンテンツの解析 ---
                     val mediaLinkNode = block.select("a[target=_blank]").firstOrNull { a ->
                         val href = a.attr("href").lowercase()
                         href.endsWith(".png") || href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".gif") || href.endsWith(".webp") || href.endsWith(".webm") || href.endsWith(".mp4")
@@ -110,7 +123,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                             URL(URL(url), hrefAttr).toString()
                         } catch (e: MalformedURLException) {
                             Log.e("DetailViewModel", "Failed to form absolute URL from base: $url and href: $hrefAttr", e)
-                            hrefAttr // Fallback to hrefAttr if URL construction fails
+                            hrefAttr
                         }
                         val fileName = absoluteUrl.substringAfterLast('/')
                         val itemIndexInList = progressivelyLoadedContent.size
@@ -129,7 +142,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                             progressivelyLoadedContent.add(mediaContent)
                             val deferredPrompt = async(Dispatchers.IO) {
                                 try {
-                                    val prompt = withTimeoutOrNull(30000L) { // 30-second timeout
+                                    val prompt = withTimeoutOrNull(30000L) {
                                         MetadataExtractor.extract(getApplication(), absoluteUrl)
                                     }
                                     if (prompt == null) {
@@ -145,11 +158,14 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
+
+                // ▲▲▲▲▲ ここまでのブロックを全て置き換える ▲▲▲▲▲
+
                 // Extract thread end time
                 val scriptElements = document.select("script")
                 var threadEndTime: String? = null
-                val docWriteRegex = Regex("""document\.write\s*\(\s*'(.*?)'\s*\)""")
-                val timeRegex = Regex("""<span id="contdisp">([^<]+)<\/span>""")
+                val docWriteRegex = Regex("""document\.write\s*\(\s*'(.*?)'\s*\)"""")
+                val timeRegex = Regex("""<span id="contdisp">([^<]+)<\/span>"""")
 
                 for (scriptElement in scriptElements) {
                     val scriptData = scriptElement.data()
