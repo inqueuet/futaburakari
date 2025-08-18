@@ -56,6 +56,8 @@
             android:exported="false"
             android:theme="@style/Theme.MyApplication">
         </activity>
+        <activity android:name=".SettingsActivity"
+            android:label="設定" />
     </application>
 
 </manifest>

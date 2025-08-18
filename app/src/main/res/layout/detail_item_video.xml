@@ -4,7 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingTop="8dp"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp"
     android:paddingBottom="8dp">
 
     <androidx.media3.ui.PlayerView
@@ -23,6 +24,6 @@
         android:textAppearance="?attr/textAppearanceBody2"
         android:visibility="gone"
         android:textIsSelectable="true"
-        /> <!-- 初期状態は非表示など、よしなに設定 -->
+        />
 
 </LinearLayout>

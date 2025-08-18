@@ -30,7 +30,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val document = NetworkClient.fetchDocument(getApplication(), url)
+                val document = NetworkClient.fetchDocument(url)
 
                 val parsedItems = mutableListOf<ImageItem>()
                 // val baseUrl = "https://may.2chan.net" // ← この固定のbaseUrlは使わない

@@ -13,16 +13,17 @@ import android.widget.Button
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.exifinterface.media.ExifInterface // Added for Exif
+import androidx.exifinterface.media.ExifInterface
 import com.example.hutaburakari.edit.EditingEngine
 import com.example.hutaburakari.ui.BrushOverlayView
 import com.example.hutaburakari.ui.MosaicOverlayView
 import com.example.hutaburakari.ui.ZoomImageView
-import kotlinx.coroutines.CoroutineScope // Added for Coroutines
-import kotlinx.coroutines.Dispatchers // Added for Coroutines
-import kotlinx.coroutines.launch // Added for Coroutines
-import kotlinx.coroutines.withContext // Added for Coroutines
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -33,13 +34,15 @@ class ImageEditActivity : AppCompatActivity() {
         const val EXTRA_IMAGE_URI = "com.example.hutaburakari.EXTRA_IMAGE_URI"
     }
 
+    private val viewModel: ImageEditViewModel by viewModels()
+
     private lateinit var imageView: ZoomImageView
     private lateinit var brushOverlay: BrushOverlayView
     private lateinit var mosaicOverlay: MosaicOverlayView
     private lateinit var seekBrushSize: SeekBar
     private lateinit var textBrushSizeValue: TextView
-    private lateinit var seekMosaicAlpha: SeekBar // ★ 追加
-    private lateinit var textMosaicAlphaValue: TextView // ★ 追加
+    private lateinit var seekMosaicAlpha: SeekBar
+    private lateinit var textMosaicAlphaValue: TextView
     private lateinit var buttonMosaic: Button
     private lateinit var buttonErase: Button
     private lateinit var buttonSave: Button
@@ -50,27 +53,27 @@ class ImageEditActivity : AppCompatActivity() {
     private var currentTool = Tool.NONE
 
     private var currentBrushSizePx = 30
-    private var currentMosaicAlpha = 255 // ★ 追加 (初期値は255 = 100%)
+    private var currentMosaicAlpha = 255
 
-    private var sourceBitmap: Bitmap? = null
-    private lateinit var editingEngine: EditingEngine
     private var imageUri: Uri? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_image_edit)
 
+        // (findViewByIdは変更なし)
         imageView = findViewById(R.id.imageView)
         brushOverlay = findViewById(R.id.brushOverlay)
         mosaicOverlay = findViewById(R.id.mosaicOverlay)
         seekBrushSize = findViewById(R.id.seekBrushSize)
         textBrushSizeValue = findViewById(R.id.textBrushSizeValue)
-        seekMosaicAlpha = findViewById(R.id.seekMosaicAlpha) // ★ 追加
-        textMosaicAlphaValue = findViewById(R.id.textMosaicAlphaValue) // ★ 追加
+        seekMosaicAlpha = findViewById(R.id.seekMosaicAlpha)
+        textMosaicAlphaValue = findViewById(R.id.textMosaicAlphaValue)
         buttonMosaic = findViewById(R.id.buttonMosaic)
         buttonErase = findViewById(R.id.buttonErase)
         buttonSave = findViewById(R.id.buttonSave)
         buttonLock = findViewById(R.id.buttonLock)
+
 
         imageUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_IMAGE_URI, Uri::class.java)
@@ -86,17 +89,21 @@ class ImageEditActivity : AppCompatActivity() {
         }
 
         try {
-            contentResolver.openInputStream(imageUri!!).use { inputStream ->
-                sourceBitmap = BitmapFactory.decodeStream(inputStream)
+            if (viewModel.editingEngine == null) {
+                val sourceBitmap: Bitmap? = contentResolver.openInputStream(imageUri!!).use { inputStream ->
+                    BitmapFactory.decodeStream(inputStream)
+                }
+                if (sourceBitmap == null) {
+                    throw Exception("ビットマップのデコードに失敗")
+                }
+                viewModel.initializeEngine(sourceBitmap)
             }
-            if (sourceBitmap == null) {
-                throw Exception("ビットマップのデコードに失敗")
-            }
-            editingEngine = EditingEngine(sourceBitmap!!)
-            imageView.setImageBitmap(sourceBitmap)
 
+            // ★★★ ここを修正 ★★★
+            // editingEngineの中ではなく、ViewModelが直接持つsourceBitmapを参照する
+            imageView.setImageBitmap(viewModel.sourceBitmap!!)
             mosaicOverlay.zoomImageView = imageView
-            mosaicOverlay.engine = editingEngine
+            mosaicOverlay.engine = viewModel.editingEngine!!
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -105,8 +112,9 @@ class ImageEditActivity : AppCompatActivity() {
             return
         }
 
+        // (setupメソッド群の呼び出しは変更なし)
         setupBrushSizeControls()
-        setupMosaicAlphaControls() // ★ 追加
+        setupMosaicAlphaControls()
         setupToolButtons()
         setupTouchListener()
         setupSaveButton()
@@ -133,6 +141,8 @@ class ImageEditActivity : AppCompatActivity() {
         }
     }
 
+    // (これ以降のメソッドは変更ありません)
+    // ...
     private fun setupBrushSizeControls() {
         seekBrushSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -151,19 +161,18 @@ class ImageEditActivity : AppCompatActivity() {
         textBrushSizeValue.text = "${currentBrushSizePx}px"
     }
 
-    // ★ ここから追加
     private fun setupMosaicAlphaControls() {
         seekMosaicAlpha.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                currentMosaicAlpha = progress.coerceIn(0, 255) // 0-255の範囲に収める
-                editingEngine.setMosaicAlpha(currentMosaicAlpha)
+                currentMosaicAlpha = progress.coerceIn(0, 255)
+                viewModel.editingEngine?.setMosaicAlpha(currentMosaicAlpha)
                 updateMosaicAlphaLabel()
-                mosaicOverlay.invalidateLayer() // モザイクの再描画をトリガー
+                mosaicOverlay.invalidateLayer()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
-        seekMosaicAlpha.progress = currentMosaicAlpha // 初期値を設定
+        seekMosaicAlpha.progress = currentMosaicAlpha
         updateMosaicAlphaLabel()
     }
 
@@ -171,7 +180,6 @@ class ImageEditActivity : AppCompatActivity() {
         val percentage = (currentMosaicAlpha / 255.0 * 100).toInt()
         textMosaicAlphaValue.text = "${percentage}%"
     }
-    // ★ ここまで追加
 
     private fun setupToolButtons() {
         buttonMosaic.setOnClickListener { applyTool(Tool.MOSAIC) }
@@ -184,6 +192,7 @@ class ImageEditActivity : AppCompatActivity() {
         buttonErase.isSelected  = (tool == Tool.ERASER)
         brushOverlay.hideCircle()
     }
+
 
     private fun setupTouchListener() {
         imageView.setOnTouchListener { _, event ->
@@ -205,11 +214,11 @@ class ImageEditActivity : AppCompatActivity() {
                         val diameterImagePx = currentBrushSizePx.toFloat()
                         when (currentTool) {
                             Tool.MOSAIC -> {
-                                editingEngine.applyMosaic(p.x, p.y, diameterImagePx)
+                                viewModel.editingEngine?.applyMosaic(p.x, p.y, diameterImagePx)
                                 handledDraw = true
                             }
                             Tool.ERASER -> {
-                                editingEngine.eraseMosaic(p.x, p.y, diameterImagePx)
+                                viewModel.editingEngine?.eraseMosaic(p.x, p.y, diameterImagePx)
                                 handledDraw = true
                             }
                             else -> {}
@@ -252,7 +261,7 @@ class ImageEditActivity : AppCompatActivity() {
     }
 
     private fun saveImageToGallery() {
-        val finalBitmap = editingEngine.composeFinal()
+        val finalBitmap = viewModel.editingEngine?.composeFinal() ?: return
         val fileName = "Edited_${System.currentTimeMillis()}.jpg"
         var fos: OutputStream? = null
         var imagePathForExif: String? = null
@@ -312,11 +321,9 @@ class ImageEditActivity : AppCompatActivity() {
                             e.printStackTrace()
                         }
                     }
-
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@ImageEditActivity, getString(R.string.save_success), Toast.LENGTH_SHORT).show()
                     }
-
                 } catch (e: Exception) {
                     e.printStackTrace()
                     withContext(Dispatchers.Main) {
@@ -334,6 +341,5 @@ class ImageEditActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        sourceBitmap?.recycle()
     }
 }

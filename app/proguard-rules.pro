@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# PersistentCookieJarの内部データクラスSerializableCookieを難読化から除外する
+# これにより、GsonがJSONとの間で正しくシリアライズ/デシリアライズできるようになる
+-keep class com.example.hutaburakari.PersistentCookieJar$SerializableCookie { *; }

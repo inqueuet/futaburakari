@@ -6,7 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
-import com.example.hutaburakari.cache.DetailCacheManager
+import com.example.hutaburakari.cache.DetailCacheManager // ★★★ この行を追加 ★★★
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -53,7 +53,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val document = withContext(Dispatchers.IO) {
-                    NetworkClient.fetchDocument(getApplication(), url)
+                    NetworkClient.fetchDocument(url)
                 }
 
                 val progressivelyLoadedContent = mutableListOf<DetailContent>()
@@ -96,6 +96,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                         textBlock.selectFirst(".rtd")?.html() ?: ""
                     }
 
+
                     if (html.isNotBlank()) {
                         progressivelyLoadedContent.add(DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html))
                     }
@@ -105,11 +106,9 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                         href.endsWith(".png") || href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".gif") || href.endsWith(".webp") || href.endsWith(".webm") || href.endsWith(".mp4")
                     }
 
-                    // ▼▼▼ 変更点: URL変換失敗時に処理を中断するようロジックを修正 ▼▼▼
                     mediaLinkNode?.let { link ->
                         val hrefAttr = link.attr("href")
                         try {
-                            // 1. 完全なURLの生成を試みる
                             val absoluteUrl = URL(URL(url), hrefAttr).toString()
                             val fileName = absoluteUrl.substringAfterLast('/')
                             val itemIndexInList = progressivelyLoadedContent.size
@@ -124,7 +123,6 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                                 else -> null
                             }
 
-                            // 2. 成功した場合のみ、リストへの追加とプロンプト取得処理を行う
                             if (mediaContent != null) {
                                 progressivelyLoadedContent.add(mediaContent)
                                 val deferredPrompt = async(Dispatchers.IO) {
@@ -144,11 +142,9 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                                 promptJobs.add(deferredPrompt)
                             }
                         } catch (e: MalformedURLException) {
-                            // 3. URLの形式が不正で変換に失敗した場合、エラーを記録してこの画像/動画は無視する
                             Log.e("DetailViewModel", "Skipping malformed media URL. Base: '$url', Href: '$hrefAttr'", e)
                         }
                     }
-                    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
                 }
 
                 val scriptElements = document.select("script")
@@ -188,15 +184,8 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                                 finalListWithPrompts[index] = when (itemToUpdate) {
                                     is DetailContent.Image -> itemToUpdate.copy(prompt = prompt)
                                     is DetailContent.Video -> itemToUpdate.copy(prompt = prompt)
-                                    else -> {
-                                        if (itemToUpdate !is DetailContent.Text && itemToUpdate !is DetailContent.ThreadEndTime) {
-                                            Log.w("DetailViewModel", "BG Update: Attempted to update non-media item at index $index with prompt.")
-                                        }
-                                        itemToUpdate
-                                    }
+                                    else -> itemToUpdate
                                 }
-                            } else {
-                                Log.w("DetailViewModel", "BG Update: Index $index out of bounds for finalListWithPrompts. Size: ${finalListWithPrompts.size}")
                             }
                         }
 
@@ -207,9 +196,8 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                         withContext(Dispatchers.IO) {
                             cacheManager.saveDetails(url, finalListWithPrompts.toList())
                         }
-                        Log.d("DetailViewModel", "Background prompt processing, final UI update, and caching completed for $url.")
                     } catch (e: Exception) {
-                        Log.e("DetailViewModel", "Error in background prompt processing, UI update, or caching for $url", e)
+                        Log.e("DetailViewModel", "Error in background prompt processing for $url", e)
                     }
                 }
 
@@ -221,12 +209,6 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun invalidateCache(url: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            cacheManager.invalidateCache(url)
-        }
-    }
-
     fun postSodaNe(resNum: String) {
         val url = currentUrl
         if (url == null) {
@@ -234,17 +216,13 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        Log.d("DetailViewModel", "postSodaNe called. resNum: $resNum, currentUrl: $url")
-
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             try {
-                Log.d("DetailViewModel", "Calling NetworkClient.postSodaNe with resNum: $resNum, referer: $url")
-                val success = NetworkClient.postSodaNe(getApplication(), resNum, url)
-                Log.d("DetailViewModel", "NetworkClient.postSodaNe result: $success")
+                val success = NetworkClient.postSodaNe(resNum, url)
+
                 if (success) {
-                    Log.d("DetailViewModel", "postSodaNe: 'success' is true. Calling fetchDetails for URL: $url")
                     fetchDetails(url, forceRefresh = true)
                 } else {
                     _error.value = "「そうだね」の投稿に失敗しました。"

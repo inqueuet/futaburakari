@@ -36,4 +36,9 @@
         android:icon="@drawable/ic_menu_gallery"
         android:title="ローカル画像を開く"
         app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_settings"
+        android:title="設定"
+        app:showAsAction="never" />
 </menu>

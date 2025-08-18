@@ -67,6 +67,11 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         observeViewModel()
         setupClickListener()
 
+        // ★ スワイプ更新のリスナーを設定
+        binding.swipeRefreshLayout.setOnRefreshListener {
+            fetchDataForCurrentUrl()
+        }
+
         loadAndFetchInitialData()
     }
 
@@ -100,10 +105,8 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
             "cl" to "10"
         )
         try {
-            NetworkClient.applySettings(this@MainActivity, boardBaseUrl, settings)
-            withContext(Dispatchers.Main) {
-                // Toast.makeText(this@MainActivity, "カタログ設定を適用しました", Toast.LENGTH_SHORT).show()
-            }
+            // ★ 修正: NetworkClientからcontext引数を削除
+            NetworkClient.applySettings(boardBaseUrl, settings)
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@MainActivity, "設定の適用に失敗: ${e.message}", Toast.LENGTH_LONG).show()
@@ -123,6 +126,8 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_reload -> {
+                // ★ 修正: スワイプ更新用のインジケータも表示する
+                binding.swipeRefreshLayout.isRefreshing = true
                 fetchDataForCurrentUrl()
                 Toast.makeText(this, getString(R.string.reloading), Toast.LENGTH_SHORT).show()
                 true
@@ -143,6 +148,12 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
             }
             R.id.action_browse_local_images -> {
                 pickImageLauncher.launch("image/*")
+                true
+            }
+            // ★★★ このcaseを追加 ★★★
+            R.id.action_settings -> {
+                val intent = Intent(this, SettingsActivity::class.java)
+                startActivity(intent)
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -209,14 +220,11 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         }
     }
 
-    // ▼▼▼ 修正: クラッシュしないように、より安全なコードに変更 ▼▼▼
     private fun setupClickListener() {
         imageAdapter.onItemClick = { item ->
-            // ① クリック時のベースURLと画像URLを安全に取得
             val baseUrlString = currentSelectedUrl
             val imageUrlString = item.imageUrl
 
-            // ② 両方がnullや空でない場合のみプリフェッチを実行
             if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
                 try {
                     val absoluteUrl = URL(URL(baseUrlString), imageUrlString).toString()
@@ -228,12 +236,11 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
                         .lifecycle(lifecycle = null)
                         .build()
                     imageLoader.enqueue(request)
-                } catch (e: Exception) { // MalformedURLExceptionだけでなく、あらゆる例外を捕捉
+                } catch (e: Exception) {
                     Log.e("MainActivity_Prefetch", "Prefetch failed for base:'$baseUrlString', image:'$imageUrlString'", e)
                 }
             }
 
-            // 画面遷移は通常通り行う
             val intent = Intent(this, DetailActivity::class.java).apply {
                 putExtra(DetailActivity.EXTRA_URL, item.detailUrl)
                 putExtra("EXTRA_TITLE", item.title)
@@ -245,8 +252,15 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { isLoading ->
-            binding.progressBar.isVisible = isLoading
-            binding.recyclerView.isVisible = !isLoading
+            // ★ 修正: ProgressBarとSwipeRefreshLayoutの両方の状態を更新
+            if (!binding.swipeRefreshLayout.isRefreshing) {
+                binding.progressBar.isVisible = isLoading
+            }
+            if (!isLoading) {
+                binding.swipeRefreshLayout.isRefreshing = false
+            }
+            // 読み込み中でもスワイプ更新中ならリストは表示したままにする
+            binding.recyclerView.isVisible = !isLoading || binding.swipeRefreshLayout.isRefreshing
         }
 
         viewModel.images.observe(this) { items ->

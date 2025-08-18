@@ -1,93 +1,96 @@
 package com.example.hutaburakari
 
-import android.content.Context
-import android.util.Log // ★ Logをインポート
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.jsoup.Connection
+import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
+import java.nio.charset.Charset
 
 object NetworkClient {
 
-    suspend fun fetchDocument(context: Context, url: String): Document {
+    // NetworkModuleで定義された、アプリで唯一のOkHttpClientインスタンスを使用する
+    private val httpClient = NetworkModule.okHttpClient
+
+    /**
+     * 指定されたURLからHTMLドキュメントを取得します。
+     * OkHttpクライアントを使用するため、Cookieは自動的に管理されます。
+     */
+    suspend fun fetchDocument(url: String): Document {
         return withContext(Dispatchers.IO) {
-            val cookieStore = CookieStore(context.applicationContext)
-            val storedCookies = cookieStore.loadCookies()
-            val response = Jsoup.connect(url)
-                .cookies(storedCookies)
-                .method(Connection.Method.GET)
-                .execute()
-            val newCookies = response.cookies()
-            if (newCookies.isNotEmpty()) {
-                cookieStore.saveCookies(newCookies)
+            val request = Request.Builder()
+                .url(url)
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("HTTPエラー: ${response.code} ${response.message}")
+                }
+                // レスポンスボディをShift_JISでデコードする
+                val responseBodyBytes = response.body!!.bytes()
+                val decodedBody = String(responseBodyBytes, Charset.forName("Shift_JIS"))
+
+                // Jsoupでパースして返す
+                Jsoup.parse(decodedBody, url)
             }
-            response.parse()
         }
     }
 
-    suspend fun postSodaNe(context: Context, resNum: String, referer: String): Boolean {
+    /**
+     * 「そうだね」を送信します。
+     * ホスト名はRefererから動的に取得します。
+     */
+    suspend fun postSodaNe(resNum: String, referer: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                // ToDo: Make board part of the URL dynamic
-                val url = "https://may.2chan.net/sd.php?b.$resNum"
-                Log.d("NetworkClient", "postSodaNe: Attempting to GET to URL: $url with referer: $referer") // Changed POST to GET in log
-                val cookieStore = CookieStore(context.applicationContext)
-                val storedCookies = cookieStore.loadCookies()
-                Log.d("NetworkClient", "postSodaNe: Cookies being sent: $storedCookies")
+                // RefererのURLからホスト名を動的に取得
+                val host = referer.toHttpUrl().host
+                val url = "https://${host}/sd.php?b.$resNum"
 
-                val response = Jsoup.connect(url)
-                    .cookies(storedCookies)
-                    .header("accept", "*/*")
-                    .header("accept-encoding", "gzip, deflate, br, zstd")
-                    .header("accept-language", "ja,en-US;q=0.9,en;q=0.8")
-                    .header("connection", "keep-alive")
-                    // ToDo: Make host dynamic based on referer
-                    .header("host", "may.2chan.net") 
-                    .header("referer", referer)
-                    .method(Connection.Method.GET) // Changed to GET
-                    .ignoreContentType(true) 
-                    .execute()
-                
-                Log.d("NetworkClient", "postSodaNe: Response status code: ${response.statusCode()}")
-                Log.d("NetworkClient", "postSodaNe: Response body: ${response.body()}")
-                
-                // ステータスコードが2xx範囲内であれば成功とみなす
-                if (response.statusCode() in 200..299) {
-                     true
-                } else {
-                    Log.w("NetworkClient", "postSodaNe: Failed with status ${response.statusCode()} and body: ${response.body()}")
-                    false
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Referer", referer)
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    Log.d("NetworkClient", "postSodaNe: Response status code: ${response.code}")
+                    response.isSuccessful
                 }
-            } catch (e: IOException) {
-                Log.e("NetworkClient", "postSodaNe: IOException: ${e.message}", e)
-                e.printStackTrace()
-                false
             } catch (e: Exception) {
-                Log.e("NetworkClient", "postSodaNe: General Exception: ${e.message}", e)
-                e.printStackTrace()
+                Log.e("NetworkClient", "postSodaNeで例外発生", e)
                 false
             }
         }
     }
 
-    suspend fun applySettings(context: Context, boardBaseUrl: String, settings: Map<String, String>) {
+    /**
+     * カタログの設定をPOST送信します。
+     */
+    suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
         withContext(Dispatchers.IO) {
             val settingsUrl = "${boardBaseUrl}futaba.php?mode=catset"
-            Log.d("NetworkClient", "applySettings: Applying to URL: $settingsUrl with settings: $settings")
-            val cookieStore = CookieStore(context.applicationContext)
-            val storedCookies = cookieStore.loadCookies()
-            val response = Jsoup.connect(settingsUrl)
-                .cookies(storedCookies)
-                .data(settings)
-                .method(Connection.Method.POST)
-                .execute()
-            val newCookies = response.cookies()
-            if (newCookies.isNotEmpty()) {
-                cookieStore.saveCookies(newCookies)
+
+            // POSTするフォームデータを作成
+            val formBody = FormBody.Builder().apply {
+                settings.forEach { (key, value) ->
+                    add(key, value)
+                }
+            }.build()
+
+            val request = Request.Builder()
+                .url(settingsUrl)
+                .post(formBody)
+                .build()
+
+            // レスポンスは特に使わないので、リクエストを投げるだけ
+            httpClient.newCall(request).execute().use { response ->
+                Log.d("NetworkClient", "applySettings: Response status code: ${response.code}")
             }
-            Log.d("NetworkClient", "applySettings: Response status code: ${response.statusCode()}")
         }
     }
 }

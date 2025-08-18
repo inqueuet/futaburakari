@@ -96,7 +96,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     }
 
     private fun applyZwspPadding(tv: TextView, s: Spannable) {
-        val medium = tv.dpToPx(6)
+        val medium = tv.dpToPx(4)
         var index = 0
         while (index < s.length) {
             index = s.toString().indexOf(zwsp, index)
@@ -471,7 +471,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 listener(
                     onStart = { _ ->
                         // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
-                        imageView.setMinimumHeight(100.dpToPx())
+                        imageView.setMinimumHeight(10.dpToPx())
                     },
                     onSuccess = { _, _ ->
                         // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼

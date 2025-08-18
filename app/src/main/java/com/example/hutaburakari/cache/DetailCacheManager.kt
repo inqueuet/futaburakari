@@ -96,6 +96,23 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    // ★★★ ここから追加 ★★★
+    /**
+     * すべてのスレッド内容キャッシュを削除します。
+     */
+    fun clearAllCache() {
+        if (cacheDir.exists()) {
+            // cacheDirの中身をすべて削除する
+            if (cacheDir.deleteRecursively()) {
+                Log.d("DetailCacheManager", "Successfully cleared all cache.")
+            } else {
+                Log.w("DetailCacheManager", "Failed to clear all cache.")
+            }
+            // ディレクトリ自体は再作成しておく
+            cacheDir.mkdirs()
+        }
+    }
+
     private fun String.sha256(): String {
         return java.security.MessageDigest
             .getInstance("SHA-256")
