@@ -31,7 +31,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private val scrollHistory = ArrayDeque<Pair<Int, Int>>(2)
     private lateinit var detailSearchManager: DetailSearchManager
 
-    // ★ 非推奨APIの代替となるActivityResultLauncherを定義
     private val replyActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -68,7 +67,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             return
         }
 
-        // ★ スワイプ更新のリスナーを設定
         binding.swipeRefreshLayout.setOnRefreshListener {
             reloadDetails()
         }
@@ -127,7 +125,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                         putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
                         putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
                     }
-                    // ★ 修正: 新しいLauncherを呼び出す
                     replyActivityResultLauncher.launch(intent)
                 }
                 true
@@ -152,6 +149,11 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                 }
                 true
             }
+            R.id.action_settings -> {
+                val intent = Intent(this, SettingsActivity::class.java)
+                startActivity(intent)
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
     }
@@ -164,8 +166,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             viewModel.fetchDetails(urlToRefresh, forceRefresh = true)
         }
     }
-
-    // ★ onActivityResultは完全に不要になったため削除
 
     override fun onPause() {
         super.onPause()
@@ -188,14 +188,20 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
             if (isMediaFile) {
                 currentUrl?.let { url ->
+                    // ▼▼▼ ここを修正 ▼▼▼
+                    val threadId = url.substringAfterLast("/").substringBefore(".htm")
+                    val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                    val boardPostUrl = boardBasePath + "futaba.php"
                     val intent = Intent(this, ReplyActivity::class.java).apply {
-                        // ... putExtra
+                        putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
+                        putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+                        putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
+                        putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, ">$quotedText")
                     }
-                    // ★ 修正: 新しいLauncherを呼び出す
                     replyActivityResultLauncher.launch(intent)
                 }
             } else {
-                // ... (既存のスクロールロジック)
+                // ... (既存のスクロールロジックは変更なし)
             }
         }
         detailAdapter.onSodaNeClickListener = { resNum -> viewModel.postSodaNe(resNum) }
@@ -205,10 +211,16 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         }
         detailAdapter.onResNumClickListener = { resNum, resBody ->
             currentUrl?.let { url ->
+                // ▼▼▼ ここを修正 ▼▼▼
+                val threadId = url.substringAfterLast("/").substringBefore(".htm")
+                val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                val boardPostUrl = boardBasePath + "futaba.php"
                 val intent = Intent(this, ReplyActivity::class.java).apply {
-                    // ... putExtra
+                    putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
+                    putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+                    putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
+                    putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, resBody)
                 }
-                // ★ 修正: 新しいLauncherを呼び出す
                 replyActivityResultLauncher.launch(intent)
             }
         }
@@ -223,7 +235,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { isLoading ->
-            // ★ 修正: ProgressBarとSwipeRefreshLayoutの両方の状態を更新
             if (!binding.swipeRefreshLayout.isRefreshing) {
                 binding.progressBar.isVisible = isLoading
             }
@@ -279,7 +290,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         }
     }
 
-    // (SearchManagerCallbackの実装は変更なし)
     override fun getDetailContent(): List<DetailContent>? { return viewModel.detailContent.value }
     override fun getDetailAdapter(): DetailAdapter { return detailAdapter }
     override fun getLayoutManager(): LinearLayoutManager { return layoutManager }

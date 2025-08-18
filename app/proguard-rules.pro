@@ -23,3 +23,8 @@
 # PersistentCookieJarの内部データクラスSerializableCookieを難読化から除外する
 # これにより、GsonがJSONとの間で正しくシリアライズ/デシリアライズできるようになる
 -keep class com.example.hutaburakari.PersistentCookieJar$SerializableCookie { *; }
+-keep class com.example.hutaburakari.Bookmark { *; }
+-keep class com.example.hutaburakari.cache.CachedDetails { *; }
+-keep class com.example.hutaburakari.DetailContent { *; }
+-keep class com.example.hutaburakari.DetailContent$* { *; }
+-keep class com.example.hutaburakari.FutabaResponse { *; }

@@ -147,8 +147,8 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                     }
 
                     // ★★★ ここからが変更点 ★★★
-                    // 5件解析するごとに、UIに途中経過を通知する
-                    if (index > 0 && index % 5 == 0) {
+                    // 2件解析するごとに、UIに途中経過を通知する
+                    if (index > 0 && index % 2 == 0) {
                         _detailContent.postValue(progressivelyLoadedContent.toList())
                     }
                     // ★★★ ここまで ★★★

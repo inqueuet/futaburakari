@@ -51,11 +51,12 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onResNumClickListener: ((resNum: String, resBody: String) -> Unit)? = null
     private var currentSearchQuery: String? = null
 
-    private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
-    private val resNumPatternOriginal = Pattern.compile("No\\.(\\d+)") // Used for ClickableSpan targeting
-    private val sodaNePattern = Pattern.compile("(そうだね\\d*)|(No\\.\\d+\\s*([+＋]))")
+    // ★ ViewHolderからアクセスできるよう、ファイル拡張子のリストを定義
+    val mediaExt = setOf("jpg","jpeg","png","gif","webp","webm","mp4","mov","avi","flv","mkv")
 
-    // ZWSP character for inserting controllable spaces
+    private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
+    private val resNumPatternOriginal = Pattern.compile("No\\.(\\d+)")
+    private val sodaNePattern = Pattern.compile("(そうだね\\d*)|(No\\.\\d+\\s*([+＋]))")
     private val zwsp = "\u200B"
 
     fun setSearchQuery(query: String?) {
@@ -73,9 +74,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             return paddingPx
         }
 
-        override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
-            // Draw nothing, as this span only creates space.
-        }
+        override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {}
     }
 
     private fun buildDisplayOnlyPaddedText(tv: TextView, raw: CharSequence): CharSequence {
@@ -96,7 +95,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     }
 
     private fun applyZwspPadding(tv: TextView, s: Spannable) {
-        val medium = tv.dpToPx(4)
+        val medium = tv.dpToPx(4) // 余白を4dpに調整
         var index = 0
         while (index < s.length) {
             index = s.toString().indexOf(zwsp, index)
@@ -222,7 +221,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             val resNumMatcher = resNumPatternForClickableSpan.matcher(contentString)
             if (resNumMatcher.find()) {
                 mainResNum = resNumMatcher.group(1)
-                val resNumText = resNumMatcher.group(0)
                 val start = resNumMatcher.start()
                 val end = resNumMatcher.end()
 
@@ -238,11 +236,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 }
                 if (start < end && end <= spannableBuilder.length) {
                     spannableBuilder.setSpan(resNumClickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                } else {
-                    Log.e("TextViewHolder", "Invalid range for ResNum ClickableSpan: $start-$end, length: ${spannableBuilder.length}")
                 }
-            } else {
-                Log.w("TextViewHolder", "Main resNum (No.xxx) for ClickableSpan NOT found in: ${contentString.take(100)}")
             }
 
             val quotePattern = Pattern.compile("^>(.+)$", Pattern.MULTILINE)
@@ -327,12 +321,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             spanEnd,
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
-                    } else {
-                        Log.e("TextViewHolder", "Invalid range for SodaNe span: $spanStart-$spanEnd, length: ${spannableBuilder.length}")
                     }
                 }
-            } else {
-                Log.w("TextViewHolder", "Skipping SodaNe/Plus span setup because mainResNum is null for content: ${contentString.take(50)}")
             }
 
             if (!searchQuery.isNullOrEmpty()) {
@@ -349,7 +339,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
                     } else {
-                        Log.e("TextViewHolder", "Invalid range for search highlight: $startIndex-$endIndex, length: ${spannableBuilder.length}")
                         break
                     }
                     startIndex = textLc.indexOf(queryLc, endIndex)
@@ -394,27 +383,35 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 return true
                             }
 
+                            // ★★★ ここからが修正箇所 ★★★
                             val urlSpan = spans.firstOrNull { it is URLSpan }
                             if (urlSpan != null) {
-                                val urlValue =  (urlSpan as URLSpan).getURL()
-                                if (urlValue != null && !urlValue.startsWith("javascript:")) {
-                                    urlSpan.onClick(widget)
-                                    return true
+                                val urlValue = (urlSpan as URLSpan).url
+                                if (urlValue != null) {
+                                    // リンク先がメディアファイルかどうかを判定
+                                    val isMediaFile = urlValue.substringAfterLast('.', "").lowercase() in adapter.mediaExt
+                                    if (isMediaFile) {
+                                        // メディアファイルなら、ファイル名で返信画面を呼ぶ
+                                        val fileName = urlValue.substringAfterLast('/')
+                                        adapter.onQuoteClickListener?.invoke(fileName)
+                                        return true // 処理完了
+                                    } else if (!urlValue.startsWith("javascript:")) {
+                                        // 通常のURLならブラウザで開く
+                                        urlSpan.onClick(widget)
+                                        return true // 処理完了
+                                    }
                                 }
                             }
+                            // ★★★ ここまで ★★★
 
                             val otherClickableSpans = spans
-                                .filter { it !is SodaNeClickableSpan && !(it is URLSpan && (it as URLSpan).url?.startsWith("javascript:") == false) }
+                                .filter { it !is SodaNeClickableSpan && it !is URLSpan }
 
                             val target = otherClickableSpans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
 
                             if (target != null) {
                                 target.onClick(widget)
                                 return true
-                            } else {
-                                if (urlSpan != null && (urlSpan as URLSpan).url?.startsWith("javascript:") == true) {
-                                    return true // Event consumed
-                                }
                             }
                         }
                     }
@@ -448,7 +445,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val imageView: ImageView = view.findViewById(R.id.detailImageView)
         private val promptTextView: TextView = view.findViewById(R.id.promptTextView)
 
-        // dpをピクセルに変換するためのヘルパー関数
         private fun Int.dpToPx(): Int {
             val scale = itemView.resources.displayMetrics.density
             return (this * scale + 0.5f).toInt()
@@ -462,24 +458,19 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 start()
             }
 
-            Log.d("DetailAdapter", "Binding image: ${item.imageUrl}, Prompt: ${item.prompt}")
-
             imageView.load(item.imageUrl) {
                 crossfade(true)
                 placeholder(progressDrawable)
                 error(android.R.drawable.ic_dialog_alert)
                 listener(
                     onStart = { _ ->
-                        // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
-                        imageView.setMinimumHeight(10.dpToPx())
+                        imageView.minimumHeight = 10.dpToPx()
                     },
                     onSuccess = { _, _ ->
-                        // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
-                        imageView.setMinimumHeight(0)
+                        imageView.minimumHeight = 0
                     },
                     onError = { _, _ ->
-                        // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
-                        imageView.setMinimumHeight(0)
+                        imageView.minimumHeight = 0
                     }
                 )
                 size(ViewSizeResolver(imageView))
