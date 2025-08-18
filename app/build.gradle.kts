@@ -81,6 +81,7 @@ dependencies {
     implementation("com.google.dagger:hilt-android:2.55") // バージョンを2.56.2に変更
     ksp("com.google.dagger:hilt-compiler:2.55")      // バージョンを2.56.2に変更
     implementation("com.github.franmontiel:PersistentCookieJar:v1.0.1")
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

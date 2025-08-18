@@ -37,6 +37,7 @@ import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.CircularProgressDrawable
 import coil.load
 import coil.size.ViewSizeResolver
 import kotlinx.coroutines.launch
@@ -69,7 +70,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
     private class PaddingAfterSpan(private val paddingPx: Int) : ReplacementSpan() {
         override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
-            // The ZWSP itself has no width, so we only return the padding.
             return paddingPx
         }
 
@@ -78,10 +78,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         }
     }
 
-    /**
-     * Applies PaddingAfterSpan to all Zero-Width Space (ZWSP) characters found in the text.
-     * The ZWSP characters should be pre-inserted into the text where visual spaces are desired.
-     */
     private fun buildDisplayOnlyPaddedText(tv: TextView, raw: CharSequence): CharSequence {
         if (raw !is Spannable) {
             val spannableString = SpannableString(raw)
@@ -92,21 +88,21 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         val spannableToProcess: Spannable = if (raw is SpannableString || raw is SpannableStringBuilder) {
             raw as Spannable
         } else {
-            SpannableString(raw) 
+            SpannableString(raw)
         }
-        
+
         applyZwspPadding(tv, spannableToProcess)
         return spannableToProcess
     }
 
     private fun applyZwspPadding(tv: TextView, s: Spannable) {
-        val medium = tv.dpToPx(6) 
+        val medium = tv.dpToPx(6)
         var index = 0
         while (index < s.length) {
             index = s.toString().indexOf(zwsp, index)
             if (index == -1) break
             s.setSpan(PaddingAfterSpan(medium), index, index + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            index += zwsp.length 
+            index += zwsp.length
         }
     }
 
@@ -145,14 +141,14 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         return when (viewType) {
             VIEW_TYPE_TEXT -> TextViewHolder(
                 LayoutInflater.from(parent.context).inflate(R.layout.detail_item_text, parent, false),
-                this, 
+                this,
                 onQuoteClickListener,
                 onSodaNeClickListener,
                 fileNamePattern,
-                resNumPatternOriginal, 
+                resNumPatternOriginal,
                 sodaNePattern,
                 onResNumClickListener,
-                zwsp 
+                zwsp
             )
             VIEW_TYPE_IMAGE -> ImageViewHolder(
                 LayoutInflater.from(parent.context).inflate(R.layout.detail_item_image, parent, false),
@@ -187,21 +183,21 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val onQuoteClickListener: ((quotedText: String) -> Unit)?,
         private val onSodaNeClickListener: ((resNum: String) -> Unit)?,
         private val fileNamePattern: Pattern,
-        private val resNumPatternForClickableSpan: Pattern, 
+        private val resNumPatternForClickableSpan: Pattern,
         private val sodaNePatternForClick: Pattern,
         private val onResNumClickListener: ((resNum: String, resBody: String) -> Unit)?,
-        private val zwsp: String 
+        private val zwsp: String
     ) : RecyclerView.ViewHolder(view) {
         private val textView: TextView = view.findViewById(R.id.detailTextView)
 
         private val patternsForZwspInsertion = listOf(
-            Regex("(\\d+)</strong>") to "$1$zwsp", 
+            Regex("(\\d+)</strong>") to "$1$zwsp",
             Regex("(無念)") to "$1$zwsp",
             Regex("(Name)") to "$1$zwsp",
             Regex("(としあき)") to "$1$zwsp",
-            Regex("(\\d{2}/\\d{2}/\\d{2}\\([^)]+\\)\\d{2}:\\d{2}:\\d{2})") to "$1$zwsp", 
-            Regex("(ID:[\\w./+]+)") to "$1$zwsp", 
-            Regex("(No\\.\\d+)") to "$1$zwsp"  
+            Regex("(\\d{2}/\\d{2}/\\d{2}\\([^)]+\\)\\d{2}:\\d{2}:\\d{2})") to "$1$zwsp",
+            Regex("(ID:[\\w./+]+)") to "$1$zwsp",
+            Regex("(No\\.\\d+)") to "$1$zwsp"
         )
 
         private fun insertZwspForPadding(htmlContent: String): String {
@@ -209,7 +205,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             patternsForZwspInsertion.forEach { (pattern, replacement) ->
                 processedHtml = pattern.replace(processedHtml, replacement)
             }
-             processedHtml = processedHtml.replaceFirst(Regex("^(\\d+)(?=\\s)"), "$1$zwsp") 
+            processedHtml = processedHtml.replaceFirst(Regex("^(\\d+)(?=\\s)"), "$1$zwsp")
             return processedHtml
         }
 
@@ -219,37 +215,36 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
             val textWithVisualPadding = adapter.buildDisplayOnlyPaddedText(textView, textFromHtmlWithZwsp)
             val spannableBuilder = SpannableStringBuilder(textWithVisualPadding)
-            val contentString = spannableBuilder.toString() 
+            val contentString = spannableBuilder.toString()
 
             var mainResNum: String? = null
 
             val resNumMatcher = resNumPatternForClickableSpan.matcher(contentString)
-            if (resNumMatcher.find()) { 
-                mainResNum = resNumMatcher.group(1) 
-                val resNumText = resNumMatcher.group(0) 
+            if (resNumMatcher.find()) {
+                mainResNum = resNumMatcher.group(1)
+                val resNumText = resNumMatcher.group(0)
                 val start = resNumMatcher.start()
                 val end = resNumMatcher.end()
 
                 val resNumClickableSpan = object : ClickableSpan() {
                     override fun onClick(widget: View) {
-                        val quotedResNum = ">No.${mainResNum}" 
+                        val quotedResNum = ">No.${mainResNum}"
                         onResNumClickListener?.invoke(mainResNum!!, quotedResNum)
                     }
                     override fun updateDrawState(ds: TextPaint) {
                         super.updateDrawState(ds)
-                        ds.isUnderlineText = true 
+                        ds.isUnderlineText = true
                     }
                 }
                 if (start < end && end <= spannableBuilder.length) {
                     spannableBuilder.setSpan(resNumClickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    Log.d("TextViewHolder", "Set ClickableSpan for ResNum: $resNumText at $start-$end")
                 } else {
                     Log.e("TextViewHolder", "Invalid range for ResNum ClickableSpan: $start-$end, length: ${spannableBuilder.length}")
                 }
             } else {
-                 Log.w("TextViewHolder", "Main resNum (No.xxx) for ClickableSpan NOT found in: ${contentString.take(100)}")
+                Log.w("TextViewHolder", "Main resNum (No.xxx) for ClickableSpan NOT found in: ${contentString.take(100)}")
             }
-            
+
             val quotePattern = Pattern.compile("^>(.+)$", Pattern.MULTILINE)
             val quoteMatcher = quotePattern.matcher(contentString)
             while (quoteMatcher.find()) {
@@ -266,7 +261,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             ds.isUnderlineText = false
                         }
                     }
-                    spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (start >= 0 && end <= spannableBuilder.length) {
+                        spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
                 }
             }
 
@@ -285,7 +282,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             ds.isUnderlineText = true
                         }
                     }
-                    spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (start >= 0 && end <= spannableBuilder.length) {
+                        spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
                 }
             }
 
@@ -294,15 +293,12 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 while (sodaNeMatcher.find()) {
                     var spanStart = -1
                     var spanEnd = -1
-                    var logMessage = ""
-
                     val matchedSodaNeWithDigits = sodaNeMatcher.group(1)
                     val matchedNoDotPatternWithPlus = sodaNeMatcher.group(2)
 
                     if (matchedSodaNeWithDigits != null) {
                         spanStart = sodaNeMatcher.start(1)
                         spanEnd = sodaNeMatcher.end(1)
-                        logMessage = "Found 'そうだね': '$matchedSodaNeWithDigits' for mainResNum: '$mainResNum'. Clickable Range: $spanStart-$spanEnd"
                     } else if (matchedNoDotPatternWithPlus != null) {
                         val tempResNumPattern = Pattern.compile("No\\.(\\d+)")
                         val tempMatcher = tempResNumPattern.matcher(matchedNoDotPatternWithPlus)
@@ -313,30 +309,24 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 if (actualPlusSign != null) {
                                     spanStart = sodaNeMatcher.start(3)
                                     spanEnd = sodaNeMatcher.end(3)
-                                    logMessage = "Found '+': '$actualPlusSign' (from '$matchedNoDotPatternWithPlus') associated with mainResNum: '$mainResNum'. Clickable Range: $spanStart-$spanEnd"
                                 } else {
-                                     Log.w("TextViewHolder", "Error: Matched NoPlusContainer '$matchedNoDotPatternWithPlus' but couldn't get group(3) for '+'. MainResNum: '$mainResNum'. Skipping.")
                                     continue
                                 }
                             } else {
-                                 Log.d("TextViewHolder", "Found '$matchedNoDotPatternWithPlus', but its resNum '$numInPlusContext' does NOT match current item's mainResNum '$mainResNum'. Skipping span for this match.")
                                 continue
                             }
                         } else {
-                             Log.w("TextViewHolder", "Error: Could not extract resNum from NoPlusContainer '$matchedNoDotPatternWithPlus' even though it matched. MainResNum: '$mainResNum'. Skipping.")
                             continue
                         }
                     }
 
                     if (spanStart != -1 && spanEnd != -1 && spanEnd <= spannableBuilder.length) {
-                        Log.d("TextViewHolder", logMessage)
                         spannableBuilder.setSpan(
                             SodaNeClickableSpan(mainResNum, onSodaNeClickListener),
                             spanStart,
                             spanEnd,
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
-                        Log.d("TextViewHolder", "Set SodaNeClickableSpan for resNum: '$mainResNum' on spannableBuilder at range $spanStart-$spanEnd")
                     } else {
                         Log.e("TextViewHolder", "Invalid range for SodaNe span: $spanStart-$spanEnd, length: ${spannableBuilder.length}")
                     }
@@ -351,7 +341,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 var startIndex = textLc.indexOf(queryLc)
                 while (startIndex >= 0) {
                     val endIndex = startIndex + queryLc.length
-                     if (startIndex < endIndex && endIndex <= spannableBuilder.length) {
+                    if (startIndex < endIndex && endIndex <= spannableBuilder.length) {
                         spannableBuilder.setSpan(
                             BackgroundColorSpan(Color.YELLOW),
                             startIndex,
@@ -360,23 +350,20 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         )
                     } else {
                         Log.e("TextViewHolder", "Invalid range for search highlight: $startIndex-$endIndex, length: ${spannableBuilder.length}")
-                        break 
+                        break
                     }
                     startIndex = textLc.indexOf(queryLc, endIndex)
-                     if (startIndex == -1) break 
+                    if (startIndex == -1) break
                 }
             }
 
             textView.text = spannableBuilder
-            textView.movementMethod = object : LinkMovementMethod() { 
+            textView.movementMethod = object : LinkMovementMethod() {
                 override fun handleMovementKey(widget: TextView?, buffer: Spannable?, keyCode: Int, movementMetaState: Int, event: KeyEvent?): Boolean {
-                    // Per documentation, returning false for unhandled keys is fine for LinkMovementMethod.
-                    // This can prevent focus issues with RecyclerView items if not handled carefully.
-                    return false 
+                    return false
                 }
 
                 override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
-                    Log.d("CustomLinkMovement", "onTouchEvent: action=${event.action}, x=${event.x}, y=${event.y}")
                     val action = event.action
 
                     if (action == MotionEvent.ACTION_UP) {
@@ -391,69 +378,51 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val layout = widget.layout
                         val line = layout.getLineForVertical(y)
                         if (line < 0 || line >= layout.lineCount) {
-                            Log.d("CustomLinkMovement", "Invalid line: $line")
                             return super.onTouchEvent(widget, buffer, event)
                         }
                         val off = layout.getOffsetForHorizontal(line, x.toFloat())
-                         if (off < 0 || off > buffer.length) { 
-                             Log.d("CustomLinkMovement", "Invalid offset: $off, buffer length: ${buffer.length}")
-                             return super.onTouchEvent(widget, buffer, event)
+                        if (off < 0 || off > buffer.length) {
+                            return super.onTouchEvent(widget, buffer, event)
                         }
 
                         val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
-                        Log.d("LinkMovementMethod", "onTouchEvent: Found ${spans.size} spans at position.") // ★ログ1
-                        spans.forEachIndexed { index, span ->
-                            Log.d("LinkMovementMethod", "  Span $index: ${span.javaClass.simpleName}, Text: '${buffer.subSequence(buffer.getSpanStart(span), buffer.getSpanEnd(span))}'") // ★ログ2
-                        }
 
                         if (spans.isNotEmpty()) {
                             val sodaNeSpan = spans.firstOrNull { it is SodaNeClickableSpan }
                             if (sodaNeSpan != null) {
-                                Log.d("LinkMovementMethod", "onTouchEvent: SodaNeClickableSpan will be clicked.") // ★ログ3
                                 sodaNeSpan.onClick(widget)
                                 return true
                             }
 
-                            val urlSpan = spans.firstOrNull { it is URLSpan } 
+                            val urlSpan = spans.firstOrNull { it is URLSpan }
                             if (urlSpan != null) {
                                 val urlValue =  (urlSpan as URLSpan).getURL()
                                 if (urlValue != null && !urlValue.startsWith("javascript:")) {
-                                    Log.d("LinkMovementMethod", "onTouchEvent: URLSpan will be clicked: $urlValue") // ★ログ4
                                     urlSpan.onClick(widget)
                                     return true
-                                } else {
-                                    Log.d("LinkMovementMethod", "onTouchEvent: JavaScript URLSpan found and skipped: $urlValue") // ★ログ5
                                 }
                             }
 
                             val otherClickableSpans = spans
                                 .filter { it !is SodaNeClickableSpan && !(it is URLSpan && (it as URLSpan).url?.startsWith("javascript:") == false) }
-                             Log.d("LinkMovementMethod", "onTouchEvent: Filtered otherClickableSpans count: ${otherClickableSpans.size}") // ★ログ6
 
                             val target = otherClickableSpans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
 
                             if (target != null) {
-                                Log.d("LinkMovementMethod", "onTouchEvent: Target ClickableSpan (minByOrNull) will be clicked. Type: ${target.javaClass.simpleName}, Text: '${buffer.subSequence(buffer.getSpanStart(target), buffer.getSpanEnd(target))}'") // ★ログ7
                                 target.onClick(widget)
                                 return true
                             } else {
-                                Log.d("LinkMovementMethod", "onTouchEvent: No specific target found after filtering.") // ★ログ8
-                                // Fallback if only javascript URL or no specific span was found
                                 if (urlSpan != null && (urlSpan as URLSpan).url?.startsWith("javascript:") == true) {
-                                    // Potentially handle javascript: if needed, or just consume the event
-                                    Log.d("LinkMovementMethod", "Fallback: Consuming event for javascript: URL span.")
                                     return true // Event consumed
                                 }
                             }
-                        } else {
-                             Log.d("LinkMovementMethod", "onTouchEvent: No spans found at position.") // ★ログ9
                         }
                     }
                     return super.onTouchEvent(widget, buffer, event)
                 }
             }
             textView.setOnLongClickListener {
-                showCopyDialog(it.context, spannableBuilder.toString()) 
+                showCopyDialog(it.context, spannableBuilder.toString())
                 true
             }
         }
@@ -462,7 +431,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             AlertDialog.Builder(context)
                 .setItems(arrayOf("テキストをコピー")) { _, _ ->
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    // 各行の先頭に "> " を追加
                     val modifiedText = textToCopy.lines().joinToString("\n") { "> $it" }
                     val clip = ClipData.newPlainText("Copied Text", modifiedText)
                     clipboard.setPrimaryClip(clip)
@@ -480,21 +448,38 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val imageView: ImageView = view.findViewById(R.id.detailImageView)
         private val promptTextView: TextView = view.findViewById(R.id.promptTextView)
 
+        // dpをピクセルに変換するためのヘルパー関数
+        private fun Int.dpToPx(): Int {
+            val scale = itemView.resources.displayMetrics.density
+            return (this * scale + 0.5f).toInt()
+        }
+
         fun bind(item: DetailContent.Image, searchQuery: String?) {
+            val progressDrawable = CircularProgressDrawable(itemView.context).apply {
+                strokeWidth = 5f
+                centerRadius = 30f
+                setColorSchemeColors(Color.DKGRAY)
+                start()
+            }
+
             Log.d("DetailAdapter", "Binding image: ${item.imageUrl}, Prompt: ${item.prompt}")
+
             imageView.load(item.imageUrl) {
                 crossfade(true)
-                placeholder(R.drawable.ic_launcher_background)
+                placeholder(progressDrawable)
                 error(android.R.drawable.ic_dialog_alert)
                 listener(
                     onStart = { _ ->
-                        Log.d("DetailAdapter_Coil", "Image load START for: ${item.imageUrl}")
+                        // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
+                        imageView.setMinimumHeight(100.dpToPx())
                     },
-                    onSuccess = { _, metadata ->
-                        Log.d("DetailAdapter_Coil", "Image load SUCCESS for: ${item.imageUrl}. Source: ${metadata.dataSource}")
+                    onSuccess = { _, _ ->
+                        // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
+                        imageView.setMinimumHeight(0)
                     },
-                    onError = { _, result ->
-                        Log.e("DetailAdapter_Coil", "Image load ERROR for: ${item.imageUrl}. Error: ${result.throwable}")
+                    onError = { _, _ ->
+                        // ▼▼▼ 修正: プロパティではなくメソッド呼び出しに変更 ▼▼▼
+                        imageView.setMinimumHeight(0)
                     }
                 )
                 size(ViewSizeResolver(imageView))
@@ -512,7 +497,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             if (!item.prompt.isNullOrBlank()) {
                 promptTextView.isVisible = true
                 val promptText = item.prompt
-                val spannableBuilder = SpannableStringBuilder(promptText) 
+                val spannableBuilder = SpannableStringBuilder(promptText)
 
                 val fileMatcher = fileNamePattern.matcher(promptText)
                 while (fileMatcher.find()) {
@@ -529,7 +514,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 ds.isUnderlineText = true
                             }
                         }
-                        spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (start >= 0 && end <= spannableBuilder.length) {
+                            spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                     }
                 }
 
@@ -539,12 +526,13 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     var startPos = textLc.indexOf(queryLc)
                     while (startPos >= 0) {
                         val endPos = startPos + queryLc.length
-                        spannableBuilder.setSpan(BackgroundColorSpan(Color.YELLOW), startPos, endPos, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (startPos >= 0 && endPos <= spannableBuilder.length) {
+                            spannableBuilder.setSpan(BackgroundColorSpan(Color.YELLOW), startPos, endPos, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                         startPos = textLc.indexOf(queryLc, endPos)
                     }
                 }
                 promptTextView.text = spannableBuilder
-                // ① LinkMovementMethod を差し替え
                 promptTextView.movementMethod = object : LinkMovementMethod() {
                     override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
                         if (event.action == MotionEvent.ACTION_UP) {
@@ -559,30 +547,25 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             val off = layout.getOffsetForHorizontal(line, x.toFloat())
                             val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
 
-                            // まず ClickableSpan（= ファイル名など）を最優先で処理
                             if (spans.isNotEmpty()) {
-                                // 最も範囲が短い（=よりピンポイント）Spanを優先
                                 val target = spans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
                                 target?.onClick(widget)
                                 return true
                             }
 
-                            // ここに来たらリンクが無いタップ → 既存の全文表示にフォールバック
                             val context = widget.context
                             val intent = Intent(context, MediaViewActivity::class.java)
                             intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
-                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString()) // widget.text should be promptText
+                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString())
                             context.startActivity(intent)
                             return true
                         }
                         return super.onTouchEvent(widget, buffer, event)
                     }
                 }
-                // ② 既存の setOnClickListener は削除 (この行の上の promptTextView.setOnClickListener { ... } を削除済)
             } else {
                 promptTextView.isVisible = false
                 promptTextView.text = null
-                // promptTextView.setOnClickListener(null) // 既にOnClickListenerは設定しない方針
             }
 
             imageView.setOnLongClickListener {
@@ -635,7 +618,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         fun bind(item: DetailContent.Video, searchQuery: String?) {
             releasePlayer()
             val context = itemView.context
-            Log.d("DetailAdapter", "Binding video: ${item.videoUrl}, Prompt: ${item.prompt}")
             exoPlayer = ExoPlayer.Builder(context).build().also { player ->
                 playerView.player = player
                 val mediaItem = MediaItem.fromUri(item.videoUrl)
@@ -656,7 +638,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             if (!item.prompt.isNullOrBlank()) {
                 promptTextView.isVisible = true
                 val promptText = item.prompt
-                val spannableBuilder = SpannableStringBuilder(promptText) 
+                val spannableBuilder = SpannableStringBuilder(promptText)
 
                 val fileMatcher = fileNamePattern.matcher(promptText)
                 while (fileMatcher.find()) {
@@ -673,7 +655,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 ds.isUnderlineText = true
                             }
                         }
-                        spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (start >= 0 && end <= spannableBuilder.length) {
+                            spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                     }
                 }
 
@@ -683,12 +667,13 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     var startPos = textLc.indexOf(queryLc)
                     while (startPos >= 0) {
                         val endPos = startPos + queryLc.length
-                        spannableBuilder.setSpan(BackgroundColorSpan(Color.YELLOW), startPos, endPos, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (startPos >= 0 && endPos <= spannableBuilder.length) {
+                            spannableBuilder.setSpan(BackgroundColorSpan(Color.YELLOW), startPos, endPos, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                         startPos = textLc.indexOf(queryLc, endPos)
                     }
                 }
                 promptTextView.text = spannableBuilder
-                // ① LinkMovementMethod を差し替え
                 promptTextView.movementMethod = object : LinkMovementMethod() {
                     override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
                         if (event.action == MotionEvent.ACTION_UP) {
@@ -703,37 +688,32 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             val off = layout.getOffsetForHorizontal(line, x.toFloat())
                             val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
 
-                            // まず ClickableSpan（= ファイル名など）を最優先で処理
                             if (spans.isNotEmpty()) {
-                                // 最も範囲が短い（=よりピンポイント）Spanを優先
                                 val target = spans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
                                 target?.onClick(widget)
                                 return true
                             }
 
-                            // ここに来たらリンクが無いタップ → 既存の全文表示にフォールバック
                             val context = widget.context
                             val intent = Intent(context, MediaViewActivity::class.java)
                             intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
-                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString()) // widget.text should be promptText
+                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString())
                             context.startActivity(intent)
                             return true
                         }
                         return super.onTouchEvent(widget, buffer, event)
                     }
                 }
-                 // ② 既存の setOnClickListener は削除 (この行の上の promptTextView.setOnClickListener { ... } を削除済)
             } else {
                 promptTextView.isVisible = false
                 promptTextView.text = null
-                // promptTextView.setOnClickListener(null) // 既にOnClickListenerは設定しない方針
             }
 
             playerView.setOnLongClickListener {
                 showSaveDialog(item)
                 true
             }
-             item.prompt?.takeIf { it.isNotBlank() }?.let { textToCopy ->
+            item.prompt?.takeIf { it.isNotBlank() }?.let { textToCopy ->
                 promptTextView.setOnLongClickListener {
                     showCopyDialog(itemView.context, textToCopy)
                     true
@@ -806,7 +786,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val listener: ((String) -> Unit)?
     ) : ClickableSpan() {
         override fun onClick(widget: View) {
-            Log.d("SodaNeClickableSpan", "onClick called with resNum: $resNum")
             listener?.invoke(resNum)
         }
 
@@ -822,9 +801,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             return when {
                 oldItem is DetailContent.Image && newItem is DetailContent.Image -> oldItem.imageUrl == newItem.imageUrl
                 oldItem is DetailContent.Video && newItem is DetailContent.Video -> oldItem.videoUrl == newItem.videoUrl
-                oldItem is DetailContent.Text && newItem is DetailContent.Text -> oldItem.id == newItem.id 
+                oldItem is DetailContent.Text && newItem is DetailContent.Text -> oldItem.id == newItem.id
                 oldItem is DetailContent.ThreadEndTime && newItem is DetailContent.ThreadEndTime -> oldItem.id == newItem.id
-                else -> oldItem.javaClass == newItem.javaClass && oldItem.id == newItem.id 
+                else -> oldItem.javaClass == newItem.javaClass && oldItem.id == newItem.id
             }
         }
 
