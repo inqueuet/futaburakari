@@ -30,6 +30,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private lateinit var layoutManager: LinearLayoutManager
     private val scrollHistory = ArrayDeque<Pair<Int, Int>>(2)
     private lateinit var detailSearchManager: DetailSearchManager
+    private lateinit var fastScrollHelper: FastScrollHelper
 
     private val replyActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -73,6 +74,15 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
         setupCustomToolbarElements()
         setupRecyclerView()
+
+        // FastScrollHelperの初期化
+        fastScrollHelper = FastScrollHelper(
+            binding.detailRecyclerView,
+            binding.fastScrollTrack,
+            binding.fastScrollThumb,
+            layoutManager
+        )
+
         observeViewModel()
         viewModel.fetchDetails(currentUrl!!)
         detailSearchManager.setupSearchNavigation()
@@ -350,10 +360,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             }
             binding.detailRecyclerView.isVisible = (!isLoading || binding.swipeRefreshLayout.isRefreshing) && !detailSearchManager.isSearchActive()
         }
+
         viewModel.detailContent.observe(this) { contentList ->
             val hadPreviousContent = detailAdapter.itemCount > 0
             detailAdapter.submitList(contentList) {
                 if (contentList.isNotEmpty()) {
+                    // FastScrollの位置を更新
+                    fastScrollHelper.updateScrollPosition()
+
                     currentUrl?.let { url ->
                         if (detailSearchManager.getCurrentSearchQuery() != null && detailSearchManager.isSearchViewExpanded()) {
                             detailSearchManager.getCurrentSearchQuery()?.let { query ->
@@ -365,16 +379,23 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                                 if (position >= 0 && position < contentList.size) {
                                     binding.detailRecyclerView.post {
                                         layoutManager.scrollToPositionWithOffset(position, offset)
+                                        // スクロール後にFastScrollの位置も更新
+                                        fastScrollHelper.updateScrollPosition()
                                     }
                                 }
                             }
                         }
                     }
+
+                    // アイテム数に応じてFastScrollの表示/非表示を切り替え
+                    fastScrollHelper.setFastScrollEnabled(contentList.size > 20)
                 } else {
                     detailSearchManager.clearSearch()
+                    fastScrollHelper.setFastScrollEnabled(false)
                 }
             }
         }
+
         viewModel.error.observe(this) { errorMessage ->
             if (!errorMessage.isNullOrEmpty()) {
                 showToastOnUiThread(errorMessage, Toast.LENGTH_LONG)
