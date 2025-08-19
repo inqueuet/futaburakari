@@ -77,6 +77,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 val progressivelyLoadedContent = mutableListOf<DetailContent>()
                 val promptJobs = mutableListOf<Deferred<Pair<Int, String?>>>()
 
+                // ★ 初期状態は空リストを設定（途中経過の通知は削除）
                 _detailContent.postValue(emptyList())
 
                 val threadContainer = document.selectFirst("div.thre")
@@ -200,10 +201,8 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
 
-                    // ★ 2件解析することに、UIに途中経過を通知する（元仕様のまま）
-                    if (index > 0 && index % 2 == 0) {
-                        _detailContent.postValue(progressivelyLoadedContent.toList())
-                    }
+                    // ★ 途中経過の通知を削除（スクロールパフォーマンスを優先）
+                    // 元のコード: if (index > 0 && index % 2 == 0) { _detailContent.postValue(progressivelyLoadedContent.toList()) }
                 }
 
                 val scriptElements = document.select("script")
@@ -232,10 +231,11 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
 
-                // 最終結果を通知
+                // ★ 全ての解析が完了してから一度だけ通知
                 _detailContent.postValue(progressivelyLoadedContent.toList())
                 _isLoading.value = false
 
+                // バックグラウンドでメタデータを取得し、完了後に再度更新
                 viewModelScope.launch(Dispatchers.Default) {
                     try {
                         val allPromptResults = promptJobs.awaitAll()
