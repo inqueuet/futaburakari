@@ -27,13 +27,13 @@ import kotlin.math.min
 object MetadataExtractor {
 
     // ====== 同時接続数制限設定 ======
-    private const val MAX_CONCURRENT_CONNECTIONS = 2 // 同時接続数を2に制限
+    private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を2に制限
     private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
     private val activeConnectionCount = AtomicInteger(0)
 
     // ====== 既存の設定値 ======
-    private const val CONNECT_TIMEOUT_MS = 10_000
-    private const val READ_TIMEOUT_MS = 10_000
+    private const val CONNECT_TIMEOUT_MS = 15_000
+    private const val READ_TIMEOUT_MS = 15_000
 
     private const val FIRST_EXIF_BYTES = 256 * 1024
     private const val PNG_WINDOW_BYTES = 256 * 1024
