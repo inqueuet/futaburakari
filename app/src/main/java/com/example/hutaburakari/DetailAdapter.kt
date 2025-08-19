@@ -51,7 +51,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onResNumClickListener: ((resNum: String, resBody: String) -> Unit)? = null
     private var currentSearchQuery: String? = null
 
-    // ★ ViewHolderからアクセスできるよう、ファイル拡張子のリストを定義
+    // ☆ ViewHolderからアクセスできるよう、ファイル拡張子のリストを定義
     val mediaExt = setOf("jpg","jpeg","png","gif","webp","webm","mp4","mov","avi","flv","mkv")
 
     private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
@@ -248,6 +248,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     val end = quoteMatcher.end()
                     val clickableSpan = object : ClickableSpan() {
                         override fun onClick(widget: View) {
+                            Log.d("DetailAdapter", "Quote clicked: $quoteText")
                             onQuoteClickListener?.invoke(quoteText)
                         }
                         override fun updateDrawState(ds: TextPaint) {
@@ -269,6 +270,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     val end = fileMatcher.end()
                     val clickableSpan = object : ClickableSpan() {
                         override fun onClick(widget: View) {
+                            Log.d("DetailAdapter", "File name clicked: $fileName")
                             onQuoteClickListener?.invoke(fileName)
                         }
                         override fun updateDrawState(ds: TextPaint) {
@@ -383,7 +385,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 return true
                             }
 
-                            // ★★★ ここからが修正箇所 ★★★
                             val urlSpan = spans.firstOrNull { it is URLSpan }
                             if (urlSpan != null) {
                                 val urlValue = (urlSpan as URLSpan).url
@@ -393,6 +394,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                     if (isMediaFile) {
                                         // メディアファイルなら、ファイル名で返信画面を呼ぶ
                                         val fileName = urlValue.substringAfterLast('/')
+                                        Log.d("DetailAdapter", "Media URL clicked, invoking quote listener with: $fileName")
                                         adapter.onQuoteClickListener?.invoke(fileName)
                                         return true // 処理完了
                                     } else if (!urlValue.startsWith("javascript:")) {
@@ -402,7 +404,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                     }
                                 }
                             }
-                            // ★★★ ここまで ★★★
 
                             val otherClickableSpans = spans
                                 .filter { it !is SodaNeClickableSpan && it !is URLSpan }
@@ -498,6 +499,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val end = fileMatcher.end()
                         val clickableSpan = object : ClickableSpan() {
                             override fun onClick(widget: View) {
+                                Log.d("DetailAdapter", "Prompt file name clicked: $fileName")
                                 onQuoteClickListener?.invoke(fileName)
                             }
                             override fun updateDrawState(ds: TextPaint) {
@@ -639,6 +641,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val end = fileMatcher.end()
                         val clickableSpan = object : ClickableSpan() {
                             override fun onClick(widget: View) {
+                                Log.d("DetailAdapter", "Video prompt file name clicked: $fileName")
                                 onQuoteClickListener?.invoke(fileName)
                             }
                             override fun updateDrawState(ds: TextPaint) {

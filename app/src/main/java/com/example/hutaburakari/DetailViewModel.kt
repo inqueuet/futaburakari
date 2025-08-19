@@ -127,7 +127,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                                 progressivelyLoadedContent.add(mediaContent)
                                 val deferredPrompt = async(Dispatchers.IO) {
                                     try {
-                                        val prompt = withTimeoutOrNull(30000L) {
+                                        val prompt = withTimeoutOrNull(10000L) {
                                             MetadataExtractor.extract(getApplication(), absoluteUrl)
                                         }
                                         if (prompt == null) {

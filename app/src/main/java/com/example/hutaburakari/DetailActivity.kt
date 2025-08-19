@@ -187,8 +187,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             val isMediaFile = quotedText.substringAfterLast('.', "").lowercase() in mediaExt
 
             if (isMediaFile) {
+                // メディアファイルの場合は返信画面を開く
                 currentUrl?.let { url ->
-                    // ▼▼▼ ここを修正 ▼▼▼
                     val threadId = url.substringAfterLast("/").substringBefore(".htm")
                     val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
                     val boardPostUrl = boardBasePath + "futaba.php"
@@ -201,17 +201,20 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                     replyActivityResultLauncher.launch(intent)
                 }
             } else {
-                // ... (既存のスクロールロジックは変更なし)
+                // それ以外の場合はスクロール処理
+                handleQuoteScroll(quotedText)
             }
         }
+
         detailAdapter.onSodaNeClickListener = { resNum -> viewModel.postSodaNe(resNum) }
+
         detailAdapter.onThreadEndTimeClickListener = {
             binding.swipeRefreshLayout.isRefreshing = true
             reloadDetails()
         }
+
         detailAdapter.onResNumClickListener = { resNum, resBody ->
             currentUrl?.let { url ->
-                // ▼▼▼ ここを修正 ▼▼▼
                 val threadId = url.substringAfterLast("/").substringBefore(".htm")
                 val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
                 val boardPostUrl = boardBasePath + "futaba.php"
@@ -231,6 +234,110 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             itemAnimator = null
             setItemViewCacheSize(100)
         }
+    }
+
+    private fun handleQuoteScroll(quotedText: String) {
+        val contentList = viewModel.detailContent.value ?: return
+
+        // 現在のスクロール位置を履歴に保存
+        val firstVisiblePosition = layoutManager.findFirstVisibleItemPosition()
+        if (firstVisiblePosition != RecyclerView.NO_POSITION) {
+            val firstVisibleView = layoutManager.findViewByPosition(firstVisiblePosition)
+            val offset = firstVisibleView?.top ?: 0
+
+            // 履歴は最大2件まで
+            if (scrollHistory.size >= 2) {
+                scrollHistory.removeFirst()
+            }
+            scrollHistory.addLast(Pair(firstVisiblePosition, offset))
+        }
+
+        // 引用先を探す
+        var targetPosition = -1
+
+        // パターン1: レス番号 (No.123 形式)
+        val resNumPattern = """No\.(\d+)""".toRegex()
+        val resNumMatch = resNumPattern.find(quotedText)
+        if (resNumMatch != null) {
+            val targetResNum = resNumMatch.groupValues[1]
+            targetPosition = findPositionByResNum(contentList, targetResNum)
+        }
+
+        // パターン2: ファイル名
+        if (targetPosition == -1) {
+            targetPosition = findPositionByFileName(contentList, quotedText)
+        }
+
+        // パターン3: コメント本文の一部
+        if (targetPosition == -1) {
+            targetPosition = findPositionByContent(contentList, quotedText)
+        }
+
+        // スクロール実行
+        if (targetPosition >= 0) {
+            binding.detailRecyclerView.post {
+                layoutManager.scrollToPositionWithOffset(targetPosition, 20)
+            }
+        } else {
+            Toast.makeText(this, "引用先が見つかりませんでした", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun findPositionByResNum(contentList: List<DetailContent>, resNum: String): Int {
+        contentList.forEachIndexed { index, content ->
+            if (content is DetailContent.Text) {
+                // HTMLからテキストを抽出してNo.XXXのパターンを探す
+                val plainText = Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                if (plainText.contains("No.$resNum")) {
+                    return index
+                }
+            }
+        }
+        return -1
+    }
+
+    private fun findPositionByFileName(contentList: List<DetailContent>, fileName: String): Int {
+        contentList.forEachIndexed { index, content ->
+            when (content) {
+                is DetailContent.Image -> {
+                    if (content.fileName == fileName || content.imageUrl.endsWith(fileName)) {
+                        return index
+                    }
+                }
+                is DetailContent.Video -> {
+                    if (content.fileName == fileName || content.videoUrl.endsWith(fileName)) {
+                        return index
+                    }
+                }
+                is DetailContent.Text -> {
+                    // テキスト内にファイル名が含まれているかチェック
+                    val plainText = Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                    if (plainText.contains(fileName)) {
+                        return index
+                    }
+                }
+                else -> {}
+            }
+        }
+        return -1
+    }
+
+    private fun findPositionByContent(contentList: List<DetailContent>, searchText: String): Int {
+        // 検索テキストを正規化（空白や改行を除去）
+        val normalizedSearch = searchText.trim().replace(Regex("\\s+"), " ")
+
+        contentList.forEachIndexed { index, content ->
+            if (content is DetailContent.Text) {
+                val plainText = Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                val normalizedContent = plainText.trim().replace(Regex("\\s+"), " ")
+
+                // 部分一致で検索
+                if (normalizedContent.contains(normalizedSearch, ignoreCase = true)) {
+                    return index
+                }
+            }
+        }
+        return -1
     }
 
     private fun observeViewModel() {
