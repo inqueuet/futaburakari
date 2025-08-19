@@ -29,8 +29,15 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
 
+    // そうだねの更新通知用
+    private val _sodaNeUpdate = MutableLiveData<Pair<String, Boolean>>()
+    val sodaNeUpdate: LiveData<Pair<String, Boolean>> = _sodaNeUpdate
+
     private val cacheManager = DetailCacheManager(application)
     private var currentUrl: String? = null
+
+    // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
+    private val sodaNeStates = mutableMapOf<String, Boolean>()
 
     // (F) メタデータ抽出の並列数を制限
     private val limitedIO = Dispatchers.IO.limitedParallelism(4)
@@ -42,6 +49,11 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
             _isLoading.value = true
             _error.value = null
             var itemIdCounter = 0L
+
+            // 新しいページを読み込む場合はそうだねの状態をリセット
+            if (forceRefresh || currentUrl != url) {
+                resetSodaNeStates()
+            }
 
             try {
                 if (!forceRefresh) {
@@ -188,7 +200,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
 
-                    // ★ 2件解析するごとに、UIに途中経過を通知する（元仕様のまま）
+                    // ★ 2件解析することに、UIに途中経過を通知する（元仕様のまま）
                     if (index > 0 && index % 2 == 0) {
                         _detailContent.postValue(progressivelyLoadedContent.toList())
                     }
@@ -268,23 +280,32 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
             try {
                 val success = NetworkClient.postSodaNe(resNum, url)
 
                 if (success) {
-                    fetchDetails(url, forceRefresh = true)
+                    // そうだねの状態を更新
+                    sodaNeStates[resNum] = true
+                    // UIに部分更新を通知
+                    _sodaNeUpdate.postValue(Pair(resNum, true))
                 } else {
                     _error.value = "「そうだね」の投稿に失敗しました。"
-                    _isLoading.value = false
                 }
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error in postSodaNe: ${e.message}", e)
                 _error.value = "「そうだね」の投稿中にエラーが発生しました: ${e.message}"
-                _isLoading.value = false
             }
         }
+    }
+
+    // そうだねの状態を取得
+    fun getSodaNeState(resNum: String): Boolean {
+        return sodaNeStates[resNum] ?: false
+    }
+
+    // そうだねの状態をリセット（新しいページを読み込む時など）
+    fun resetSodaNeStates() {
+        sodaNeStates.clear()
     }
 
     // ===== Helpers & Regex =====

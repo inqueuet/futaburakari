@@ -4,9 +4,12 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.text.Html
+import android.text.Spannable
+import android.text.SpannableStringBuilder
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -191,6 +194,11 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private fun setupRecyclerView() {
         detailAdapter = DetailAdapter()
         layoutManager = LinearLayoutManager(this@DetailActivity)
+
+        // そうだねの状態を取得する関数をアダプターに設定
+        detailAdapter.getSodaNeState = { resNum ->
+            viewModel.getSodaNeState(resNum)
+        }
 
         detailAdapter.onQuoteClickListener = clickListenerLambda@{ quotedText ->
             val mediaExt = setOf("jpg","jpeg","png","gif","webp","webm","mp4","mov","avi","flv","mkv")
@@ -396,11 +404,67 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             }
         }
 
+        // そうだねの部分更新を監視
+        viewModel.sodaNeUpdate.observe(this) { (resNum, isClicked) ->
+            // 該当するレス番号のビューを部分更新
+            updateSodaNeInView(resNum, isClicked)
+        }
+
         viewModel.error.observe(this) { errorMessage ->
             if (!errorMessage.isNullOrEmpty()) {
                 showToastOnUiThread(errorMessage, Toast.LENGTH_LONG)
             }
         }
+    }
+
+    /**
+     * そうだねの状態を部分的に更新する
+     */
+    private fun updateSodaNeInView(resNum: String, isClicked: Boolean) {
+        // 現在表示されているビューの中から該当するレス番号を探して更新
+        val firstVisiblePosition = layoutManager.findFirstVisibleItemPosition()
+        val lastVisiblePosition = layoutManager.findLastVisibleItemPosition()
+
+        for (i in firstVisiblePosition..lastVisiblePosition) {
+            val viewHolder = binding.detailRecyclerView.findViewHolderForAdapterPosition(i)
+            if (viewHolder is DetailAdapter.TextViewHolder) {
+                // TextViewHolderのテキストを部分更新
+                updateTextViewSodaNe(viewHolder, resNum, isClicked)
+            }
+        }
+    }
+
+    /**
+     * TextViewHolder内のそうだね部分を更新
+     */
+    private fun updateTextViewSodaNe(viewHolder: DetailAdapter.TextViewHolder, resNum: String, isClicked: Boolean) {
+        val textView = viewHolder.itemView.findViewById<TextView>(R.id.detailTextView)
+        val spannableText = textView.text as? SpannableStringBuilder ?: return
+
+        // 既存のSodaNeClickableSpanを探して更新
+        val spans = spannableText.getSpans(0, spannableText.length, DetailAdapter.SodaNeClickableSpan::class.java)
+
+        spans.forEach { span ->
+            if (span.resNum == resNum) {
+                val start = spannableText.getSpanStart(span)
+                val end = spannableText.getSpanEnd(span)
+                val flags = spannableText.getSpanFlags(span)
+
+                // 古いスパンを削除
+                spannableText.removeSpan(span)
+
+                // 新しいスパンを追加（状態を更新）
+                val newSpan = DetailAdapter.SodaNeClickableSpan(
+                    resNum = resNum,
+                    listener = detailAdapter.onSodaNeClickListener,
+                    isClicked = isClicked
+                )
+                spannableText.setSpan(newSpan, start, end, flags)
+            }
+        }
+
+        // TextViewを再描画
+        textView.text = spannableText
     }
 
     private fun saveCurrentScrollState(url: String) {

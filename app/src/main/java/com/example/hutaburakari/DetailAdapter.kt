@@ -51,6 +51,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onResNumClickListener: ((resNum: String, resBody: String) -> Unit)? = null
     private var currentSearchQuery: String? = null
 
+    // そうだねの状態を取得する関数
+    var getSodaNeState: ((String) -> Boolean)? = null
+
     // ☆ ViewHolderからアクセスできるよう、ファイル拡張子のリストを定義
     val mediaExt = setOf("jpg","jpeg","png","gif","webp","webm","mp4","mov","avi","flv","mkv")
 
@@ -317,8 +320,11 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     }
 
                     if (spanStart != -1 && spanEnd != -1 && spanEnd <= spannableBuilder.length) {
+                        // ViewModelからそうだねの状態を取得
+                        val isClicked = adapter.getSodaNeState?.invoke(mainResNum) ?: false
+
                         spannableBuilder.setSpan(
-                            SodaNeClickableSpan(mainResNum, onSodaNeClickListener),
+                            SodaNeClickableSpan(mainResNum, onSodaNeClickListener, isClicked),
                             spanStart,
                             spanEnd,
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -776,17 +782,20 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     }
 
     class SodaNeClickableSpan(
-        private val resNum: String,
-        private val listener: ((String) -> Unit)?
+        val resNum: String,
+        private val listener: ((String) -> Unit)?,
+        private val isClicked: Boolean = false
     ) : ClickableSpan() {
         override fun onClick(widget: View) {
-            listener?.invoke(resNum)
+            if (!isClicked) {
+                listener?.invoke(resNum)
+            }
         }
 
         override fun updateDrawState(ds: TextPaint) {
             super.updateDrawState(ds)
-            ds.isUnderlineText = true
-            ds.color = Color.MAGENTA
+            ds.isUnderlineText = !isClicked
+            ds.color = if (isClicked) Color.GRAY else Color.MAGENTA
         }
     }
 
