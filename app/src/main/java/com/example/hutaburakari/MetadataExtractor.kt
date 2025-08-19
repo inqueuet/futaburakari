@@ -1,111 +1,346 @@
 package com.example.hutaburakari
 
-import android.content.Context // 追加
-import android.net.Uri // 追加
+import android.content.Context
+import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.InflaterInputStream
 import java.util.regex.Pattern
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 
 object MetadataExtractor {
 
-    // プロンプト情報が含まれている可能性のあるメタデータのキー
+    // ====== 同時接続数制限設定 ======
+    private const val MAX_CONCURRENT_CONNECTIONS = 2 // 同時接続数を2に制限
+    private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
+    private val activeConnectionCount = AtomicInteger(0)
+
+    // ====== 既存の設定値 ======
+    private const val CONNECT_TIMEOUT_MS = 10_000
+    private const val READ_TIMEOUT_MS = 10_000
+
+    private const val FIRST_EXIF_BYTES = 256 * 1024
+    private const val PNG_WINDOW_BYTES = 256 * 1024
+    private const val MP4_HEAD_BYTES  = 128 * 1024
+    private const val MP4_TAIL_BYTES  = 512 * 1024
+    private const val GLOBAL_MAX_BYTES = 2 * 1024 * 1024
+
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
 
-    /**
-     * URLまたはURIから画像/動画データを取得し、プロンプト情報を抽出する
-     */
-    suspend fun extract(context: Context, uriOrUrl: String): String? { // Context パラメータを追加し、引数名を変更
-        return withContext(Dispatchers.IO) {
-            try {
-                val fileBytes = if (uriOrUrl.startsWith("content://")) {
-                    // content URI の場合
-                    context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { inputStream ->
-                        inputStream.readBytes()
-                    }
-                } else {
-                    // HTTP/HTTPS URL の場合
-                    downloadFile(uriOrUrl)
-                } ?: return@withContext null // 読み込めなかった場合は null
-
-                if (uriOrUrl.endsWith(".mp4", ignoreCase = true)) { // uriOrUrl を使用
-                    val mp4Prompt = extractFromMp4(fileBytes)
-                    if (!mp4Prompt.isNullOrBlank()) {
-                        return@withContext mp4Prompt
-                    }
-                } else {
-                    // まずはExifから試す (JPEG, WEBP)
-                    val exifPrompt = extractFromExif(fileBytes)
-                    if (!exifPrompt.isNullOrBlank()) {
-                        return@withContext exifPrompt
-                    }
-
-                    // PNGチャンクから試す
-                    if (isPng(fileBytes)) {
-                        val pngPrompt = extractFromPngChunks(fileBytes)
-                        if (!pngPrompt.isNullOrBlank()) {
-                            return@withContext pngPrompt
-                        }
-                    }
+    // ====== Public API ======
+    suspend fun extract(context: Context, uriOrUrl: String): String? = withContext(Dispatchers.IO) {
+        try {
+            if (uriOrUrl.startsWith("content://")) {
+                context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
+                    val local = input.readBytes()
+                    return@withContext extractByType(local, uriOrUrl)
                 }
-                null
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
+                return@withContext null
             }
-        }
-    }
 
-    /**
-     * ファイルをダウンロードしてByteArrayとして返す
-     */
-    private fun downloadFile(fileUrl: String): ByteArray? {
-        return try {
-            val url = URL(fileUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connect()
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                connection.inputStream.use { it.readBytes() }
-            } else {
-                null
+            val ext = uriOrUrl.substringAfterLast('.', "").lowercase()
+            return@withContext when (ext) {
+                "jpg", "jpeg", "webp" -> {
+                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong())
+                    if (head != null) {
+                        extractFromExif(head)
+                    } else null
+                }
+                "png" -> {
+                    extractPngPromptStreamingWithLimit(uriOrUrl)
+                }
+                "mp4", "webm", "mov", "m4v" -> {
+                    extractMp4PromptStreamingWithLimit(uriOrUrl)
+                }
+                else -> {
+                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong()) ?: return@withContext null
+                    extractBySniff(head, uriOrUrl)
+                }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
 
+    // ====== 同時接続数制限付きHTTPメソッド ======
+
     /**
-     * EXIF情報からUserCommentを抽出する
+     * 同時接続数を制限してRange GETを実行
      */
+    private suspend fun httpGetRangeWithLimit(urlStr: String, start: Long, length: Long): ByteArray? {
+        return connectionSemaphore.withPermit {
+            val connectionCount = activeConnectionCount.incrementAndGet()
+            try {
+                println("アクティブ接続数: $connectionCount") // デバッグ用
+                httpGetRange(urlStr, start, length)
+            } finally {
+                activeConnectionCount.decrementAndGet()
+            }
+        }
+    }
+
+    /**
+     * 同時接続数を制限してHEADリクエストを実行
+     */
+    private suspend fun httpHeadWithLimit(urlStr: String): HeadInfo? {
+        return connectionSemaphore.withPermit {
+            val connectionCount = activeConnectionCount.incrementAndGet()
+            try {
+                println("アクティブ接続数: $connectionCount") // デバッグ用
+                httpHead(urlStr)
+            } finally {
+                activeConnectionCount.decrementAndGet()
+            }
+        }
+    }
+
+    private suspend fun httpHeadContentLengthWithLimit(urlStr: String): Long? {
+        val info = httpHeadWithLimit(urlStr)
+        return info?.contentLength
+    }
+
+    // ====== PNG: 同時接続数制限付きストリーミング処理 ======
+    private suspend fun extractPngPromptStreamingWithLimit(fileUrl: String): String? {
+        var windowSize = PNG_WINDOW_BYTES
+        var totalFetched = 0
+        val buf = ByteArrayOutputStream()
+
+        val first = httpGetRangeWithLimit(fileUrl, 0, windowSize.toLong()) ?: return null
+        buf.write(first)
+        totalFetched += first.size
+
+        var bytes = buf.toByteArray()
+        if (!isPng(bytes)) return null
+        extractFromPngChunks(bytes)?.let { return it }
+
+        while (totalFetched < GLOBAL_MAX_BYTES) {
+            val offset = bytes.size.toLong()
+            windowSize = min(PNG_WINDOW_BYTES, GLOBAL_MAX_BYTES - totalFetched)
+            if (windowSize <= 0) break
+
+            val more = httpGetRangeWithLimit(fileUrl, offset, windowSize.toLong()) ?: break
+            buf.write(more)
+            totalFetched += more.size
+            bytes = buf.toByteArray()
+            extractFromPngChunks(bytes)?.let { return it }
+
+            if (bytes.indexOfChunkType("IEND")) break
+        }
+        return null
+    }
+
+    // ====== MP4: 同時接続数制限付きストリーミング処理 ======
+    private suspend fun extractMp4PromptStreamingWithLimit(fileUrl: String): String? {
+        // 最初にHEADとheadを並行取得ではなく、順次実行に変更
+        val size = httpHeadContentLengthWithLimit(fileUrl)
+        val head = httpGetRangeWithLimit(fileUrl, 0, MP4_HEAD_BYTES.toLong())
+
+        val tail = if (size != null && size > MP4_TAIL_BYTES) {
+            httpGetRangeWithLimit(fileUrl, size - MP4_TAIL_BYTES, MP4_TAIL_BYTES.toLong())
+        } else {
+            httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES, MP4_TAIL_BYTES).toLong())
+        }
+
+        var merged = concatNonNull(head, tail)
+        if (merged != null) {
+            extractFromMp4Bytes(merged)?.let { return it }
+        }
+
+        // 必要なら段階的に拡張（一度に一つの接続のみ）
+        var extra = 512 * 1024
+        var total = (merged?.size ?: 0)
+        while (total < GLOBAL_MAX_BYTES) {
+            val more = if (size != null) {
+                val start = max(0L, size - MP4_TAIL_BYTES - extra)
+                val len = min(extra, GLOBAL_MAX_BYTES - total)
+                httpGetRangeWithLimit(fileUrl, start, len.toLong())
+            } else {
+                httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES - total, extra).toLong())
+            } ?: break
+
+            merged = if (merged == null) more else merged + more
+            extractFromMp4Bytes(merged)?.let { return it }
+            total = merged.size
+            extra *= 2
+        }
+
+        return null
+    }
+
+    // ====== 接続管理用のユーティリティ関数 ======
+
+    /**
+     * 現在のアクティブ接続数を取得
+     */
+    fun getActiveConnectionCount(): Int = activeConnectionCount.get()
+
+    /**
+     * 最大同時接続数を取得
+     */
+    fun getMaxConcurrentConnections(): Int = MAX_CONCURRENT_CONNECTIONS
+
+    // ====== 既存のHTTPヘルパー関数（変更なし） ======
+
+    private data class HeadInfo(val contentLength: Long?, val acceptRanges: Boolean)
+
+    private fun httpHead(urlStr: String): HeadInfo? {
+        var conn: HttpURLConnection? = null
+        return try {
+            val url = URL(urlStr)
+            conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                instanceFollowRedirects = true
+                connect()
+            }
+            val lenHeader = conn.getHeaderField("Content-Length")
+            val len = lenHeader?.toLongOrNull()
+            val accepts = conn.getHeaderField("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
+            HeadInfo(len, accepts)
+        } catch (_: Exception) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun httpGetRange(urlStr: String, start: Long, length: Long): ByteArray? {
+        var conn: HttpURLConnection? = null
+        return try {
+            val end = if (length <= 0) null else start + length - 1
+            val url = URL(urlStr)
+            conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                if (end != null) {
+                    setRequestProperty("Range", "bytes=$start-$end")
+                } else {
+                    setRequestProperty("Range", "bytes=$start-")
+                }
+                instanceFollowRedirects = false
+                connect()
+            }
+
+            val code = conn.responseCode
+            val stream = when {
+                code in 200..299 -> conn.inputStream
+                else -> return null
+            }
+
+            stream.use { input ->
+                if (code == HttpURLConnection.HTTP_OK && start > 0) {
+                    skipFully(input, start)
+                }
+                val maxToRead = if (length > 0) min(length.toInt(), GLOBAL_MAX_BYTES) else GLOBAL_MAX_BYTES
+                input.readBytes(limit = maxToRead)
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    // ====== 既存の処理ロジック（変更なし） ======
+
+    private fun extractByType(fileBytes: ByteArray, uriOrUrl: String): String? {
+        return when {
+            uriOrUrl.endsWith(".mp4", true) || uriOrUrl.endsWith(".webm", true) ||
+                    uriOrUrl.endsWith(".mov", true) || uriOrUrl.endsWith(".m4v", true) -> {
+                extractFromMp4Bytes(fileBytes)
+            }
+            isPng(fileBytes) -> extractFromPngChunks(fileBytes)
+            else -> extractFromExif(fileBytes)
+        }
+    }
+
+    private fun extractBySniff(bytes: ByteArray, @Suppress("UNUSED_PARAMETER") uriOrUrl: String): String? {
+        if (isPng(bytes)) {
+            return extractFromPngChunks(bytes)
+        }
+        extractFromExif(bytes)?.let { return it }
+        return scanTextForPrompts(String(bytes, StandardCharsets.UTF_8))
+    }
+
+    private fun extractFromMp4Bytes(bytes: ByteArray): String? {
+        val latin = String(bytes, StandardCharsets.ISO_8859_1)
+        scanTextForPrompts(latin)?.let { return it }
+
+        val utf8 = String(bytes, StandardCharsets.UTF_8)
+        scanTextForPrompts(utf8)?.let { return it }
+
+        val nearMeta = regexSearchWindow(latin, "(moov|udta|meta|ilst)".toRegex(RegexOption.IGNORE_CASE), 4096)
+        if (nearMeta != null) {
+            scanTextForPrompts(nearMeta)?.let { return it }
+        }
+        return null
+    }
+
+    private fun scanTextForPrompts(text: String): String? {
+        val promptPattern = Pattern.compile("""prompt"\s*:\s*("([^"\\]*(\\.[^"\\]*)*)"|\{.*?\})""", Pattern.DOTALL)
+        promptPattern.matcher(text).apply {
+            if (find()) parsePromptJson(group(1) ?: "")?.let { return it }
+        }
+        val workflowPattern = Pattern.compile("""workflow"\s*:\s*(\{.*?\})""", Pattern.DOTALL)
+        workflowPattern.matcher(text).apply {
+            if (find()) parseWorkflowJson(group(1) ?: "")?.let { return it }
+        }
+        val clipTextEncodePattern = Pattern.compile(
+            """CLIPTextEncode"[\s\S]{0,2000}?"title"\s*:\s*"([^"]*Positive[^"]*)"[\s\S]{0,1000}?"(text|string)"\s*:\s*"((?:\\.|[^"\\])*)"""",
+            Pattern.CASE_INSENSITIVE
+        )
+        clipTextEncodePattern.matcher(text).apply {
+            if (find()) return (group(3) ?: "").replace("\\\"", "\"")
+        }
+        return null
+    }
+
+    // ====== 以下、既存のメソッドをそのまま保持 ======
+
     private fun extractFromExif(fileBytes: ByteArray): String? {
         return try {
-            val exifInterface = ExifInterface(ByteArrayInputStream(fileBytes))
-            exifInterface.getAttribute(ExifInterface.TAG_USER_COMMENT)
-        } catch (e: Exception) {
+            val exif = ExifInterface(ByteArrayInputStream(fileBytes))
+            listOf(
+                exif.getAttribute(ExifInterface.TAG_USER_COMMENT),
+                exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
+                exif.getAttribute("XPComment")?.let { decodeXpString(it) }
+            ).firstOrNull { !it.isNullOrBlank() }
+        } catch (_: Exception) {
             null
         }
     }
 
-    /**
-     * PNGのヘッダーシグネチャを持っているかチェック
-     */
+    private fun decodeXpString(raw: String): String? {
+        val bytes = raw.toByteArray(StandardCharsets.ISO_8859_1)
+        return try {
+            val s = String(bytes, StandardCharsets.UTF_16LE).trim()
+            if (s.isBlank()) null else s
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun isPng(fileBytes: ByteArray): Boolean {
         if (fileBytes.size < 8) return false
-        // PNG signature: 137 80 78 71 13 10 26 10
-        // KotlinではByteとIntの直接比較ができないため、.toByte()で型を合わせる
         return fileBytes[0] == 137.toByte() &&
                 fileBytes[1] == 80.toByte() &&
                 fileBytes[2] == 78.toByte() &&
@@ -116,125 +351,123 @@ object MetadataExtractor {
                 fileBytes[7] == 10.toByte()
     }
 
-    /**
-     * PNGのチャンクを解析してプロンプト情報を抽出する
-     */
     private fun extractFromPngChunks(bytes: ByteArray): String? {
+        if (!isPng(bytes)) return null
         val prompts = mutableListOf<String>()
-        var offset = 8 // PNGシグネチャの後のオフセット
+        var offset = 8
 
-        while (offset < bytes.size - 12) {
+        fun isPromptKey(key: String): Boolean {
+            val k = key.trim().lowercase()
+            return k == "parameters" || k == "description" || k == "comment" || k == "prompt"
+        }
+
+        while (offset + 12 <= bytes.size) {
             val length = ByteBuffer.wrap(bytes, offset, 4).int
-            val type = String(bytes, offset + 4, 4, StandardCharsets.US_ASCII)
+            if (length < 0 || offset + 12 + length > bytes.size) break
 
+            val type = String(bytes, offset + 4, 4, StandardCharsets.US_ASCII)
             val dataStart = offset + 8
             val dataEnd = dataStart + length
-
-            if (dataEnd > bytes.size) break
+            val data = bytes.copyOfRange(dataStart, dataEnd)
 
             when (type) {
-                "tEXt", "iTXt", "zTXt" -> {
-                    val dataBytes = bytes.sliceArray(dataStart until dataEnd)
-                    val nullSeparatorIndex = dataBytes.indexOf(0.toByte())
-                    if (nullSeparatorIndex > 0) {
-                        val key = String(dataBytes, 0, nullSeparatorIndex, StandardCharsets.UTF_8)
-                        if (PROMPT_KEYS.contains(key)) {
-                            val valueBytes: ByteArray = if (type == "zTXt") {
-                                // zTXtは圧縮されているため解凍処理を行う
-                                // 圧縮方式のバイト(1byte)をスキップ
-                                decompress(dataBytes.sliceArray(nullSeparatorIndex + 2 until dataBytes.size))
-                            } else {
-                                dataBytes.sliceArray(nullSeparatorIndex + 1 until dataBytes.size)
-                            }
-                            prompts.add(valueBytes.toString(StandardCharsets.UTF_8))
+                "tEXt" -> {
+                    val nul = data.indexOf(0.toByte())
+                    if (nul > 0) {
+                        val key = String(data, 0, nul, StandardCharsets.ISO_8859_1)
+                        if (isPromptKey(key)) {
+                            val value = String(data, nul + 1, data.size - (nul + 1), StandardCharsets.ISO_8859_1)
+                            if (value.isNotBlank()) prompts += value
                         }
                     }
                 }
-                "IEND" -> {
-                    // 終了チャンクなのでループを抜ける
-                    return prompts.joinToString("\n\n").ifEmpty { null }
+                "zTXt" -> {
+                    val nul = data.indexOf(0.toByte())
+                    if (nul > 0 && nul + 1 < data.size) {
+                        val key = String(data, 0, nul, StandardCharsets.ISO_8859_1)
+                        if (isPromptKey(key)) {
+                            val compressed = data.copyOfRange(nul + 2, data.size)
+                            val valueBytes = decompress(compressed)
+                            val value = valueBytes.toString(StandardCharsets.UTF_8)
+                            if (value.isNotBlank()) prompts += value
+                        }
+                    }
                 }
+                "iTXt" -> {
+                    val nul = data.indexOf(0.toByte())
+                    if (nul > 0 && nul + 2 < data.size) {
+                        val key = String(data, 0, nul, StandardCharsets.ISO_8859_1)
+                        val compFlag = data[nul + 1].toInt() and 0xFF
+                        var p = nul + 3
+
+                        val langEnd = indexOfZero(data, p)
+                        if (langEnd == -1) {
+                            val textField = data.copyOfRange(p, data.size)
+                            val valueBytes = if (compFlag == 1) decompress(textField) else textField
+                            val value = valueBytes.toString(StandardCharsets.UTF_8)
+                            if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                        } else {
+                            p = langEnd + 1
+                            val transEnd = indexOfZero(data, p)
+                            if (transEnd == -1) {
+                                val textField = data.copyOfRange(p, data.size)
+                                val valueBytes = if (compFlag == 1) decompress(textField) else textField
+                                val value = valueBytes.toString(StandardCharsets.UTF_8)
+                                if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                            } else {
+                                p = transEnd + 1
+                                if (p <= data.size) {
+                                    val textField = data.copyOfRange(p, data.size)
+                                    val valueBytes = if (compFlag == 1) decompress(textField) else textField
+                                    val value = valueBytes.toString(StandardCharsets.UTF_8)
+                                    if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                                }
+                            }
+                        }
+                    }
+                }
+                "IEND" -> return prompts.joinToString("\n\n").ifEmpty { null }
             }
-            offset += 12 + length // 次のチャンクへ (Length + Type + Data + CRC)
+            offset += 12 + length
         }
         return prompts.joinToString("\n\n").ifEmpty { null }
     }
 
-    /**
-     * zlib (DEFLATE) で圧縮されたデータを解凍する
-     */
-    private fun decompress(compressedData: ByteArray): ByteArray {
-        val inflater = InflaterInputStream(ByteArrayInputStream(compressedData))
-        val outputStream = ByteArrayOutputStream()
-        inflater.use { input ->
-            outputStream.use { output ->
-                input.copyTo(output)
-            }
-        }
-        return outputStream.toByteArray()
+    private fun indexOfZero(arr: ByteArray, from: Int): Int {
+        if (from >= arr.size) return -1
+        for (i in from until arr.size) if (arr[i].toInt() == 0) return i
+        return -1
     }
 
-    // --- MP4 Specific Extraction Logic ---
-
-    private fun extractFromMp4(fileBytes: ByteArray): String? {
-        val content = String(fileBytes, StandardCharsets.UTF_8)
-        var result: String? = null
-
-        // 1. Try to find "prompt": "{"nodes": ...}" or "prompt": "{...}"
-        val promptPattern = Pattern.compile("""prompt"\s*:\s*("([^"\\]*(\.[^"\\]*)*)"|\{.*?\})""", Pattern.DOTALL)
-        var matcher = promptPattern.matcher(content)
-        if (matcher.find()) {
-            val promptJsonCandidate = matcher.group(1)
-            result = parsePromptJson(promptJsonCandidate)
-            if (!result.isNullOrBlank()) return result
-        }
-
-        // 2. Try to find "workflow": {...}
-        val workflowPattern = Pattern.compile("""workflow"\s*:\s*(\{.*?\})""", Pattern.DOTALL)
-        matcher = workflowPattern.matcher(content)
-        if (matcher.find()) {
-            val workflowJsonCandidate = matcher.group(1)
-            result = parseWorkflowJson(workflowJsonCandidate)
-            if (!result.isNullOrBlank()) return result
-        }
-        
-        // 3. Fallback: Try to find "CLIPTextEncode" ... "text": "..."
-        val clipTextEncodePattern = Pattern.compile("""CLIPTextEncode"[\s\S]{0,2000}?"title"\s*:\s*"[^"]*Positive[^"]*"[\s\S]{0,1000}?"(?:text|string)"\s*:\s*"((?:\\.|[^"])*)""", Pattern.CASE_INSENSITIVE)
-        matcher = clipTextEncodePattern.matcher(content)
-        if (matcher.find()) {
-            result = matcher.group(1)?.replace("\"", "")
-            if (!result.isNullOrBlank()) return result
-        }
-
-        return null
+    private fun decompress(compressedData: ByteArray): ByteArray {
+        val inflater = InflaterInputStream(ByteArrayInputStream(compressedData))
+        val out = ByteArrayOutputStream()
+        inflater.use { i -> out.use { o -> i.copyTo(o) } }
+        return out.toByteArray()
     }
 
     private fun parsePromptJson(jsonCandidate: String): String? {
-        try {
-            // Check if it's a stringified JSON (e.g., "prompt": ""{\"nodes\": ...}"")
+        return try {
             if (jsonCandidate.startsWith("\"") && jsonCandidate.endsWith("\"")) {
-                val unescapedJson = GSON.fromJson(jsonCandidate, String::class.java)
-                val dataMap = GSON.fromJson<Map<String, Any>>(unescapedJson, object : TypeToken<Map<String, Any>>() {}.type)
-                return extractDataFromMap(dataMap)
-            } else { // Direct JSON object (e.g., "prompt": {"key": "value"})
-                 val dataMap = GSON.fromJson<Map<String, Any>>(jsonCandidate, object : TypeToken<Map<String, Any>>() {}.type)
-                 return extractDataFromMap(dataMap)
+                val unescaped = GSON.fromJson(jsonCandidate, String::class.java)
+                val map = GSON.fromJson<Map<String, Any>>(unescaped, object : TypeToken<Map<String, Any>>() {}.type)
+                extractDataFromMap(map)
+            } else {
+                val map = GSON.fromJson<Map<String, Any>>(jsonCandidate, object : TypeToken<Map<String, Any>>() {}.type)
+                extractDataFromMap(map)
             }
-        } catch (e: JsonSyntaxException) {
-            // Not a valid JSON or not the expected structure
-            e.printStackTrace()
+        } catch (_: JsonSyntaxException) {
+            null
         }
-        return null
     }
-    
+
     private fun parseWorkflowJson(jsonCandidate: String): String? {
-        try {
-            val dataMap = GSON.fromJson<Map<String, Any>>(jsonCandidate, object : TypeToken<Map<String, Any>>() {}.type)
-            return extractDataFromMap(dataMap)
-        } catch (e: JsonSyntaxException) {
-             e.printStackTrace()
+        return try {
+            val map = GSON.fromJson<Map<String, Any>>(jsonCandidate, object : TypeToken<Map<String, Any>>() {}.type)
+            extractDataFromMap(map)
+        } catch (_: JsonSyntaxException) {
+            null
         }
-        return null
     }
 
     private fun extractDataFromMap(dataMap: Map<String, Any>): String? {
@@ -272,7 +505,11 @@ object MetadataExtractor {
     }
 
     private fun pickFromNodes(nodes: List<Map<String, Any>>): String? {
-        val nodeMap = nodes.filterNotNull().associateBy { (it["id"]?.toString()) }
+        val nodeMap: Map<String, Map<String, Any>> =
+            nodes.mapNotNull { node ->
+                val id = node["id"]?.toString()
+                if (id.isNullOrEmpty()) null else id to node
+            }.toMap()
 
         fun resolveNode(node: Map<String, Any>?, depth: Int = 0): String? {
             if (node == null || depth > 4) return null
@@ -280,20 +517,20 @@ object MetadataExtractor {
             val inputs = node["inputs"]
             var s = bestStrFromInputs(inputs)
             if (s != null && s.isNotEmpty() && !isLabely(s)) return s
-            
+
             if (inputs is Map<*, *>) {
                 for ((_, value) in inputs) {
                     if (value is List<*> && value.isNotEmpty()) {
                         val linkedNodeId = value[0]?.toString()
-                        val linkedNode = nodeMap[linkedNodeId]
+                        val linkedNode = if (linkedNodeId != null) nodeMap[linkedNodeId] else null
                         val r = resolveNode(linkedNode, depth + 1)
                         if (r != null && !isLabely(r)) return r
                     } else if (value is String && value.trim().isNotEmpty() && !isLabely(value)) {
-                         return value.trim()
+                        return value.trim()
                     }
                 }
             }
-            
+
             val widgetsValues = node["widgets_values"] as? List<*>
             if (widgetsValues != null) {
                 for (v in widgetsValues) {
@@ -302,8 +539,7 @@ object MetadataExtractor {
             }
             return null
         }
-        
-        // Specific node type checks based on JavaScript
+
         val specificChecks = listOf(
             "ImpactWildcardProcessor",
             "WanVideoTextEncodeSingle",
@@ -323,22 +559,22 @@ object MetadataExtractor {
             val nodeType = node["type"] as? String ?: node["class_type"] as? String ?: ""
             val title = node["title"] as? String ?: (node["_meta"] as? Map<String, String>)?.get("title") ?: ""
             if (nodeType.contains("CLIPTextEncode", ignoreCase = true) && title.contains("Positive", ignoreCase = true) && !title.contains("Negative", ignoreCase = true)) {
-                 var s = bestStrFromInputs(node["inputs"])
-                 if (s.isNullOrEmpty() && node["widgets_values"] is List<*>) {
-                     s = (node["widgets_values"] as List<*>).getOrNull(0) as? String
-                 }
-                 if (s != null && s.trim().isNotEmpty() && !isLabely(s)) return s.trim()
+                var s = bestStrFromInputs(node["inputs"])
+                if (s.isNullOrEmpty() && node["widgets_values"] is List<*>) {
+                    s = (node["widgets_values"] as List<*>).getOrNull(0) as? String
+                }
+                if (s != null && s.trim().isNotEmpty() && !isLabely(s)) return s.trim()
             }
         }
-         for (node in nodes) {
+        for (node in nodes) {
             val title = node["title"] as? String ?: (node["_meta"] as? Map<String, String>)?.get("title") ?: ""
             if (Regex("PointMosaic|Mosaic|Mask|TxtEmb|TextEmb", RegexOption.IGNORE_CASE).containsMatchIn(title)) continue
 
             var s = bestStrFromInputs(node["inputs"])
             if (s.isNullOrEmpty() && node["widgets_values"] is List<*>) {
-                 s = (node["widgets_values"] as List<*>).getOrNull(0) as? String
+                s = (node["widgets_values"] as List<*>).getOrNull(0) as? String
             }
-            if (s != null && s.trim().isNotEmpty() && !isLabely(s) && title.contains("Positive", ignoreCase = true) && !title.contains("Negative", ignoreCase = true) ) return s.trim()
+            if (s != null && s.trim().isNotEmpty() && !isLabely(s) && title.contains("Positive", ignoreCase = true) && !title.contains("Negative", ignoreCase = true)) return s.trim()
         }
         return null
     }
@@ -347,29 +583,23 @@ object MetadataExtractor {
         val EX_T = Regex("PointMosaic|Mosaic|Mask|TxtEmb|TextEmb", RegexOption.IGNORE_CASE)
         val EX_C = Regex("ShowText|Display|Note|Preview|VHS_|Image|Resize|Seed|INTConstant|SimpleMath|Any Switch|StringConstant(?!Multiline)", RegexOption.IGNORE_CASE)
         var best: String? = null
-        var maxScore = -1_000_000_000.0 // Double for score
-
+        var maxScore = -1_000_000_000.0
         val stack = mutableListOf<Any>(obj)
 
         while (stack.isNotEmpty()) {
             val current = stack.removeAt(stack.size - 1)
-
             if (current !is Map<*, *>) continue
-            
-            val currentMap = current as Map<String, Any> // Ensure it's the correct type
+            val currentMap = current as Map<String, Any>
 
             val classType = currentMap["class_type"] as? String ?: currentMap["type"] as? String ?: ""
             val meta = currentMap["_meta"] as? Map<String, Any>
             val title = meta?.get("title") as? String ?: currentMap["title"] as? String ?: ""
-            
-            var v = bestStrFromInputs(currentMap["inputs"])
-            if (v.isNullOrEmpty()){
-                 val widgetsValues = currentMap["widgets_values"] as? List<*>
-                 if (widgetsValues != null && widgetsValues.isNotEmpty()) {
-                     v = widgetsValues[0] as? String
-                 }
-            }
 
+            var v = bestStrFromInputs(currentMap["inputs"])
+            if (v.isNullOrEmpty()) {
+                val widgetsValues = currentMap["widgets_values"] as? List<*>
+                if (widgetsValues != null && widgetsValues.isNotEmpty()) v = widgetsValues[0] as? String
+            }
 
             if (v is String && v.trim().isNotEmpty()) {
                 var score = 0.0
@@ -377,24 +607,69 @@ object MetadataExtractor {
                 if (title.contains("Negative", ignoreCase = true)) score -= 1000
                 if (classType.contains("TextEncode", ignoreCase = true) || classType.contains("CLIPText", ignoreCase = true)) score += 120
                 if (classType.contains("ImpactWildcardProcessor", ignoreCase = true) || classType.contains("WanVideoTextEncodeSingle", ignoreCase = true)) score += 300
-                score += Math.min(220.0, Math.floor(v.length / 8.0))
-
+                score += min(220.0, floor(v.length / 8.0))
                 if (EX_T.containsMatchIn(title) || EX_T.containsMatchIn(classType)) score -= 900
                 if (EX_C.containsMatchIn(classType)) score -= 400
                 if (isLabely(v)) score -= 500
-                
-                if (score > maxScore) {
-                    maxScore = score
-                    best = v.trim()
-                }
+                if (score > maxScore) { maxScore = score; best = v.trim() }
             }
 
             currentMap.values.forEach { value ->
-                if (value is Map<*, *> || value is List<*>) {
-                    stack.add(value)
-                }
+                if (value is Map<*, *> || value is List<*>) stack.add(value)
             }
         }
         return best
+    }
+
+    private fun ByteArray.indexOfChunkType(type: String): Boolean {
+        val needle = type.toByteArray(StandardCharsets.US_ASCII)
+        if (needle.isEmpty() || this.size < needle.size) return false
+        outer@ for (i in 0..(this.size - needle.size)) {
+            for (j in needle.indices) if (this[i + j] != needle[j]) continue@outer
+            return true
+        }
+        return false
+    }
+
+    private fun regexSearchWindow(text: String, regex: Regex, window: Int): String? {
+        val m = regex.find(text) ?: return null
+        val s = max(0, m.range.first - window)
+        val e = min(text.length, m.range.last + 1 + window)
+        return text.substring(s, e)
+    }
+
+    private fun concatNonNull(a: ByteArray?, b: ByteArray?): ByteArray? {
+        return when {
+            a == null && b == null -> null
+            a == null -> b
+            b == null -> a
+            else -> a + b
+        }
+    }
+
+    private fun skipFully(input: InputStream, bytesToSkip: Long) {
+        var remaining = bytesToSkip
+        val buffer = ByteArray(16 * 1024)
+        while (remaining > 0) {
+            val toRead = min(remaining.toInt(), buffer.size)
+            val read = input.read(buffer, 0, toRead)
+            if (read <= 0) break
+            remaining -= read
+        }
+    }
+
+    private fun InputStream.readBytes(limit: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+            val r = this.read(buf)
+            if (r <= 0) break
+            val canWrite = min(limit - total, r)
+            if (canWrite <= 0) break
+            out.write(buf, 0, canWrite)
+            total += canWrite
+        }
+        return out.toByteArray()
     }
 }
