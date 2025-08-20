@@ -10,6 +10,11 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
 
+private fun String.isVideoUrl(): Boolean {
+    val lower = this.lowercase()
+    return lower.endsWith(".webm") || lower.endsWith(".mp4") || lower.endsWith(".mkv")
+}
+
 class ImageAdapter : ListAdapter<ImageItem, ImageAdapter.ImageViewHolder>(DiffCallback()) {
 
     var onItemClick: ((ImageItem) -> Unit)? = null
@@ -26,17 +31,27 @@ class ImageAdapter : ListAdapter<ImageItem, ImageAdapter.ImageViewHolder>(DiffCa
         private val titleTextView: TextView = view.findViewById(R.id.titleTextView)
         private val replyCountTextView: TextView = view.findViewById(R.id.replyCountTextView)
 
+        // 追加：再生マーク（レイアウトに overlay を足せない場合の簡易対応）
+        private val playBadge: ImageView? = view.findViewById<ImageView?>(R.id.playBadge)
+
         fun bind(item: ImageItem) {
             titleTextView.text = item.title
             replyCountTextView.text = item.replyCount
             imageView.contentDescription = item.title
 
-            val urlToLoad = item.fullImageUrl ?: item.previewUrl
-            imageView.load(urlToLoad) {
+            val full = item.fullImageUrl
+            val isVideo = full?.isVideoUrl() == true
+
+            val displayUrl = if (isVideo) item.previewUrl else (full ?: item.previewUrl)
+
+            imageView.load(displayUrl) {
                 crossfade(true)
                 placeholder(R.drawable.ic_launcher_background)
                 error(android.R.drawable.ic_dialog_alert)
             }
+
+            // 再生マークの表示
+            playBadge?.visibility = if (isVideo) View.VISIBLE else View.GONE
         }
     }
 

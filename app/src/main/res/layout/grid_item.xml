@@ -12,9 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <!-- ★★★ 高さを0dpにして、アスペクト比で決まるように変更 ★★★ -->
-        <!-- ★★★ アスペクト比を1:1 (正方形) に設定 ★★★ -->
-        <!-- ImageViewの底をTextViewの上に -->
+        <!-- サムネ画像 -->
         <ImageView
             android:id="@+id/imageView"
             android:layout_width="match_parent"
@@ -27,7 +25,22 @@
             app:layout_constraintBottom_toTopOf="@+id/titleTextView"
             tools:srcCompat="@tools:sample/backgrounds/scenic" />
 
-        <!-- ★★★ ImageViewの下に配置するように制約を設定 ★★★ -->
+        <!-- ★ 追加：動画再生マーク (中央に重ねる) -->
+        <ImageView
+            android:id="@+id/playBadge"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@android:drawable/ic_media_play"
+            android:background="@android:color/transparent"
+            app:tint="@android:color/white"
+            android:alpha="0.8"
+            android:visibility="gone"
+            app:layout_constraintTop_toTopOf="@id/imageView"
+            app:layout_constraintBottom_toBottomOf="@id/imageView"
+            app:layout_constraintStart_toStartOf="@id/imageView"
+            app:layout_constraintEnd_toEndOf="@id/imageView" />
+
+        <!-- タイトル -->
         <TextView
             android:id="@+id/titleTextView"
             android:layout_width="0dp"
@@ -43,6 +56,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             tools:text="画像のタイトル" />
 
+        <!-- レス数 -->
         <TextView
             android:id="@+id/replyCountTextView"
             android:layout_width="wrap_content"
@@ -57,9 +71,7 @@
             android:textSize="10sp"
             app:layout_constraintBottom_toBottomOf="@id/imageView"
             app:layout_constraintEnd_toEndOf="@id/imageView"
-            tools:ignore="SmallSp"
             tools:text="1000" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
-
 </com.google.android.material.card.MaterialCardView>

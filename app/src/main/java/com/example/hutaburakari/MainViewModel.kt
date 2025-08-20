@@ -7,11 +7,13 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.jsoup.nodes.Document
+import java.net.URL
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -24,30 +26,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
 
-    // ★共通化：detail を叩いて fullImageUrl を埋める
+    /**
+     * サムネURLからフル画像URLを推測する
+     * 例:
+     *   .../thumb/123456s.jpg → .../src/123456.jpg
+     *   .../cat/123456s.png   → .../src/123456.png
+     */
+    private fun guessFullFromPreview(previewUrl: String): String? {
+        return try {
+            var s = previewUrl
+                .replace("/thumb/", "/src/")
+                .replace("/cat/", "/src/")
+
+            // 末尾の 's' を落として拡張子は維持
+            s = s.replace(Regex("s\\.(jpg|jpeg|png|gif|webp)$", RegexOption.IGNORE_CASE), ".$1")
+
+            // 念のため絶対URLに正規化
+            URL(s).toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** HEAD リクエストで存在確認（HTMLダウンロード不要で軽い） */
+    private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url(url).head().build()
+        runCatching {
+            NetworkModule.okHttpClient.newCall(req).execute().use { resp ->
+                resp.isSuccessful
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * ★高速版：
+     *  1) サムネからフルURLを推測 → HEAD で存在確認
+     *  2) 外れた分だけ detail HTML を取りに行き、/src/ の最初の画像を取得
+     *  3) 結果をマージして返す
+     */
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
-        val limitedIO = Dispatchers.IO.limitedParallelism(8)
-        return withContext(limitedIO) {
-            items.map { item ->
+
+        // まず推測
+        val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
+
+        // HEAD で一気に確認（並列は控えめに）
+        val limitedIO = Dispatchers.IO.limitedParallelism(6)
+        val headChecked = withContext(limitedIO) {
+            guessedPairs.map { (item, guessedUrl) ->
+                async {
+                    if (guessedUrl != null && headExists(guessedUrl)) {
+                        item.copy(fullImageUrl = guessedUrl)
+                    } else {
+                        item
+                    }
+                }
+            }.awaitAll()
+        }
+
+        // まだ fullImageUrl が無いものだけ HTML を解析
+        val needHtml = headChecked.filter { it.fullImageUrl.isNullOrBlank() }
+        if (needHtml.isEmpty()) return headChecked
+
+        val htmlFilled = withContext(limitedIO) {
+            needHtml.map { item ->
                 async {
                     val full = runCatching {
                         val detailDoc = NetworkClient.fetchDocument(item.detailUrl)
-                        // thre 内の a[href] から /src/ の jpg/png/webp を優先取得
-                        val link = detailDoc.select("div.thre a[href]").firstOrNull { a ->
-                            val href = a.attr("href").lowercase()
-                            href.contains("/src/") && (
-                                    href.endsWith(".jpg") || href.endsWith(".jpeg") ||
-                                            href.endsWith(".png") || href.endsWith(".gif") ||
-                                            href.endsWith(".webp")
-                                    )
-                        }
-                        link?.absUrl("href")
+                        // 最初の1件だけを素早く取る
+                        detailDoc.selectFirst("""div.thre a[href*="/src/"]""")
+                            ?.absUrl("href")
                     }.getOrNull()
                     item.copy(fullImageUrl = full ?: item.fullImageUrl)
                 }
             }.awaitAll()
         }
+
+        // マージ（順序は元のまま維持）
+        val filledMap = htmlFilled.associateBy { it.detailUrl }
+        return headChecked.map { filledMap[it.detailUrl] ?: it }
     }
 
     fun fetchImagesFromUrl(url: String) {
@@ -56,7 +113,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val document = NetworkClient.fetchDocument(url)
                 val baseItems = parseItemsFromDocument(document) // previewUrl, detailUrl までは従来通り
-                val enriched = enrichWithFullImages(baseItems)   // ★差し替え：共通関数でフル画像付与
+                val enriched = enrichWithFullImages(baseItems)    // ★改良版で高速に fullImageUrl 付与
                 _images.value = enriched
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
@@ -68,14 +125,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * カタログに新しい更新があるかチェックし、あれば追加する
+     * 既存の fullImageUrl はできるだけ引き継ぎ、足りない分だけ解決
      */
     fun checkForUpdates(url: String, currentItemCount: Int, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
-                // 現在のHTMLを取得
                 val document = NetworkClient.fetchDocument(url)
-
-                // 新しいコンテンツをパース
                 val newItemList = parseItemsFromDocument(document)
 
                 // 既存データの fullImageUrl を引き継ぐ
@@ -87,24 +142,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ni.copy(fullImageUrl = old?.fullImageUrl)
                 }
 
-                // fullImageUrl がまだ無いものだけ detail を取りに行く
-                val needFetch = carried.filter { it.fullImageUrl.isNullOrBlank() }
-                val fetched = enrichWithFullImages(needFetch)
-                val fetchedMap = fetched.associateBy { it.detailUrl }
+                // まだ fullImageUrl が無いものを高速ロジックで解決
+                val need = carried.filter { it.fullImageUrl.isNullOrBlank() }
+                val filled = if (need.isNotEmpty()) enrichWithFullImages(need) else emptyList()
+                val filledMap = filled.associateBy { it.detailUrl }
 
-                // 取得結果をマージ
-                val merged = carried.map { ci -> fetchedMap[ci.detailUrl] ?: ci }
+                // マージ
+                val merged = carried.map { filledMap[it.detailUrl] ?: it }
 
-                val hasNewContent = merged.size != currentItems.size || !merged.containsAll(currentItems)
+                val hasNewContent =
+                    merged.size != currentItems.size || !merged.containsAll(currentItems)
 
                 if (hasNewContent) {
-                    _images.postValue(merged) // ★更新後も fullImageUrl を保持
+                    _images.postValue(merged)
                     Log.d("MainViewModel", "Updated catalog: ${currentItems.size} -> ${merged.size} items")
                     callback(true)
                 } else {
                     callback(false)
                 }
-
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error checking for catalog updates", e)
                 callback(false)
@@ -113,11 +168,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * ドキュメントからImageItemのリストを解析する共通メソッド
+     * ドキュメントから ImageItem のリストを解析する共通メソッド
+     * （catalogのセル #cattable td を走査）
      */
     private fun parseItemsFromDocument(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
-
         val cells = document.select("#cattable td")
 
         for (cell in cells) {
@@ -127,25 +182,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val fontTag = cell.select("font").first()
 
             if (linkTag != null && imgTag != null && smallTag != null && fontTag != null) {
-                // imgTagのsrc属性も同様にabsUrlで絶対URLを取得
                 val imageUrl = imgTag.absUrl("src")
                 val detailUrl = linkTag.absUrl("href")
                 val title = smallTag.text()
                 val replies = fontTag.text()
 
-                // imageUrlが空でないことを確認
                 if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
-                    // ImageItem の第1引数は previewUrl（サムネ）
-                    parsedItems.add(ImageItem(imageUrl, title, replies, detailUrl, fullImageUrl = null))
+                    parsedItems.add(
+                        ImageItem(
+                            previewUrl = imageUrl,
+                            title = title,
+                            replyCount = replies,
+                            detailUrl = detailUrl,
+                            fullImageUrl = null
+                        )
+                    )
                 } else {
                     Log.w(
                         "MainViewModel",
-                        "Skipping item due to empty imageUrl or detailUrl. Image src: ${imgTag.attr("src")}, Link href: ${linkTag.attr("href")}"
+                        "Skipping item due to empty imageUrl or detailUrl. " +
+                                "Image src: ${imgTag.attr("src")}, Link href: ${linkTag.attr("href")}"
                     )
                 }
             }
         }
-
         return parsedItems
     }
 }

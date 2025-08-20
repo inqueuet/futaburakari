@@ -390,6 +390,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         binding.recyclerView.apply {
             layoutManager = gridLayoutManager
             adapter = imageAdapter
+            setItemViewCacheSize(50)
             setHasFixedSize(true)
         }
     }
@@ -438,6 +439,25 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         viewModel.images.observe(this) { items ->
             allItems = items
             filterImages(null)
+
+            // 一覧反映後に画面内＋先読み分をプリフェッチ
+            lifecycleScope.launch(Dispatchers.IO) {
+                val first = 0
+                val oneScreen = gridLayoutManager.spanCount * 4
+                val last = (first + oneScreen).coerceAtMost(items.lastIndex)
+                val slice = items.subList(first, last + 1)
+
+                slice.mapNotNull { it.fullImageUrl ?: it.previewUrl }
+                    .forEach { url ->
+                        val req = ImageRequest.Builder(this@MainActivity)
+                            .data(url)
+                            .size(coil.size.Size.ORIGINAL)
+                            .precision(coil.size.Precision.EXACT)
+                            //.lifecycle(null) // バックグラウンド専用
+                            .build()
+                        this@MainActivity.imageLoader.enqueue(req)
+                    }
+            }
         }
 
         viewModel.error.observe(this) { errorMessage ->
