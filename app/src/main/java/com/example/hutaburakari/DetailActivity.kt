@@ -36,6 +36,9 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private lateinit var detailSearchManager: DetailSearchManager
     private lateinit var fastScrollHelper: FastScrollHelper
 
+    // 初回/再読み込み直後の自動スクロール復元を抑止するフラグ
+    private var suppressNextRestore: Boolean = true
+
     // 自動更新機能用のフィールド
     private var isAutoUpdateEnabled = false
     private val autoUpdateDelayMs = 500L // 更新までの遅延を500msに設定
@@ -249,7 +252,9 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     private fun reloadDetails() {
         currentUrl?.let { urlToRefresh ->
-            saveCurrentScrollStateIfApplicable()
+                        // 再読み込み直後はスクロール復元を抑止
+            suppressNextRestore = true
+saveCurrentScrollStateIfApplicable()
             detailSearchManager.clearSearch()
             scrollHistory.clear()
             viewModel.fetchDetails(urlToRefresh, forceRefresh = true)
@@ -458,8 +463,10 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                                 detailSearchManager.performSearch(query)
                             }
                         } else {
-                            if (hadPreviousContent || scrollPositionStore.getScrollState(url).first != 0 || scrollPositionStore.getScrollState(url).second != 0) {
+                            
+if (!suppressNextRestore && (hadPreviousContent || scrollPositionStore.getScrollState(url).first != 0 || scrollPositionStore.getScrollState(url).second != 0)) {
                                 val (position, offset) = scrollPositionStore.getScrollState(url)
+
                                 if (position >= 0 && position < contentList.size) {
                                     binding.detailRecyclerView.post {
                                         layoutManager.scrollToPositionWithOffset(position, offset)
