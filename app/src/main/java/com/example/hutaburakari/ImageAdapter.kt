@@ -31,7 +31,8 @@ class ImageAdapter : ListAdapter<ImageItem, ImageAdapter.ImageViewHolder>(DiffCa
             replyCountTextView.text = item.replyCount
             imageView.contentDescription = item.title
 
-            imageView.load(item.imageUrl) {
+            val urlToLoad = item.fullImageUrl ?: item.previewUrl
+            imageView.load(urlToLoad) {
                 crossfade(true)
                 placeholder(R.drawable.ic_launcher_background)
                 error(android.R.drawable.ic_dialog_alert)

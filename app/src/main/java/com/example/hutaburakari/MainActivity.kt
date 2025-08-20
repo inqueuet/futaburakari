@@ -397,7 +397,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
     private fun setupClickListener() {
         imageAdapter.onItemClick = { item ->
             val baseUrlString = currentSelectedUrl
-            val imageUrlString = item.imageUrl
+            val imageUrlString: String = item.fullImageUrl ?: item.previewUrl
 
             if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
                 try {

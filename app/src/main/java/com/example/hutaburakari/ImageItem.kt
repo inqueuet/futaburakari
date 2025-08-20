@@ -1,8 +1,9 @@
 package com.example.hutaburakari
 
 data class ImageItem(
-    val imageUrl: String,
+    val previewUrl: String,      // 旧 imageUrl（サムネ用を保持しておく）
     val title: String,
     val replyCount: String,
-    val detailUrl: String
+    val detailUrl: String,
+    val fullImageUrl: String? = null // 追加：フルサイズURL
 )

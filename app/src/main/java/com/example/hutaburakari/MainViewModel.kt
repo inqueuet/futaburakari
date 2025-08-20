@@ -6,7 +6,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import org.jsoup.nodes.Document
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -20,16 +24,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
 
+    // ★共通化：detail を叩いて fullImageUrl を埋める
+    private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
+        if (items.isEmpty()) return items
+        val limitedIO = Dispatchers.IO.limitedParallelism(8)
+        return withContext(limitedIO) {
+            items.map { item ->
+                async {
+                    val full = runCatching {
+                        val detailDoc = NetworkClient.fetchDocument(item.detailUrl)
+                        // thre 内の a[href] から /src/ の jpg/png/webp を優先取得
+                        val link = detailDoc.select("div.thre a[href]").firstOrNull { a ->
+                            val href = a.attr("href").lowercase()
+                            href.contains("/src/") && (
+                                    href.endsWith(".jpg") || href.endsWith(".jpeg") ||
+                                            href.endsWith(".png") || href.endsWith(".gif") ||
+                                            href.endsWith(".webp")
+                                    )
+                        }
+                        link?.absUrl("href")
+                    }.getOrNull()
+                    item.copy(fullImageUrl = full ?: item.fullImageUrl)
+                }
+            }.awaitAll()
+        }
+    }
+
     fun fetchImagesFromUrl(url: String) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 val document = NetworkClient.fetchDocument(url)
-                val parsedItems = parseItemsFromDocument(document)
-                _images.value = parsedItems
+                val baseItems = parseItemsFromDocument(document) // previewUrl, detailUrl までは従来通り
+                val enriched = enrichWithFullImages(baseItems)   // ★差し替え：共通関数でフル画像付与
+                _images.value = enriched
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
-                e.printStackTrace()
             } finally {
                 _isLoading.value = false
             }
@@ -48,16 +78,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // 新しいコンテンツをパース
                 val newItemList = parseItemsFromDocument(document)
 
-                // 現在のコンテンツと比較
+                // 既存データの fullImageUrl を引き継ぐ
                 val currentItems = _images.value ?: emptyList()
-                val hasNewContent = newItemList.size != currentItems.size ||
-                        !newItemList.containsAll(currentItems)
+                val currentMapByDetail = currentItems.associateBy { it.detailUrl }
+
+                val carried = newItemList.map { ni ->
+                    val old = currentMapByDetail[ni.detailUrl]
+                    ni.copy(fullImageUrl = old?.fullImageUrl)
+                }
+
+                // fullImageUrl がまだ無いものだけ detail を取りに行く
+                val needFetch = carried.filter { it.fullImageUrl.isNullOrBlank() }
+                val fetched = enrichWithFullImages(needFetch)
+                val fetchedMap = fetched.associateBy { it.detailUrl }
+
+                // 取得結果をマージ
+                val merged = carried.map { ci -> fetchedMap[ci.detailUrl] ?: ci }
+
+                val hasNewContent = merged.size != currentItems.size || !merged.containsAll(currentItems)
 
                 if (hasNewContent) {
-                    // UIを更新（完全置換 - カタログは順序が変わることがあるため）
-                    _images.postValue(newItemList)
-
-                    Log.d("MainViewModel", "Updated catalog: ${currentItems.size} -> ${newItemList.size} items")
+                    _images.postValue(merged) // ★更新後も fullImageUrl を保持
+                    Log.d("MainViewModel", "Updated catalog: ${currentItems.size} -> ${merged.size} items")
                     callback(true)
                 } else {
                     callback(false)
@@ -93,9 +135,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // imageUrlが空でないことを確認
                 if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
-                    parsedItems.add(ImageItem(imageUrl, title, replies, detailUrl))
+                    // ImageItem の第1引数は previewUrl（サムネ）
+                    parsedItems.add(ImageItem(imageUrl, title, replies, detailUrl, fullImageUrl = null))
                 } else {
-                    Log.w("MainViewModel", "Skipping item due to empty imageUrl or detailUrl. Image src: ${imgTag.attr("src")}, Link href: ${linkTag.attr("href")}")
+                    Log.w(
+                        "MainViewModel",
+                        "Skipping item due to empty imageUrl or detailUrl. Image src: ${imgTag.attr("src")}, Link href: ${linkTag.attr("href")}"
+                    )
                 }
             }
         }
