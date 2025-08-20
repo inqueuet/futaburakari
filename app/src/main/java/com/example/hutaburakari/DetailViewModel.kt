@@ -141,7 +141,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * ドキュメントからコンテンツを解析する共通メソッド
+     * ドキュメントからコンテンツを解析する共通メソッド（修正版）
      */
     private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> {
         val progressivelyLoadedContent = mutableListOf<DetailContent>()
@@ -150,42 +150,49 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         val threadContainer = document.selectFirst("div.thre")
 
         if (threadContainer == null) {
+            _error.postValue("スレッドのコンテナが見つかりませんでした。")
+            Log.e("DetailViewModel", "div.thre container not found in document for URL: $url")
             return emptyList()
         }
 
+        // 処理対象となる全ての投稿（OP + 返信）をリストアップ
         val postBlocks = mutableListOf<Element>()
-        postBlocks.add(threadContainer)
+        postBlocks.add(threadContainer) // 最初の投稿(OP)としてコンテナ自体を追加
 
-        // (B) :has() を避け、td.rtd から親 table を辿る
+        // OPコンテナ内の返信テーブルを全て追加
         threadContainer.select("td.rtd")
             .mapNotNull { it.closest("table") }
             .distinct()
             .let { postBlocks.addAll(it) }
 
+        // 全ての投稿をループ処理
         postBlocks.forEachIndexed { index, block ->
-            val isOp = (index == 0)
+            val isOp = (index == 0) // 最初の要素がOP
 
-            // (A) OP の巨大 clone を避け、基本は .rtd を直接解析
-            val html: String = run {
+            // --- 1. テキストコンテンツの解析 ---
+            val html: String
+            if (isOp) {
+                // OPの場合、子要素の返信テーブルを除外したクローンを作成
+                val textSourceElement = block.clone().apply { select("table").remove() }
+
+                // メディアファイルへのリンクをテキストコンテンツから除外
+                textSourceElement.select("a[target=_blank][href]")
+                    .filter { a -> isMediaUrl(a.attr("href")) }
+                    .forEach { it.remove() }
+
+                html = textSourceElement.html()
+            } else {
+                // 返信の場合、.rtdセルからHTMLを取得
                 val rtd = block.selectFirst(".rtd")
                 if (rtd != null) {
                     val textBlock = rtd.clone()
-                    // メディアリンクをテキストから除外
+                    // メディアファイルへのリンクをテキストコンテンツから除外
                     textBlock.select("a[target=_blank][href]")
                         .filter { a -> isMediaUrl(a.attr("href")) }
                         .forEach { it.remove() }
-                    textBlock.html()
+                    html = textBlock.html()
                 } else {
-                    // フォールバック：OP で .rtd が無いケースのみ最小限の clone
-                    if (isOp) {
-                        val textSourceElement = block.clone().apply { select("table").remove() }
-                        textSourceElement.select("a[target=_blank][href]")
-                            .filter { a -> isMediaUrl(a.attr("href")) }
-                            .forEach { it.remove() }
-                        textSourceElement.html()
-                    } else {
-                        ""
-                    }
+                    html = ""
                 }
             }
 
@@ -195,7 +202,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
 
-            // (C) アンカー走査を1回に統合
+            // --- 2. メディアコンテンツの解析 ---
             val mediaLinkNode = block.select("a[target=_blank][href]").firstOrNull { a ->
                 isMediaUrl(a.attr("href"))
             }
@@ -241,10 +248,10 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // スレッド終了時刻の解析
         val scriptElements = document.select("script")
         var threadEndTime: String? = null
 
-        // (E) 正規表現はプリコンパイルしたものを使用
         for (scriptElement in scriptElements) {
             val scriptData = scriptElement.data()
             if (scriptData.contains("document.write") && scriptData.contains("contdisp")) {
