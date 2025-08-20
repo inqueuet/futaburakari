@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.MalformedURLException
 import java.net.URL
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class DetailViewModel(application: Application) : AndroidViewModel(application) {
@@ -74,200 +75,300 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
-                val progressivelyLoadedContent = mutableListOf<DetailContent>()
-                val promptJobs = mutableListOf<Deferred<Pair<Int, String?>>>()
+                val progressivelyLoadedContent = parseContentFromDocument(document, url)
 
-                // ★ 初期状態は空リストを設定（途中経過の通知は削除）
-                _detailContent.postValue(emptyList())
-
-                val threadContainer = document.selectFirst("div.thre")
-
-                if (threadContainer == null) {
-                    _error.value = "スレッドが見つかりませんでした。"
-                    _isLoading.value = false
-                    _detailContent.postValue(emptyList())
-                    return@launch
-                }
-
-                val postBlocks = mutableListOf<Element>()
-                postBlocks.add(threadContainer)
-
-                // (B) :has() を避け、td.rtd から親 table を辿る
-                threadContainer.select("td.rtd")
-                    .mapNotNull { it.closest("table") }
-                    .distinct()
-                    .let { postBlocks.addAll(it) }
-
-                postBlocks.forEachIndexed { index, block ->
-                    val isOp = (index == 0)
-
-                    // (A) OP の巨大 clone を避け、基本は .rtd を直接解析
-                    val html: String = run {
-                        val rtd = block.selectFirst(".rtd")
-                        if (rtd != null) {
-                            val textBlock = rtd.clone()
-                            // メディアリンクをテキストから除外
-                            textBlock.select("a[target=_blank][href]")
-                                .filter { a -> isMediaUrl(a.attr("href")) }
-                                .forEach { it.remove() }
-                            textBlock.html()
-                        } else {
-                            // フォールバック：OP で .rtd が無いケースのみ最小限の clone
-                            if (isOp) {
-                                val textSourceElement = block.clone().apply { select("table").remove() }
-                                textSourceElement.select("a[target=_blank][href]")
-                                    .filter { a -> isMediaUrl(a.attr("href")) }
-                                    .forEach { it.remove() }
-                                textSourceElement.html()
-                            } else {
-                                ""
-                            }
-                        }
-                    }
-
-                    if (html.isNotBlank()) {
-                        progressivelyLoadedContent.add(
-                            DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html)
-                        )
-                    }
-
-                    // (C) アンカー走査を1回に統合
-                    val mediaLinkNode = block.select("a[target=_blank][href]").firstOrNull { a ->
-                        isMediaUrl(a.attr("href"))
-                    }
-
-                    mediaLinkNode?.let { link ->
-                        val hrefAttr = link.attr("href")
-                        try {
-                            val absoluteUrl = URL(URL(url), hrefAttr).toString()
-                            val fileName = absoluteUrl.substringAfterLast('/')
-                            val itemIndexInList = progressivelyLoadedContent.size
-
-                            val lower = hrefAttr.lowercase()
-                            val mediaContent = when {
-                                lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg")
-                                        || lower.endsWith(".gif") || lower.endsWith(".webp") -> {
-                                    DetailContent.Image(
-                                        id = absoluteUrl,
-                                        imageUrl = absoluteUrl,
-                                        prompt = null,
-                                        fileName = fileName
-                                    )
-                                }
-                                lower.endsWith(".webm") || lower.endsWith(".mp4") -> {
-                                    DetailContent.Video(
-                                        id = absoluteUrl,
-                                        videoUrl = absoluteUrl,
-                                        prompt = null,
-                                        fileName = fileName
-                                    )
-                                }
-                                else -> null
-                            }
-
-                            if (mediaContent != null) {
-                                progressivelyLoadedContent.add(mediaContent)
-
-                                // (F) 並列を制限しつつ、タイムアウト短縮
-                                val deferredPrompt = async(limitedIO) {
-                                    try {
-                                        val prompt = withTimeoutOrNull(5000L) {
-                                            MetadataExtractor.extract(getApplication(), absoluteUrl)
-                                        }
-                                        if (prompt == null) {
-                                            Log.w(
-                                                "DetailViewModel",
-                                                "Metadata for $absoluteUrl was null (timeout or null)"
-                                            )
-                                        }
-                                        Pair(itemIndexInList, prompt)
-                                    } catch (e: Exception) {
-                                        Log.e(
-                                            "DetailViewModel",
-                                            "Exception during metadata extraction task for $absoluteUrl",
-                                            e
-                                        )
-                                        Pair(itemIndexInList, null as String?)
-                                    }
-                                }
-                                promptJobs.add(deferredPrompt)
-                            }
-                        } catch (e: MalformedURLException) {
-                            Log.e(
-                                "DetailViewModel",
-                                "Skipping malformed media URL. Base: '$url', Href: '$hrefAttr'",
-                                e
-                            )
-                        }
-                    }
-
-                    // ★ 途中経過の通知を削除（スクロールパフォーマンスを優先）
-                    // 元のコード: if (index > 0 && index % 2 == 0) { _detailContent.postValue(progressivelyLoadedContent.toList()) }
-                }
-
-                val scriptElements = document.select("script")
-                var threadEndTime: String? = null
-
-                // (E) 正規表現はプリコンパイルしたものを使用
-                for (scriptElement in scriptElements) {
-                    val scriptData = scriptElement.data()
-                    if (scriptData.contains("document.write") && scriptData.contains("contdisp")) {
-                        val docWriteMatch = DOC_WRITE.find(scriptData)
-                        val writtenHtmlFromDocWrite = docWriteMatch?.groupValues?.getOrNull(1)
-                        val writtenHtml = writtenHtmlFromDocWrite
-                            ?.replace("\\'", "'")
-                            ?.replace("\\/", "/")
-                        if (writtenHtml != null) {
-                            val timeMatch = TIME.find(writtenHtml)
-                            threadEndTime = timeMatch?.groupValues?.getOrNull(1)
-                            if (threadEndTime != null) break
-                        }
-                    }
-                }
-
-                threadEndTime?.let {
-                    progressivelyLoadedContent.add(
-                        DetailContent.ThreadEndTime(id = "thread_end_time_${itemIdCounter++}", endTime = it)
-                    )
-                }
-
-                // ★ 全ての解析が完了してから一度だけ通知
-                _detailContent.postValue(progressivelyLoadedContent.toList())
+                // 全ての解析が完了してから一度だけ通知
+                _detailContent.postValue(progressivelyLoadedContent)
                 _isLoading.value = false
 
                 // バックグラウンドでメタデータを取得し、完了後に再度更新
-                viewModelScope.launch(Dispatchers.Default) {
-                    try {
-                        val allPromptResults = promptJobs.awaitAll()
-
-                        val finalListWithPrompts = progressivelyLoadedContent.toMutableList()
-                        allPromptResults.forEach { (indexInList, prompt) ->
-                            if (indexInList < finalListWithPrompts.size) {
-                                val itemToUpdate = finalListWithPrompts[indexInList]
-                                finalListWithPrompts[indexInList] = when (itemToUpdate) {
-                                    is DetailContent.Image -> itemToUpdate.copy(prompt = prompt)
-                                    is DetailContent.Video -> itemToUpdate.copy(prompt = prompt)
-                                    else -> itemToUpdate
-                                }
-                            }
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            _detailContent.postValue(finalListWithPrompts.toList())
-                        }
-
-                        withContext(Dispatchers.IO) {
-                            cacheManager.saveDetails(url, finalListWithPrompts.toList())
-                        }
-                    } catch (e: Exception) {
-                        Log.e("DetailViewModel", "Error in background prompt processing for $url", e)
-                    }
-                }
+                updateMetadataInBackground(progressivelyLoadedContent, url)
 
             } catch (e: Exception) {
                 _error.value = "詳細の取得に失敗しました: ${e.message}"
                 Log.e("DetailViewModel", "Error fetching details for $url", e)
                 _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * スレッドに新しい更新があるかチェックし、あれば追加する
+     */
+    fun checkForUpdates(url: String, currentItemCount: Int, callback: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                // 現在のHTMLを取得
+                val document = withContext(Dispatchers.IO) {
+                    NetworkClient.fetchDocument(url)
+                }
+
+                // 新しいコンテンツをパース
+                val newContentList = parseContentFromDocument(document, url)
+
+                // 現在のコンテンツと比較
+                val currentContent = _detailContent.value ?: emptyList()
+                val hasNewContent = newContentList.size > currentContent.size
+
+                if (hasNewContent) {
+                    // 新しいコンテンツのみを抽出
+                    val newItems = newContentList.drop(currentContent.size)
+
+                    // 既存のコンテンツに新しいアイテムを追加
+                    val updatedContent = currentContent + newItems
+
+                    // UIを更新
+                    _detailContent.postValue(updatedContent)
+
+                    // キャッシュも更新
+                    withContext(Dispatchers.IO) {
+                        cacheManager.saveDetails(url, updatedContent)
+                    }
+
+                    // 新しいアイテムのメタデータも取得
+                    updateMetadataInBackground(newItems, url)
+
+                    callback(true)
+                } else {
+                    callback(false)
+                }
+
+            } catch (e: Exception) {
+                Log.e("DetailViewModel", "Error checking for updates", e)
+                callback(false)
+            }
+        }
+    }
+
+    /**
+     * ドキュメントからコンテンツを解析する共通メソッド
+     */
+    private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> {
+        val progressivelyLoadedContent = mutableListOf<DetailContent>()
+        var itemIdCounter = 0L
+
+        val threadContainer = document.selectFirst("div.thre")
+
+        if (threadContainer == null) {
+            return emptyList()
+        }
+
+        val postBlocks = mutableListOf<Element>()
+        postBlocks.add(threadContainer)
+
+        // (B) :has() を避け、td.rtd から親 table を辿る
+        threadContainer.select("td.rtd")
+            .mapNotNull { it.closest("table") }
+            .distinct()
+            .let { postBlocks.addAll(it) }
+
+        postBlocks.forEachIndexed { index, block ->
+            val isOp = (index == 0)
+
+            // (A) OP の巨大 clone を避け、基本は .rtd を直接解析
+            val html: String = run {
+                val rtd = block.selectFirst(".rtd")
+                if (rtd != null) {
+                    val textBlock = rtd.clone()
+                    // メディアリンクをテキストから除外
+                    textBlock.select("a[target=_blank][href]")
+                        .filter { a -> isMediaUrl(a.attr("href")) }
+                        .forEach { it.remove() }
+                    textBlock.html()
+                } else {
+                    // フォールバック：OP で .rtd が無いケースのみ最小限の clone
+                    if (isOp) {
+                        val textSourceElement = block.clone().apply { select("table").remove() }
+                        textSourceElement.select("a[target=_blank][href]")
+                            .filter { a -> isMediaUrl(a.attr("href")) }
+                            .forEach { it.remove() }
+                        textSourceElement.html()
+                    } else {
+                        ""
+                    }
+                }
+            }
+
+            if (html.isNotBlank()) {
+                progressivelyLoadedContent.add(
+                    DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html)
+                )
+            }
+
+            // (C) アンカー走査を1回に統合
+            val mediaLinkNode = block.select("a[target=_blank][href]").firstOrNull { a ->
+                isMediaUrl(a.attr("href"))
+            }
+
+            mediaLinkNode?.let { link ->
+                val hrefAttr = link.attr("href")
+                try {
+                    val absoluteUrl = URL(URL(url), hrefAttr).toString()
+                    val fileName = absoluteUrl.substringAfterLast('/')
+
+                    val lower = hrefAttr.lowercase()
+                    val mediaContent = when {
+                        lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg")
+                                || lower.endsWith(".gif") || lower.endsWith(".webp") -> {
+                            DetailContent.Image(
+                                id = absoluteUrl,
+                                imageUrl = absoluteUrl,
+                                prompt = null,
+                                fileName = fileName
+                            )
+                        }
+                        lower.endsWith(".webm") || lower.endsWith(".mp4") -> {
+                            DetailContent.Video(
+                                id = absoluteUrl,
+                                videoUrl = absoluteUrl,
+                                prompt = null,
+                                fileName = fileName
+                            )
+                        }
+                        else -> null
+                    }
+
+                    if (mediaContent != null) {
+                        progressivelyLoadedContent.add(mediaContent)
+                    }
+                } catch (e: MalformedURLException) {
+                    Log.e(
+                        "DetailViewModel",
+                        "Skipping malformed media URL. Base: '$url', Href: '$hrefAttr'",
+                        e
+                    )
+                }
+            }
+        }
+
+        val scriptElements = document.select("script")
+        var threadEndTime: String? = null
+
+        // (E) 正規表現はプリコンパイルしたものを使用
+        for (scriptElement in scriptElements) {
+            val scriptData = scriptElement.data()
+            if (scriptData.contains("document.write") && scriptData.contains("contdisp")) {
+                val docWriteMatch = DOC_WRITE.find(scriptData)
+                val writtenHtmlFromDocWrite = docWriteMatch?.groupValues?.getOrNull(1)
+                val writtenHtml = writtenHtmlFromDocWrite
+                    ?.replace("\\'", "'")
+                    ?.replace("\\/", "/")
+                if (writtenHtml != null) {
+                    val timeMatch = TIME.find(writtenHtml)
+                    threadEndTime = timeMatch?.groupValues?.getOrNull(1)
+                    if (threadEndTime != null) break
+                }
+            }
+        }
+
+        threadEndTime?.let {
+            progressivelyLoadedContent.add(
+                DetailContent.ThreadEndTime(id = "thread_end_time_${itemIdCounter++}", endTime = it)
+            )
+        }
+
+        return progressivelyLoadedContent.toList()
+    }
+
+    /**
+     * バックグラウンドでメタデータを更新
+     */
+    private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
+        val promptJobs = mutableListOf<Deferred<Pair<Int, String?>>>()
+
+        contentList.forEachIndexed { index, content ->
+            when (content) {
+                is DetailContent.Image -> {
+                    val deferredPrompt = viewModelScope.async(limitedIO) {
+                        try {
+                            val prompt = withTimeoutOrNull(5000L) {
+                                MetadataExtractor.extract(getApplication(), content.imageUrl)
+                            }
+                            if (prompt == null) {
+                                Log.w(
+                                    "DetailViewModel",
+                                    "Metadata for ${content.imageUrl} was null (timeout or null)"
+                                )
+                            }
+                            Pair(index, prompt)
+                        } catch (e: Exception) {
+                            Log.e(
+                                "DetailViewModel",
+                                "Exception during metadata extraction task for ${content.imageUrl}",
+                                e
+                            )
+                            Pair(index, null as String?)
+                        }
+                    }
+                    promptJobs.add(deferredPrompt)
+                }
+                is DetailContent.Video -> {
+                    val deferredPrompt = viewModelScope.async(limitedIO) {
+                        try {
+                            val prompt = withTimeoutOrNull(5000L) {
+                                MetadataExtractor.extract(getApplication(), content.videoUrl)
+                            }
+                            if (prompt == null) {
+                                Log.w(
+                                    "DetailViewModel",
+                                    "Metadata for ${content.videoUrl} was null (timeout or null)"
+                                )
+                            }
+                            Pair(index, prompt)
+                        } catch (e: Exception) {
+                            Log.e(
+                                "DetailViewModel",
+                                "Exception during metadata extraction task for ${content.videoUrl}",
+                                e
+                            )
+                            Pair(index, null as String?)
+                        }
+                    }
+                    promptJobs.add(deferredPrompt)
+                }
+                else -> {}
+            }
+        }
+
+        // メタデータ取得完了後に更新
+        if (promptJobs.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    val allPromptResults = promptJobs.awaitAll()
+
+                    val currentContentList = _detailContent.value?.toMutableList() ?: return@launch
+                    var hasUpdates = false
+
+                    allPromptResults.forEach { (relativeIndex, prompt) ->
+                        // contentList内の相対インデックスから全体のインデックスを計算
+                        val absoluteIndex = currentContentList.size - contentList.size + relativeIndex
+
+                        if (absoluteIndex >= 0 && absoluteIndex < currentContentList.size) {
+                            val itemToUpdate = currentContentList[absoluteIndex]
+                            val updatedItem = when (itemToUpdate) {
+                                is DetailContent.Image -> itemToUpdate.copy(prompt = prompt)
+                                is DetailContent.Video -> itemToUpdate.copy(prompt = prompt)
+                                else -> itemToUpdate
+                            }
+                            if (updatedItem != itemToUpdate) {
+                                currentContentList[absoluteIndex] = updatedItem
+                                hasUpdates = true
+                            }
+                        }
+                    }
+
+                    if (hasUpdates) {
+                        withContext(Dispatchers.Main) {
+                            _detailContent.postValue(currentContentList.toList())
+                        }
+
+                        withContext(Dispatchers.IO) {
+                            cacheManager.saveDetails(url, currentContentList.toList())
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("DetailViewModel", "Error in background prompt processing for $url", e)
+                }
             }
         }
     }

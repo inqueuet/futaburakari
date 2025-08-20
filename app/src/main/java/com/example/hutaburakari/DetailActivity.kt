@@ -9,6 +9,7 @@ import android.text.SpannableStringBuilder
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -34,6 +35,11 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private val scrollHistory = ArrayDeque<Pair<Int, Int>>(2)
     private lateinit var detailSearchManager: DetailSearchManager
     private lateinit var fastScrollHelper: FastScrollHelper
+
+    // 自動更新機能用のフィールド
+    private var isAutoUpdateEnabled = false
+    private val autoUpdateDelayMs = 500L // 更新までの遅延を500msに設定
+
 
     private val replyActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -77,6 +83,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
         setupCustomToolbarElements()
         setupRecyclerView()
+        setupAutoUpdateScroll() // 自動更新機能のセットアップ
 
         // FastScrollHelperの初期化
         fastScrollHelper = FastScrollHelper(
@@ -117,6 +124,75 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         binding.backButton.setOnClickListener {
             onBackPressedDispatcher.onBackPressed()
         }
+    }
+
+    // 自動更新機能のセットアップ
+    private fun setupAutoUpdateScroll() {
+        binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+
+                // 下方向へのスクロール中にのみチェック
+                if (dy > 0) {
+                    // レイアウトマネージャーから現在の表示情報を取得
+                    val layoutManager = recyclerView.layoutManager as LinearLayoutManager
+                    val visibleItemCount = layoutManager.childCount
+                    val totalItemCount = layoutManager.itemCount
+                    val firstVisibleItemPosition = layoutManager.findFirstVisibleItemPosition()
+
+                    // 更新中でなく、かつ最後のアイテムが表示されたかチェック
+                    if (!isAutoUpdateEnabled && !binding.swipeRefreshLayout.isRefreshing) {
+                        if ((visibleItemCount + firstVisibleItemPosition) >= totalItemCount && firstVisibleItemPosition >= 0) {
+                            // リストの末尾に到達したので、更新処理をトリガー
+                            triggerAutoUpdate()
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    private fun triggerAutoUpdate() {
+        if (isAutoUpdateEnabled) return // 既に更新中の場合は何もしない
+
+        isAutoUpdateEnabled = true
+
+        // 更新予告のトーストを表示（オプション）
+        showToastOnUiThread("新着レスを確認中...", Toast.LENGTH_SHORT)
+
+        // 小さなローディング表示（スレッドの最後に表示）
+        showAutoUpdateIndicator(true)
+
+        // 指定時間後に更新を実行
+        binding.detailRecyclerView.postDelayed({
+            performAutoUpdate()
+        }, autoUpdateDelayMs)
+    }
+
+    private fun performAutoUpdate() {
+        currentUrl?.let { url ->
+            // 現在のレス数を記録
+            val currentItemCount = detailAdapter.itemCount
+
+            // バックグラウンドで更新を実行
+            viewModel.checkForUpdates(url, currentItemCount) { hasUpdates ->
+                runOnUiThread {
+                    showAutoUpdateIndicator(false)
+                    isAutoUpdateEnabled = false
+
+                    if (hasUpdates) {
+                        showToastOnUiThread("新しいレスが追加されました", Toast.LENGTH_SHORT)
+                    } else {
+                        showToastOnUiThread("更新はありません", Toast.LENGTH_SHORT)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showAutoUpdateIndicator(show: Boolean) {
+        // ThreadEndTimeの後に小さなローディングインジケーターを表示/非表示
+        binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
