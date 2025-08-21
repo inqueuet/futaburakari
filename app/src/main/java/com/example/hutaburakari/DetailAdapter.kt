@@ -512,21 +512,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 setParameter("video_frame_millis", 10000L) // 0ms位置のフレーム
                 // (オプション) もし問題が続くならエラー時の画像も指定すると原因究明に役立ちます
                 // error(R.drawable.ic_error)
-
-                // ★★★ このリスナーで原因を特定します ★★★
-                listener(
-                    onStart = {
-                        Log.d("Coil_Debug", "読み込み開始: ${item.videoUrl}")
-                    },
-                    onSuccess = { _, result ->
-                        Log.d("Coil_Debug", "読み込み成功: ${result.dataSource}")
-                    },
-                    onError = { _, result ->
-                        // エラーが発生した場合、ここに詳細が出力されます
-                        Log.e("Coil_Debug", "読み込みエラー", result.throwable)
-                    }
-                )
-
             }
 
             // クリックリスナー（変更なし）
