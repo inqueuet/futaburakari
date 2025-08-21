@@ -145,7 +145,16 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             setHasFixedSize(true)
             itemAnimator = null
             setItemViewCacheSize(100)
+            // XMLで clipToPadding=false / paddingEnd / paddingBottom を付与済み
         }
+
+        // ★ ファストスクロール初期化（スクロール“死に”対策 & つまみ操作）
+        FastScrollHelper(
+            recyclerView = binding.detailRecyclerView,
+            fastScrollTrack = binding.fastScrollTrack,
+            fastScrollThumb = binding.fastScrollThumb,
+            layoutManager = layoutManager
+        )
     }
 
     // -------------------------

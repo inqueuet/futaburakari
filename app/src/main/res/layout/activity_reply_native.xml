@@ -1,27 +1,69 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/root"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    tools:context=".ReplyActivity">
 
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/toolbar"
-        style="?attr/toolbarStyle"
+    <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorSurface"
-        app:navigationIcon="?attr/homeAsUpIndicator"
-        app:title="レスを投稿" />
+        android:layout_height="wrap_content"
+        android:fitsSystemWindows="true">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:theme="?attr/actionBarTheme"
+            app:contentInsetStart="0dp"
+            app:popupTheme="?attr/actionBarPopupTheme">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <ImageView
+                    android:id="@+id/backButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:contentDescription="戻る"
+                    android:focusable="true"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_arrow_back" />
+
+                <TextView
+                    android:id="@+id/toolbarTitle"
+                    style="@style/Toolbar.TitleText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="レスを投稿" />
+            </LinearLayout>
+
+        </com.google.android.material.appbar.MaterialToolbar>
+
+    </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:fillViewport="true"
-        android:padding="16dp"
         app:layout_behavior="@string/appbar_scrolling_view_behavior"
-        android:layout_marginTop="?attr/actionBarSize">
+        android:fillViewport="true"
+        android:clipToPadding="false"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="24dp">
 
         <LinearLayout
             android:id="@+id/formContainer"
@@ -32,13 +74,6 @@
             android:showDividers="middle"
             android:dividerPadding="8dp">
 
-            <!-- 行スタイル共通のラベル幅を揃えるための寸法 -->
-            <View
-                android:id="@+id/labelWidthGuide"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone" />
-
             <!-- おなまえ -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -47,9 +82,10 @@
                 android:gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="96dp"
+                    android:layout_width="40dp"
                     android:layout_height="wrap_content"
                     android:text="おなまえ"
+                    android:textSize="10sp"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                 <com.google.android.material.textfield.TextInputLayout
@@ -73,9 +109,10 @@
                 android:gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="96dp"
+                    android:layout_width="40dp"
                     android:layout_height="wrap_content"
                     android:text="E-mail"
+                    android:textSize="10sp"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                 <com.google.android.material.textfield.TextInputLayout
@@ -100,9 +137,10 @@
                 android:gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="96dp"
+                    android:layout_width="40dp"
                     android:layout_height="wrap_content"
                     android:text="題名"
+                    android:textSize="10sp"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                 <com.google.android.material.textfield.TextInputLayout
@@ -125,9 +163,10 @@
                 android:orientation="horizontal">
 
                 <TextView
-                    android:layout_width="96dp"
+                    android:layout_width="40dp"
                     android:layout_height="wrap_content"
                     android:text="コメント"
+                    android:textSize="10sp"
                     android:textAppearance="?attr/textAppearanceBodyMedium"
                     android:paddingTop="8dp" />
 
@@ -135,14 +174,15 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="12dp"
-                    android:layout_weight="1"
-                    android:hint="">
+                    android:layout_weight="1">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/inputComment"
                         android:layout_width="match_parent"
-                        android:layout_height="160dp"
+                        android:layout_height="240dp"
+                        android:minLines="6"
                         android:gravity="top"
+                        android:overScrollMode="always"
                         android:inputType="textMultiLine"
                         android:maxLength="2000" />
                 </com.google.android.material.textfield.TextInputLayout>
@@ -156,9 +196,10 @@
                 android:gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="96dp"
+                    android:layout_width="40dp"
                     android:layout_height="wrap_content"
                     android:text="添付File"
+                    android:textSize="10sp"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                 <LinearLayout
@@ -175,6 +216,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="ファイルが選択されていません"
+                        android:textSize="8sp"
                         android:textAppearance="?attr/textAppearanceBodySmall" />
 
                     <com.google.android.material.button.MaterialButton
@@ -189,6 +231,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="画像なし"
+                        android:textSize="10sp"
                         android:layout_marginStart="12dp" />
                 </LinearLayout>
             </LinearLayout>
@@ -201,9 +244,10 @@
                 android:gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="96dp"
+                    android:layout_width="40dp"
                     android:layout_height="wrap_content"
                     android:text="削除キー"
+                    android:textSize="10sp"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                 <com.google.android.material.textfield.TextInputLayout
