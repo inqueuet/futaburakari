@@ -387,6 +387,17 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 size(ViewSizeResolver(imageView))
             }
 
+            // ★ 画像タップで MediaViewActivity 起動
+            imageView.setOnClickListener {
+                val ctx = it.context
+                val i = Intent(ctx, MediaViewActivity::class.java).apply {
+                    putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_IMAGE)
+                    putExtra(MediaViewActivity.EXTRA_URL, item.imageUrl)
+                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt) // サブタイトル等に表示
+                }
+                ctx.startActivity(i)
+            }
+
             promptView?.let { tv ->
                 val prompt = item.prompt.orEmpty()
                 if (prompt.isNotEmpty()) {
@@ -406,6 +417,16 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     tv.text = sp
                     tv.movementMethod = LinkMovementMethod.getInstance()
                     tv.visibility = View.VISIBLE
+
+                    // ★ プロンプト全体タップでテキストビューア起動
+                    tv.setOnClickListener { v ->
+                        val ctx = v.context
+                        val i = Intent(ctx, MediaViewActivity::class.java).apply {
+                            putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
+                            putExtra(MediaViewActivity.EXTRA_TEXT, prompt)
+                        }
+                        ctx.startActivity(i)
+                    }
                 } else {
                     tv.text = ""
                     tv.visibility = View.GONE
@@ -425,15 +446,15 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val promptView: TextView? = view.findViewById(R.id.promptTextView)
 
         fun bind(item: DetailContent.Video) {
-            // 動画再生（最小実装：外部アプリへ委譲）
+            // ★ 既存の外部アプリ起動をやめ、アプリ内ビューアへ
             playerView.setOnClickListener {
-                try {
-                    val ctx = it.context
-                    val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(item.videoUrl))
-                    ctx.startActivity(i)
-                } catch (e: Exception) {
-                    Log.e("DetailAdapter", "Failed to open videoUrl: ${item.videoUrl}", e)
+                val ctx = it.context
+                val i = Intent(ctx, MediaViewActivity::class.java).apply {
+                    putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_VIDEO)
+                    putExtra(MediaViewActivity.EXTRA_URL, item.videoUrl)
+                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt)
                 }
+                ctx.startActivity(i)
             }
 
             promptView?.let { tv ->
@@ -455,6 +476,16 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     tv.text = sp
                     tv.movementMethod = LinkMovementMethod.getInstance()
                     tv.visibility = View.VISIBLE
+
+                    // ★ プロンプト全体タップでテキストビューア起動
+                    tv.setOnClickListener { v ->
+                        val ctx = v.context
+                        val i = Intent(ctx, MediaViewActivity::class.java).apply {
+                            putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
+                            putExtra(MediaViewActivity.EXTRA_TEXT, prompt)
+                        }
+                        ctx.startActivity(i)
+                    }
                 } else {
                     tv.text = ""
                     tv.visibility = View.GONE
