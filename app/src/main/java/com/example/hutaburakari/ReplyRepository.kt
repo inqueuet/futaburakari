@@ -1,11 +1,11 @@
 package com.example.hutaburakari
 
+import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
-import android.util.Log
-import com.google.gson.Gson
-import com.google.gson.JsonSyntaxException
+import android.webkit.MimeTypeMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -16,223 +16,205 @@ import org.jsoup.Jsoup
 import java.io.IOException
 import java.nio.charset.Charset
 
-// データクラスをファイルレベルに定義 (または適切な場所に移動)
-data class FutabaResponse(
-    val status: String?,
-    val jumpto: Long?,
-    val resto: Long?,
-    val thisno: Long?,
-    val bbscode: String?,
-)
-
+/**
+ * Futaba への投稿を担当するリポジトリ。
+ * 既定の必須フィールドに加えて、JS依存で得た hidden/token を extra で上書き注入できるようにしている。
+ */
 class ReplyRepository(
-    private val httpClient: OkHttpClient,
-    private val gson: Gson = Gson() // Gsonインスタンスを持たせる
+    private val httpClient: OkHttpClient = NetworkModule.okHttpClient,
 ) {
 
+    /**
+     * 投稿を実行する。
+     *
+     * @param boardUrl  例: https://may.2chan.net/27/futaba.php?guid=on
+     * @param resto     レス先スレ番号 (例: "323716")
+     * @param name      おなまえ（任意）
+     * @param email     メール（任意）
+     * @param sub       題名（任意）
+     * @param com       本文
+     * @param inputPwd  削除パス（任意、未入力なら自動生成/保存）
+     * @param upfileUri 添付（任意）
+     * @param textOnly  画像なし
+     * @param context   コンテキスト（SJIS, 添付, Cookie/Prefs 用）
+     * @param extra     追加の hidden / token（後勝ちで上書き注入される）
+     */
     suspend fun postReply(
-        boardUrl: String, // futaba.phpのURL (例: https://may.2chan.net/b/futaba.php?guid=on)
-        resto: String,    // スレッドID
+        boardUrl: String,
+        resto: String,
         name: String?,
         email: String?,
         sub: String?,
         com: String,
-        inputPwd: String?, // ユーザーが入力したパスワード
+        inputPwd: String?,
         upfileUri: Uri?,
         textOnly: Boolean,
-        context: Context
-    ): Result<String> {
-        try {
+        context: Context,
+        extra: Map<String, String> = emptyMap()
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            // ベースURL（Origin 用）とスレURL（Referer 用）を導出
             val baseBoardUrl = boardUrl.substringBeforeLast("futaba.php")
             if (baseBoardUrl.isEmpty() || !boardUrl.contains("futaba.php")) {
-                Log.e("ReplyRepository", "Invalid boardUrl format: $boardUrl")
-                return Result.failure(IllegalArgumentException("boardUrlの形式が不正です。futaba.phpを含むURLである必要があります。"))
+                throw IllegalArgumentException("boardUrl が futaba.php を含んでいません: $boardUrl")
             }
             val threadPageUrl = baseBoardUrl + "res/$resto.htm"
-            Log.d("ReplyRepository", "Thread page URL for form data and Referer: $threadPageUrl")
+            val origin = baseBoardUrl.removeSuffix("/")
 
-            // 1. Fetch hash
-            val hashResult = fetchHashFromThreadPage(threadPageUrl)
-            if (hashResult.isFailure) {
-                return Result.failure(Exception("hashの取得に失敗: ${hashResult.exceptionOrNull()?.message}"))
+            // hash は通常スレHTMLから抽出するが、extra に入っていればそれを最優先で利用
+            // extra が無い場合のみフェッチ
+            val ensuredHash = extra["hash"] ?: fetchHashFromThreadPage(threadPageUrl).getOrElse {
+                throw IOException("hash の取得に失敗: ${it.message}")
             }
-            val hash = hashResult.getOrNull()!!
 
-            // 2. Manage pthc and pthb
+            // pthc/pthb は保存／再利用。未保存なら生成
             var pthc = AppPreferences.getPthc(context)
-            if (pthc == null) {
+            if (pthc.isNullOrBlank()) {
                 pthc = System.currentTimeMillis().toString()
                 AppPreferences.savePthc(context, pthc)
-                Log.d("ReplyRepository", "New pthc generated and saved: $pthc")
             }
-            val pthb = pthc // pthbは保存されたpthcと同じ値を使う
+            val pthb = pthc
 
-            // 3. Manage pwd
-            var finalPwd = inputPwd
-            if (finalPwd.isNullOrBlank()) { // ユーザーが入力しなかった場合
-                var savedPwd = AppPreferences.getPwd(context)
-                if (savedPwd == null) {
-                    savedPwd = AppPreferences.generateNewPwd()
-                    AppPreferences.savePwd(context, savedPwd)
-                    Log.d("ReplyRepository", "New pwd generated and saved: $savedPwd")
-                }
-                finalPwd = savedPwd
-            } else {
-                // ユーザーが入力したpwdを保存する（任意、ここでは保存しない仕様とするが一貫性のため保存しても良い）
-                 AppPreferences.savePwd(context, finalPwd) // ユーザーが入力した最新のものを保存する
+            // pwd は入力優先。未入力なら保存済み or 新規生成
+            val finalPwd = if (inputPwd.isNullOrBlank()) {
+                val saved = AppPreferences.getPwd(context)
+                if (saved.isNullOrBlank()) {
+                    val gen = AppPreferences.generateNewPwd()
+                    AppPreferences.savePwd(context, gen)
+                    gen
+                } else saved
+            } else inputPwd
+
+            val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
+
+            // 基本フォーム
+            bodyBuilder.addFormDataPart("mode", null, "regist".toShiftJISRequestBody())
+            bodyBuilder.addFormDataPart("resto", null, resto.toShiftJISRequestBody())
+            name?.takeIf { it.isNotEmpty() }?.let {
+                bodyBuilder.addFormDataPart("name", null, it.toShiftJISRequestBody())
             }
+            email?.takeIf { it.isNotEmpty() }?.let {
+                bodyBuilder.addFormDataPart("email", null, it.toShiftJISRequestBody())
+            }
+            sub?.takeIf { it.isNotEmpty() }?.let {
+                bodyBuilder.addFormDataPart("sub", null, it.toShiftJISRequestBody())
+            }
+            bodyBuilder.addFormDataPart("com", null, com.toShiftJISRequestBody())
+            finalPwd?.let { bodyBuilder.addFormDataPart("pwd", null, it.toShiftJISRequestBody()) }
 
-            val requestBodyBuilder = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("mode", null, "regist".toShiftJISRequestBody())
-                .addFormDataPart("resto", null, resto.toShiftJISRequestBody())
-                .addFormDataPart("com", null, com.toShiftJISRequestBody())
+            // 既定 hidden
+            bodyBuilder.addFormDataPart("pthc", null, pthc.toShiftJISRequestBody())
+            bodyBuilder.addFormDataPart("pthb", null, pthb.toShiftJISRequestBody())
+            bodyBuilder.addFormDataPart("hash", null, ensuredHash.toShiftJISRequestBody())
 
-            // requestBodyBuilder.addFormDataPart("responsemode", null, "ajax".toShiftJISRequestBody())
-            // requestBodyBuilder.addFormDataPart("baseform", null, "".toShiftJISRequestBody())
-            // requestBodyBuilder.addFormDataPart("pthd", null, "".toShiftJISRequestBody())
+            // MAX_FILE_SIZE などは extra で最終上書きされることを想定（ここでは明示追加しない）
 
-            name?.takeIf { it.isNotBlank() }?.let { requestBodyBuilder.addFormDataPart("name", null, it.toShiftJISRequestBody()) }
-            email?.takeIf { it.isNotBlank() }?.let { requestBodyBuilder.addFormDataPart("email", null, it.toShiftJISRequestBody()) }
-            sub?.takeIf { it.isNotBlank() }?.let { requestBodyBuilder.addFormDataPart("sub", null, it.toShiftJISRequestBody()) }
-            finalPwd?.takeIf { it.isNotBlank() }?.let { requestBodyBuilder.addFormDataPart("pwd", null, it.toShiftJISRequestBody()) }
-
-            requestBodyBuilder.addFormDataPart("js", null, "on".toShiftJISRequestBody())
-            requestBodyBuilder.addFormDataPart("ptua", null, "1341647872".toShiftJISRequestBody()) // 固定値
-
-            val displayMetrics = context.resources.displayMetrics
-            val screenWidth = displayMetrics.widthPixels
-            val screenHeight = displayMetrics.heightPixels
-            val scszValue = "${screenWidth}x${screenHeight}x32" // Modified to x32
-            requestBodyBuilder.addFormDataPart("scsz", null, scszValue.toShiftJISRequestBody())
-
-            requestBodyBuilder.addFormDataPart("chrenc", null, "文字".toShiftJISRequestBody())
-
-            requestBodyBuilder.addFormDataPart("pthc", null, pthc.toShiftJISRequestBody())
-            requestBodyBuilder.addFormDataPart("pthb", null, pthb.toShiftJISRequestBody())
-            requestBodyBuilder.addFormDataPart("hash", null, hash.toShiftJISRequestBody())
-
+            // 添付/テキストのみ
             if (textOnly || upfileUri == null) {
-                requestBodyBuilder.addFormDataPart("textonly", null, "on".toShiftJISRequestBody())
+                bodyBuilder.addFormDataPart("textonly", null, "on".toShiftJISRequestBody())
             } else {
-                val fileName = getFileNameFromUri(context, upfileUri) ?: "upload_file"
-                val mimeType = context.contentResolver.getType(upfileUri) ?: "application/octet-stream"
-
-                context.contentResolver.openInputStream(upfileUri)?.use { inputStream ->
-                    val fileRequestBody = inputStream.readBytes().toRequestBody(mimeType.toMediaTypeOrNull())
-                    requestBodyBuilder.addFormDataPart("upfile", fileName, fileRequestBody)
-                } ?: return Result.failure(IOException("ファイルストリームの取得に失敗: $upfileUri"))
-
-                requestBodyBuilder.addFormDataPart("MAX_FILE_SIZE", null, (8 * 1024 * 1024).toString().toShiftJISRequestBody())
+                val fileName = guessFileName(context.contentResolver, upfileUri)
+                val mime = guessMimeType(context.contentResolver, upfileUri)
+                val fileRequest = context.contentResolver.openInputStream(upfileUri)?.use { input ->
+                    input.readBytes().toRequestBody(mime.toMediaTypeOrNull())
+                } ?: throw IOException("添付ファイルの読み込みに失敗: $upfileUri")
+                bodyBuilder.addFormDataPart("upfile", fileName, fileRequest)
             }
 
-            val finalRequestBody = requestBodyBuilder.build()
+            // extra を後勝ちで注入（hidden/token 上書き想定）
+            extra.forEach { (k, v) ->
+                bodyBuilder.addFormDataPart(k, null, v.toShiftJISRequestBody())
+            }
 
-            val request = Request.Builder()
+            val finalBody = bodyBuilder.build()
+            val req = Request.Builder()
                 .url(boardUrl)
                 .header("Referer", threadPageUrl)
-                .header("Origin", baseBoardUrl.removeSuffix("/"))
-                .post(finalRequestBody)
+                .header("Origin", origin)
+                .post(finalBody)
                 .build()
 
-            Log.d("ReplyRepository", "Posting to: $boardUrl with Referer: $threadPageUrl and Origin: ${baseBoardUrl.removeSuffix("/")}")
-
-            httpClient.newCall(request).execute().use { response ->
-                val responseBodyString = response.body?.source()?.readString(Charset.forName("Shift_JIS")) ?: ""
-                Log.d("ReplyRepository", "Response code: ${response.code}")
-                Log.d("ReplyRepository", "Response body: $responseBodyString")
-
-                if (!response.isSuccessful) {
-                    return Result.failure(IOException("投稿失敗 (HTTP ${response.code}): ${response.message}\n${responseBodyString.take(500)}"))
-                }
-
-                try {
-                    val futabaResponse = gson.fromJson(responseBodyString, FutabaResponse::class.java)
-                    if ("ok".equals(futabaResponse.status, ignoreCase = true)) {
-                        return Result.success("投稿成功！ レスNo: ${futabaResponse.thisno ?: "不明"}")
-                    } else {
-                        Log.w("ReplyRepository", "JSON response status was not 'ok': ${futabaResponse.status}")
-                        return Result.failure(IOException("投稿失敗 (JSONステータス: ${futabaResponse.status ?: "不明"})"))
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val code = resp.code
+                    val msg = resp.message
+                    val raw = resp.body?.bytes() ?: ByteArray(0)
+                    // Futaba は SJIS HTML を返すので内容も見ておく
+                    val decoded = try {
+                        String(raw, Charset.forName("Shift_JIS"))
+                    } catch (_: Exception) {
+                        raw.toString()
                     }
-                } catch (e: JsonSyntaxException) {
-                    Log.w("ReplyRepository", "Response was not valid JSON, attempting HTML error parsing. Body: $responseBodyString", e)
-                    if (responseBodyString.contains("ＥＲＲＯＲ！") ||
-                        responseBodyString.contains("連続投稿です") ||
-                        responseBodyString.contains("本文がありません") ||
-                        responseBodyString.contains("不正な参照元")) {
-                        val doc = Jsoup.parse(responseBodyString)
-                        val errorMessage = doc.select("font[color='red'] b").firstOrNull()?.text()
-                            ?: doc.select("h1").firstOrNull()?.text()
-                            ?: doc.select("p.main").firstOrNull()?.text()
-                            ?: responseBodyString.take(100)
-                            ?: "投稿エラーが検出されました (HTMLフォールバック)"
-                        return Result.failure(IOException("投稿エラー (HTML): $errorMessage"))
-                    }
-                    return Result.failure(IOException("不明なレスポンス形式: ${responseBodyString.take(500)}"))
-                } catch (e: Exception) {
-                    Log.e("ReplyRepository", "Error processing response", e)
-                    return Result.failure(IOException("レスポンス処理エラー: ${e.message}"))
+                    throw IOException("HTTP ${code} ${msg}\n$decoded")
                 }
+                val bytes = resp.body?.bytes() ?: ByteArray(0)
+                // 成功時も HTML のことが多いので、エラー文言が無いか軽く見る
+                val html = String(bytes, Charset.forName("Shift_JIS"))
+                if (looksLikeError(html)) {
+                    throw IOException(parseErrorMessage(html))
+                }
+                html
             }
-        } catch (e: Exception) {
-            Log.e("ReplyRepository", "Post failed", e)
-            return Result.failure(e)
         }
     }
 
-    private fun getFileNameFromUri(context: Context, uri: Uri): String? {
-        var fileName: String? = null
-        try {
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val displayNameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (displayNameIndex != -1) {
-                        fileName = cursor.getString(displayNameIndex)
+    /**
+     * スレHTMLから hash を抽出する（Shift_JIS）。
+     */
+    private suspend fun fetchHashFromThreadPage(threadUrl: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val req = Request.Builder().url(threadUrl).get().build()
+                NetworkModule.okHttpClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }
+                    val body = resp.body?.bytes() ?: ByteArray(0)
+                    val html = String(body, Charset.forName("Shift_JIS"))
+                    val doc = Jsoup.parse(html, threadUrl)
+                    val fm = doc.selectFirst("form#fm") ?: doc.selectFirst("form")
+                    val hash = fm?.selectFirst("input[name=hash]")?.attr("value").orEmpty()
+                    if (hash.isEmpty()) throw IllegalStateException("hash not found in thread page")
+                    hash
                 }
             }
-        } catch (e: SecurityException) {
-            Log.e("ReplyRepository", "SecurityException getting filename from URI: $uri", e)
         }
-        if (fileName == null) {
-            fileName = uri.path?.substringAfterLast('/')
-        }
-        return fileName
+
+    private fun looksLikeError(html: String): Boolean {
+        val lowered = html.lowercase()
+        // 代表的な失敗キーワードを簡易判定（必要に応じて追加）
+        return listOf(
+            "エラー", "error", "連投", "本文なし", "不正", "ブロック", "拒否", "失敗"
+        ).any { lowered.contains(it.lowercase()) }
     }
 
-    private fun String.toShiftJISRequestBody(): RequestBody {
-        return this.toByteArray(Charset.forName("Shift_JIS"))
+    private fun parseErrorMessage(html: String): String {
+        return runCatching {
+            val doc = Jsoup.parse(html)
+            // よくある場所からエラー文言を拾う（板ごとに調整可能）
+            val cand = doc.select("div,span,font,body").firstOrNull { it.text().contains("エラー") }
+            (cand?.text()?.ifBlank { null })
+                ?: doc.body()?.text()?.take(200)
+                ?: "投稿に失敗しました"
+        }.getOrDefault("投稿に失敗しました")
+    }
+
+    private fun String.toShiftJISRequestBody(): RequestBody =
+        this.toByteArray(Charset.forName("Shift_JIS"))
             .toRequestBody("text/plain; charset=Shift_JIS".toMediaTypeOrNull())
+
+    private fun guessMimeType(cr: ContentResolver, uri: Uri): String {
+        val mime = cr.getType(uri)
+        if (!mime.isNullOrBlank()) return mime
+        val ext = MimeTypeMap.getFileExtensionFromUrl(uri.toString())
+        val fromExt = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        return fromExt ?: "application/octet-stream"
     }
 
-    // Fetches only the 'hash' value from the thread page.
-    private suspend fun fetchHashFromThreadPage(threadUrl: String): Result<String> {
-        try {
-            val request = Request.Builder().url(threadUrl).get().build()
-            Log.d("ReplyRepository", "Fetching hash from: $threadUrl")
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.w("ReplyRepository", "Failed to fetch page for hash: ${response.code} ${response.message} from $threadUrl")
-                    return Result.failure(IOException("フォームページ取得失敗(${response.code})"))
-                }
-                val htmlBody = response.body?.source()?.readString(Charset.forName("Shift_JIS"))
-                if (htmlBody == null) {
-                    Log.w("ReplyRepository", "Form page HTML body is null (for hash) from $threadUrl")
-                    return Result.failure(IOException("フォームページのHTML取得失敗"))
-                }
-                val document = Jsoup.parse(htmlBody)
-                val hashValue = document.select("input[name=hash]").first()?.attr("value")
-
-                if (hashValue.isNullOrEmpty()) {
-                    Log.w("ReplyRepository", "Hash value not found in form: $threadUrl. HTML snippet: ${htmlBody.substring(0, htmlBody.length.coerceAtMost(1000))}")
-                    return Result.failure(IOException("'hash'が見つかりません。ページを確認してください。"))
-                }
-                Log.d("ReplyRepository", "Fetched hash: $hashValue")
-                return Result.success(hashValue)
-            }
-        } catch (e: Exception) {
-            Log.e("ReplyRepository", "Failed to fetch hash from $threadUrl", e)
-            return Result.failure(e)
-        }
+    private fun guessFileName(cr: ContentResolver, uri: Uri): String {
+        // シンプルに末尾から取得（必要なら ContentResolver クエリに置換）
+        val path = uri.lastPathSegment ?: "upload.bin"
+        val idx = path.lastIndexOf('/')
+        return if (idx >= 0 && idx + 1 < path.length) path.substring(idx + 1) else path
     }
 }

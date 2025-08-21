@@ -1,65 +1,111 @@
 package com.example.hutaburakari
 
-import android.app.Application
+import android.content.Context
 import android.net.Uri
-import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import com.google.gson.Gson
 
-sealed class ReplyResult {
-    data class Success(val message: String) : ReplyResult()
-    data class Error(val errorMessage: String) : ReplyResult()
-    object Loading : ReplyResult()
-}
+/**
+ * 返信画面の ViewModel。
+ * 1回目は OkHttp 単独で送信 → 失敗し、JS必須っぽい場合のみ TokenProvider で hidden/token を取得して再送する。
+ */
+class ReplyViewModel(
+    private val repository: ReplyRepository = ReplyRepository()
+) : ViewModel() {
 
-class ReplyViewModel(application: Application) : AndroidViewModel(application) {
+    // Activity/Fragment 側でセットする（不可視WebViewワーカー）
+    var tokenProvider: TokenProvider? = null
 
-    private val repository = ReplyRepository(NetworkModule.okHttpClient, Gson())
+    private val _uiState = MutableLiveData<UiState>(UiState.Idle)
+    val uiState: LiveData<UiState> = _uiState
 
-    private val _replyStatus = MutableLiveData<ReplyResult>()
-    val replyStatus: LiveData<ReplyResult> = _replyStatus
+    sealed interface UiState {
+        data object Idle : UiState
+        data object Loading : UiState
+        data class Success(val html: String) : UiState
+        data class Error(val message: String) : UiState
+    }
 
-    fun submitReply(
+    fun submit(
+        context: Context,
         boardUrl: String,
-        threadId: String,
+        resto: String,
         name: String?,
         email: String?,
-        comment: String,
-        password: String?, // このパラメータ名はActivity側と合わせているので変更なし
-        selectedFileUri: Uri?,
-        isTextOnly: Boolean
+        sub: String?,
+        com: String,
+        inputPwd: String?,
+        upfileUri: Uri?,
+        textOnly: Boolean,
+        postPageUrlForToken: String? // 例: https://may.2chan.net/27/futaba.php?mode=post&res=323716
     ) {
-        _replyStatus.value = ReplyResult.Loading
         viewModelScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    repository.postReply(
-                        boardUrl = boardUrl,
-                        resto = threadId,
-                        name = name,
-                        email = email,
-                        sub = null, // 題名はUIにないのでnull固定
-                        com = comment,
-                        inputPwd = password, // Repositoryのパラメータ名に合わせて inputPwd に変更
-                        upfileUri = selectedFileUri,
-                        textOnly = isTextOnly,
-                        context = getApplication()
-                    )
-                }
+            _uiState.postValue(UiState.Loading)
 
-                if (result.isSuccess) {
-                    _replyStatus.postValue(ReplyResult.Success(result.getOrNull() ?: "成功"))
-                } else {
-                    _replyStatus.postValue(ReplyResult.Error(result.exceptionOrNull()?.message ?: "不明なエラー"))
-                }
-            } catch (e: Exception) {
-                _replyStatus.postValue(ReplyResult.Error("投稿中に例外が発生: ${e.message}"))
+            // 1回目：extra なしで投稿
+            val first = repository.postReply(
+                boardUrl = boardUrl,
+                resto = resto,
+                name = name,
+                email = email,
+                sub = sub,
+                com = com,
+                inputPwd = inputPwd,
+                upfileUri = upfileUri,
+                textOnly = textOnly,
+                context = context,
+                extra = emptyMap()
+            )
+
+            if (first.isSuccess) {
+                _uiState.postValue(UiState.Success(first.getOrThrow()))
+                return@launch
+            }
+
+            val firstMsg = first.exceptionOrNull()?.message.orEmpty()
+            if (!looksLikeJsRequired(firstMsg) || postPageUrlForToken.isNullOrBlank()) {
+                _uiState.postValue(UiState.Error(firstMsg.ifBlank { "投稿に失敗しました" }))
+                return@launch
+            }
+
+            // 2回目：トークンを取得して再送
+            val tokens = tokenProvider?.fetchTokens(postPageUrlForToken)?.getOrNull()
+            if (tokens.isNullOrEmpty()) {
+                _uiState.postValue(UiState.Error(firstMsg.ifBlank { "トークン取得に失敗しました" }))
+                return@launch
+            }
+
+            val second = repository.postReply(
+                boardUrl = boardUrl,
+                resto = resto,
+                name = name,
+                email = email,
+                sub = sub,
+                com = com,
+                inputPwd = inputPwd,
+                upfileUri = upfileUri,
+                textOnly = textOnly,
+                context = context,
+                extra = tokens
+            )
+
+            if (second.isSuccess) {
+                _uiState.postValue(UiState.Success(second.getOrThrow()))
+            } else {
+                _uiState.postValue(
+                    UiState.Error(
+                        second.exceptionOrNull()?.message.orEmpty().ifBlank { "投稿に失敗しました(再送)" }
+                    )
+                )
             }
         }
+    }
+
+    private fun looksLikeJsRequired(message: String): Boolean {
+        val lowered = message.lowercase()
+        return listOf("hash", "js", "token", "不正", "拒否", "連投", "本文なし").any { lowered.contains(it) }
     }
 }
