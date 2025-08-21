@@ -29,6 +29,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     private var currentUrl: String? = null
 
+    private var isRequestingMore = false   // 追加：多重呼び出し防止
+
     companion object {
         const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
@@ -147,6 +149,27 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             setItemViewCacheSize(100)
             // XMLで clipToPadding=false / paddingEnd / paddingBottom を付与済み
         }
+
+        // ★ 追加：無限スクロール（底から5件手前で発火）
+        binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0) return
+                val last = layoutManager.findLastVisibleItemPosition()
+                val total = detailAdapter.itemCount
+                val threshold = 5
+                if (!isRequestingMore && last >= total - 1 - threshold) {
+                    val url = currentUrl ?: return
+                    isRequestingMore = true
+
+                    suppressNextRestore = true
+
+                    viewModel.checkForUpdates(url, total) { hasNew ->
+                        // 取得完了後に解除（新着なしでも解除）
+                        isRequestingMore = false
+                    }
+                }
+            }
+        })
 
         // ★ ファストスクロール初期化（スクロール“死に”対策 & つまみ操作）
         FastScrollHelper(
