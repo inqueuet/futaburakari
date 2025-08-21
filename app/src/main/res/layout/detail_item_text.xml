@@ -3,9 +3,9 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingStart="8dp"
-    android:paddingEnd="8dp"
-    android:paddingBottom="8dp">
+    android:paddingStart="0dp"
+    android:paddingEnd="0dp"
+    android:paddingBottom="0dp">
 
     <TextView
         android:id="@+id/detailTextView"
@@ -13,5 +13,6 @@
         android:layout_height="wrap_content"
         android:textColor="?android:attr/textColorPrimary"
         android:textSize="16sp"
+        android:lineSpacingMultiplier="0.8"
         android:textIsSelectable="true" />
 </LinearLayout>

@@ -71,26 +71,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     // dp -> px
     private fun TextView.dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
-    // 表示専用の余白（ZWSP後に改行高を増やす）
-    fun buildDisplayOnlyPaddedText(tv: TextView, raw: CharSequence): Spannable {
-        val s = if (raw is Spannable) raw else SpannableString(raw)
-        applyZwspPadding(tv, s)
-        return s
-    }
-
-    private fun applyZwspPadding(tv: TextView, s: Spannable) {
-        val pad = tv.dpToPx(4)
-        var idx = 0
-        val str = s.toString()
-        while (idx < str.length) {
-            val found = str.indexOf(zwsp, idx)
-            if (found == -1) break
-            s.setSpan(PaddingAfterSpan(pad), found, found + zwsp.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            s.setSpan(ZeroWidthCleanerSpan(), found, found + zwsp.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            idx = found + zwsp.length
-        }
-    }
-
     // ZWSP を差し込み（ID/No/日時の直後など）
     private fun insertZwspForPadding(html: String): String {
         var t = html
@@ -182,7 +162,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         fun bind(item: DetailContent.Text, searchQuery: String?) {
             val htmlWithZwsp = insertZwspForPadding(item.htmlContent)
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
-            val spannableBuilder = SpannableStringBuilder(adapter.buildDisplayOnlyPaddedText(textView, textFromHtmlWithZwsp))
+            //val spannableBuilder = SpannableStringBuilder(adapter.buildDisplayOnlyPaddedText(textView, textFromHtmlWithZwsp))
+            val spannableBuilder = SpannableStringBuilder(textFromHtmlWithZwsp)
             val contentString = spannableBuilder.toString()
 
             var mainResNum: String? = null
