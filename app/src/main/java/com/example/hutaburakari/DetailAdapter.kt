@@ -353,22 +353,69 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private fun extractPlainBody(html: String): String {
             val plain = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT).toString()
 
+            // 例: 08/21/25(水)23:11:22 のような投稿メタ時刻
             val dateRegex = Regex("""\d{2}/\d{2}/\d{2}\([^)]+\)\d{2}:\d{2}:\d{2}""")
+
+            // 画像/動画/ファイル拡張子（表示説明に混ざるのを検出する用）
+            val fileExtRegex = Regex(
+                """\.(?:jpg|jpeg|png|gif|webp|bmp|svg|webm|mp4|mov|mkv|avi|wmv|flv)\b""",
+                RegexOption.IGNORE_CASE
+            )
+
+            // -(123B), -(1.2MB) などサイズ表記（全角/半角/各種ダッシュを許容）
+            val sizeSuffixRegex = Regex(
+                """[ \t]*[\\-ー−―–—]?\s*\(\s*\d+(?:\.\d+)?\s*(?:[kKmMgGtT]?[bB])\s*\)"""
+            )
+
+            // ✅ 行頭ラベル（「画像」「動画」「ファイル名」「添付」「サムネ」など＋任意の「ファイル名」語）
+            //   例:
+            //   - 画像: test.jpg -(123B)
+            //   - 動画ファイル名：sample.mp4 ー(12.3MB)
+            //   - ファイル名: pic.webp
+            //   - サムネ: xxx.jpg
+            val headLabelRegex = Regex(
+                """^(?:画像|動画|ファイル名|ファイル|添付|サムネ|サムネイル)(?:\s*ファイル名)?\s*[:：]""",
+                RegexOption.IGNORE_CASE
+            )
+
+            // ✅ 「画像ファイル名：ー(123B)」のように“ファイル名が空”でもサイズだけ付く行も除外
+            //   （行頭ラベル + 何かしらのサイズ表記があれば弾く）
+            fun isLabeledSizeOnlyLine(t: String): Boolean {
+                return headLabelRegex.containsMatchIn(t) && sizeSuffixRegex.containsMatchIn(t)
+            }
 
             return plain
                 .lineSequence()
                 .map { it.trimEnd() }
-                // メタ情報行は除外（ID, No., 日付行, Name等が混在するヘッダ行）
                 .filterNot { line ->
                     val t = line.trim()
+
+                    // 既存のメタ行を除外
                     t.startsWith("ID:") ||
                             t.startsWith("No.") ||
                             dateRegex.containsMatchIn(t) ||
                             t.contains("Name")
                 }
+                .filterNot { line ->
+                    val t = line.trim()
+
+                    // 1) 行頭が 画像/動画/ファイル名/添付/サムネ などのラベルなら除外
+                    headLabelRegex.containsMatchIn(t) ||
+
+                            // 2) 「xxx.jpg -(123B)」のような 拡張子+サイズ併記も除外
+                            (fileExtRegex.containsMatchIn(t) && sizeSuffixRegex.containsMatchIn(t)) ||
+
+                            // 3) 「画像ファイル名：ー(123B)」のように“名前が空”でもサイズだけの行も除外
+                            isLabeledSizeOnlyLine(t) ||
+
+                            // 4) サムネ表記が混入した説明行
+                            (fileExtRegex.containsMatchIn(t) && t.contains("サムネ"))
+                }
                 .joinToString("\n")
                 .trimEnd()
         }
+
+
     }
 
     class ImageViewHolder(
