@@ -342,14 +342,33 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             textView.setOnLongClickListener {
                 val ctx = it.context
                 val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(
-                    ClipData.newPlainText("text", Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString())
-                )
+                val bodyOnly = extractPlainBody(item.htmlContent)
+                cm.setPrimaryClip(ClipData.newPlainText("text", bodyOnly))
                 true
             }
         }
 
         private fun insertZwspForPadding(html: String): String = adapter.insertZwspForPadding(html)
+
+        private fun extractPlainBody(html: String): String {
+            val plain = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT).toString()
+
+            val dateRegex = Regex("""\d{2}/\d{2}/\d{2}\([^)]+\)\d{2}:\d{2}:\d{2}""")
+
+            return plain
+                .lineSequence()
+                .map { it.trimEnd() }
+                // メタ情報行は除外（ID, No., 日付行, Name等が混在するヘッダ行）
+                .filterNot { line ->
+                    val t = line.trim()
+                    t.startsWith("ID:") ||
+                            t.startsWith("No.") ||
+                            dateRegex.containsMatchIn(t) ||
+                            t.contains("Name")
+                }
+                .joinToString("\n")
+                .trimEnd()
+        }
     }
 
     class ImageViewHolder(
