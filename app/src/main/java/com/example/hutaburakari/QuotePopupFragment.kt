@@ -52,6 +52,7 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
             }
             else -> emptyList()
         }
+        detailAdapter.submitList(null)
         detailAdapter.submitList(items)
     }
 
@@ -65,46 +66,39 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
         }
         binding.popupRecyclerView.layoutManager = LinearLayoutManager(requireContext())
         binding.popupRecyclerView.adapter = detailAdapter
+
+        // ★ 追加（Activity と同等の安定表示設定）
+        binding.popupRecyclerView.setHasFixedSize(true)
+        binding.popupRecyclerView.itemAnimator = null
+        binding.popupRecyclerView.setItemViewCacheSize(100)
+
     }
 
     // --- データ解決ロジック ---
-
     private fun resolveQuotedContent(
         all: List<DetailContent>,
         quotedText: String,
         level: Int
     ): List<DetailContent> {
-        // 1段目：クリックされたトークン（No. / ファイル名 / 本文断片）から該当アイテムを検索
-        var current: DetailContent = findContentByText(all, quotedText) ?: return emptyList()
-        val targets = mutableListOf<DetailContent>()
-        targets += current
+        val needle = quotedText.trim().replace(Regex("\\s+"), " ")
+        val textIndexes = all.withIndex().filter { (_, c) ->
+            c is DetailContent.Text &&
+                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
+                        .toString()
+                        .replace(Regex("\\s+"), " ")
+                        .contains(needle, ignoreCase = true)
+        }.map { it.index }
 
-        // 2段目以降：現在が Text のときだけ、本文内の「行頭 '>' 1個の行」を候補にして解決できるものを辿る
-        var depth = 2
-        while (depth <= level) {
-            val next: DetailContent? = if (current is DetailContent.Text) {
-                val cores = extractFirstLevelQuoteCores(current) // List<String>
-                // 複数候補があっても、解決できたものを優先採用（順序安定）
-                cores.firstNotNullOfOrNull { core -> findContentByText(all, core) }
-            } else {
-                null // 画像/動画に来たら（コアが取れないので）そこで打ち切り
-            }
-
-            if (next == null) break
-            targets += next
-            current = next
-            depth++
-        }
-
-        // 重複除去して返す（近い引用元 → 奥側の順）
-        return targets.distinctBy { it.id }
+        return collectWithTrailingMedia(all, textIndexes)
     }
 
     private fun resolveIdContent(all: List<DetailContent>, id: String): List<DetailContent> {
         val key = "ID:$id"
-        return all.filterIsInstance<DetailContent.Text>().filter { t ->
-            Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(key)
-        }
+        val textIndexes = all.withIndex().filter { (_, c) ->
+            c is DetailContent.Text &&
+                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(key)
+        }.map { it.index }
+        return collectWithTrailingMedia(all, textIndexes)
     }
 
     private fun findContentByText(all: List<DetailContent>, searchText: String): DetailContent? {
@@ -145,6 +139,35 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+    }
+
+    // 直後の画像/動画を「次の Text/ThreadEndTime まで」同梱して返す（登場順を維持）
+    private fun collectWithTrailingMedia(
+        all: List<DetailContent>,
+        textIndexes: List<Int>
+    ): List<DetailContent> {
+        val paired = mutableListOf<Pair<Int, DetailContent>>() // (全体インデックス, アイテム)
+
+        for (i in textIndexes) {
+            if (i !in all.indices) continue
+            // 本文
+            paired += i to all[i]
+            // 直後メディア（次の Text/ThreadEndTime まで）
+            var j = i + 1
+            while (j < all.size) {
+                when (val c = all[j]) {
+                    is DetailContent.Image, is DetailContent.Video -> { paired += j to c; j++ }
+                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+                }
+            }
+        }
+
+        // ❌ 削除：paired.sortBy { it.first }  ← これが分離の元凶になりやすい
+        // 収集した順（= スレ内登場順）のまま重複だけ落とす
+        val seen = HashSet<String>()
+        val out = ArrayList<DetailContent>(paired.size)
+        for ((_, item) in paired) if (seen.add(item.id)) out += item
+        return out
     }
 
     companion object {

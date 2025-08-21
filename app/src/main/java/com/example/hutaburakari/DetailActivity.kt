@@ -104,12 +104,12 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             val levelRaw = token.takeWhile { it == '>' }.length
             val quoteLevel = if (levelRaw <= 0) 1 else levelRaw
             val core = token.drop(levelRaw).trim()
-            showQuotePopup(core, quoteLevel)
+            QuotePopupFragment.showForQuote(supportFragmentManager, core, quoteLevel)
         }
 
         // ID タップ → 同一IDの投稿をポップアップ表示
         detailAdapter.onIdClickListener = { id ->
-            showIdPostsPopup(id)
+            QuotePopupFragment.showForId(supportFragmentManager, id)
         }
 
         // 「そうだね」
@@ -269,36 +269,35 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private fun showQuotePopup(quotedText: String, quoteLevel: Int) {
         val all = viewModel.detailContent.value ?: return
 
-        val targets = mutableListOf<DetailContent>()
+        // 1) 本文に needle を含む「全Textインデックス」を集める
+        val needle = quotedText.trim().replace(Regex("\\s+"), " ")
+        val textIndexes = all.withIndex().filter { (_, c) ->
+            c is DetailContent.Text &&
+                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
+                        .toString()
+                        .replace(Regex("\\s+"), " ")
+                        .contains(needle, ignoreCase = true)
+        }.map { it.index }
 
-        // 1段目：クリック箇所の引用本文から該当アイテムを探す
-        var current: DetailContent? = findContentByText(all, quotedText)
-        if (current != null) targets += current
-
-        // 2段目以降：現在のテキストの本文中にある「行頭 '>' 1個の行」をすべて候補にし、解決できるものを採用
-        var level = 2
-        while (level <= quoteLevel && current is DetailContent.Text) {
-            val cores = extractFirstLevelQuoteCores(current) // ★複数候補
-            var advanced = false
-            for (core in cores) {
-                val next = findContentByText(all, core)
-                if (next != null) {
-                    targets += next
-                    current = next
-                    advanced = true
-                    break
-                }
-            }
-            if (!advanced) break
-            level++
-        }
-
-        if (targets.isEmpty()) {
+        if (textIndexes.isEmpty()) {
             showToastOnUiThread("引用先が見つかりませんでした", Toast.LENGTH_SHORT)
             return
         }
-// 昇順（古い→新しい）に並べてから表示
-        val ordered = targets
+
+        // 2) 直後の画像/動画も同梱して収集
+        val result = mutableListOf<DetailContent>()
+        for (i in textIndexes) {
+            result += all[i]
+            var j = i + 1
+            while (j < all.size) {
+                when (val c = all[j]) {
+                    is DetailContent.Image, is DetailContent.Video -> { result += c; j++ }
+                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+                }
+            }
+        }
+
+        val ordered = result
             .distinctBy { it.id }
             .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
         showContentListBottomSheet(ordered)
