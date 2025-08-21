@@ -418,7 +418,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
             val intent = Intent(this, DetailActivity::class.java).apply {
                 putExtra(DetailActivity.EXTRA_URL, item.detailUrl)
-                putExtra("EXTRA_TITLE", item.title)
+                putExtra(DetailActivity.EXTRA_TITLE, item.title)  // ←ここを修正
             }
             startActivity(intent)
         }

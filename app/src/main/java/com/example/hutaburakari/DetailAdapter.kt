@@ -16,133 +16,116 @@ import android.text.TextPaint
 import android.text.method.LinkMovementMethod
 import android.text.style.BackgroundColorSpan
 import android.text.style.ClickableSpan
-import android.text.style.ReplacementSpan
+import android.text.style.LeadingMarginSpan
+import android.text.style.LineHeightSpan
 import android.text.style.URLSpan
 import android.util.Log
-import android.view.KeyEvent
+import android.util.Patterns
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
-import androidx.core.view.isVisible
-import androidx.lifecycle.findViewTreeLifecycleOwner
-import androidx.lifecycle.lifecycleScope
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import androidx.swiperefreshlayout.widget.CircularProgressDrawable
 import coil.load
 import coil.size.ViewSizeResolver
-import kotlinx.coroutines.launch
 import java.util.regex.Pattern
 
 class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(DetailDiffCallback()) {
 
-    var onQuoteClickListener: ((quotedText: String) -> Unit)? = null
+    // 既存互換: ">" / ">>" を含めたトークンを1引数で渡す
+    var onQuoteClickListener: ((quotedToken: String) -> Unit)? = null
     var onSodaNeClickListener: ((resNum: String) -> Unit)? = null
     var onThreadEndTimeClickListener: (() -> Unit)? = null
     var onResNumClickListener: ((resNum: String, resBody: String) -> Unit)? = null
+    // 追加: IDクリック
+    var onIdClickListener: ((id: String) -> Unit)? = null
+
     private var currentSearchQuery: String? = null
 
-    // そうだねの状態を取得する関数
+    // “そうだね”状態問い合わせ（外部提供）
     var getSodaNeState: ((String) -> Boolean)? = null
 
-    // ☆ ViewHolderからアクセスできるよう、ファイル拡張子のリストを定義
-    val mediaExt = setOf("jpg","jpeg","png","gif","webp","webm","mp4","mov","avi","flv","mkv")
-
-    private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
+    // パターン類
+    private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
     private val resNumPatternOriginal = Pattern.compile("No\\.(\\d+)")
-    private val sodaNePattern = Pattern.compile("(そうだね\\d*)|(No\\.\\d+\\s*([+＋]))")
+    private val sodaNePattern = Pattern.compile("No\\.(\\d+)\\s*(?:\\u200B)?\\s*(?:[+＋]|そうだねx\\d+)")
+    @Suppress("unused")
+    private val urlPattern = Patterns.WEB_URL
+
+    private val VIEW_TYPE_TEXT = 0
+    private val VIEW_TYPE_IMAGE = 1
+    private val VIEW_TYPE_VIDEO = 2
+    private val VIEW_TYPE_THREAD_END = 3
+
+    // 視覚余白用のゼロ幅スペース
     private val zwsp = "\u200B"
 
     fun setSearchQuery(query: String?) {
-        val oldQuery = currentSearchQuery
         currentSearchQuery = query
-        if (oldQuery != query) {
-            notifyDataSetChanged()
-        }
+        notifyDataSetChanged()
     }
 
-    private fun View.dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
+    // dp -> px
+    private fun TextView.dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
-    private class PaddingAfterSpan(private val paddingPx: Int) : ReplacementSpan() {
-        override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
-            return paddingPx
-        }
-
-        override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {}
-    }
-
-    private fun buildDisplayOnlyPaddedText(tv: TextView, raw: CharSequence): CharSequence {
-        if (raw !is Spannable) {
-            val spannableString = SpannableString(raw)
-            applyZwspPadding(tv, spannableString)
-            return spannableString
-        }
-
-        val spannableToProcess: Spannable = if (raw is SpannableString || raw is SpannableStringBuilder) {
-            raw as Spannable
-        } else {
-            SpannableString(raw)
-        }
-
-        applyZwspPadding(tv, spannableToProcess)
-        return spannableToProcess
+    // 表示専用の余白（ZWSP後に改行高を増やす）
+    fun buildDisplayOnlyPaddedText(tv: TextView, raw: CharSequence): Spannable {
+        val s = if (raw is Spannable) raw else SpannableString(raw)
+        applyZwspPadding(tv, s)
+        return s
     }
 
     private fun applyZwspPadding(tv: TextView, s: Spannable) {
-        val medium = tv.dpToPx(4) // 余白を4dpに調整
-        var index = 0
-        while (index < s.length) {
-            index = s.toString().indexOf(zwsp, index)
-            if (index == -1) break
-            s.setSpan(PaddingAfterSpan(medium), index, index + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            index += zwsp.length
+        val pad = tv.dpToPx(4)
+        var idx = 0
+        val str = s.toString()
+        while (idx < str.length) {
+            val found = str.indexOf(zwsp, idx)
+            if (found == -1) break
+            s.setSpan(PaddingAfterSpan(pad), found, found + zwsp.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            s.setSpan(ZeroWidthCleanerSpan(), found, found + zwsp.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            idx = found + zwsp.length
         }
     }
 
+    // ZWSP を差し込み（ID/No/日時の直後など）
+    private fun insertZwspForPadding(html: String): String {
+        var t = html
 
-    companion object {
-        const val VIEW_TYPE_TEXT = 1
-        const val VIEW_TYPE_IMAGE = 2
-        const val VIEW_TYPE_VIDEO = 3
-        const val VIEW_TYPE_THREAD_END_TIME = 4
+        // ★ まずは ID と No が隣接している場合に “見える半角スペース” を入れる（両順序対応）
+        // 例) "ID:abcdNo.123" -> "ID:abcd No.123"
+        t = Regex("(ID:[\\w./+]+)\\s*(?=No\\.)").replace(t, "$1 ")
+        // 例) "No.123ID:abcd" -> "No.123 ID:abcd"
+        t = Regex("(No\\.\\d+)\\s*(?=ID:)").replace(t, "$1 ")
 
-        const val EXTRA_TYPE = "EXTRA_TYPE"
-        const val EXTRA_URL = "EXTRA_URL"
-        const val EXTRA_TEXT = "EXTRA_TEXT"
-        const val TYPE_IMAGE = "image"
-        const val TYPE_VIDEO = "video"
-        const val TYPE_TEXT = "text"
+        // ★ そのうえで ZWSP による余白（見た目の行間）を従来通り付与
+        val repl = listOf(
+            Regex("(Name)") to "$1$zwsp",
+            Regex("(としあき)") to "$1$zwsp",
+            Regex("(\\d{2}/\\d{2}/\\d{2}\\([^)]+\\)\\d{2}:\\d{2}:\\d{2})") to "$1$zwsp",
+            Regex("(ID:[\\w./+]+)") to "$1 $zwsp",
+            Regex("(No\\.\\d+)") to "$1 $zwsp"
+        )
+        for ((rx, rep) in repl) t = rx.replace(t, rep)
+
+        return t
     }
 
-    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
-        super.onViewRecycled(holder)
-        if (holder is VideoViewHolder) {
-            holder.releasePlayer()
-        }
-    }
-
-    override fun getItemViewType(position: Int): Int {
-        return when (getItem(position)) {
-            is DetailContent.Text -> VIEW_TYPE_TEXT
-            is DetailContent.Image -> VIEW_TYPE_IMAGE
-            is DetailContent.Video -> VIEW_TYPE_VIDEO
-            is DetailContent.ThreadEndTime -> VIEW_TYPE_THREAD_END_TIME
-        }
+    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
+        is DetailContent.Text -> VIEW_TYPE_TEXT
+        is DetailContent.Image -> VIEW_TYPE_IMAGE
+        is DetailContent.Video -> VIEW_TYPE_VIDEO
+        is DetailContent.ThreadEndTime -> VIEW_TYPE_THREAD_END
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inf = LayoutInflater.from(parent.context)
         return when (viewType) {
             VIEW_TYPE_TEXT -> TextViewHolder(
-                LayoutInflater.from(parent.context).inflate(R.layout.detail_item_text, parent, false),
+                inf.inflate(R.layout.detail_item_text, parent, false),
                 this,
                 onQuoteClickListener,
                 onSodaNeClickListener,
@@ -153,36 +136,38 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 zwsp
             )
             VIEW_TYPE_IMAGE -> ImageViewHolder(
-                LayoutInflater.from(parent.context).inflate(R.layout.detail_item_image, parent, false),
+                inf.inflate(R.layout.detail_item_image, parent, false),
                 onQuoteClickListener,
                 fileNamePattern
             )
             VIEW_TYPE_VIDEO -> VideoViewHolder(
-                LayoutInflater.from(parent.context).inflate(R.layout.detail_item_video, parent, false),
+                inf.inflate(R.layout.detail_item_video, parent, false),
                 onQuoteClickListener,
                 fileNamePattern
             )
-            VIEW_TYPE_THREAD_END_TIME -> ThreadEndTimeViewHolder(
-                LayoutInflater.from(parent.context).inflate(R.layout.detail_item_thread_end_time, parent, false),
+            VIEW_TYPE_THREAD_END -> ThreadEndTimeViewHolder(
+                inf.inflate(R.layout.detail_item_thread_end_time, parent, false),
                 onThreadEndTimeClickListener
             )
-            else -> throw IllegalArgumentException("Invalid view type: $viewType")
+            else -> error("Unsupported view type: $viewType")
         }
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (val item = getItem(position)) {
             is DetailContent.Text -> (holder as TextViewHolder).bind(item, currentSearchQuery)
-            is DetailContent.Image -> (holder as ImageViewHolder).bind(item, currentSearchQuery)
-            is DetailContent.Video -> (holder as VideoViewHolder).bind(item, currentSearchQuery)
+            is DetailContent.Image -> (holder as ImageViewHolder).bind(item)
+            is DetailContent.Video -> (holder as VideoViewHolder).bind(item)
             is DetailContent.ThreadEndTime -> (holder as ThreadEndTimeViewHolder).bind(item)
         }
     }
 
+    // ---------- ViewHolders ----------
+
     class TextViewHolder(
         view: View,
         private val adapter: DetailAdapter,
-        private val onQuoteClickListener: ((quotedText: String) -> Unit)?,
+        private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
         private val onSodaNeClickListener: ((resNum: String) -> Unit)?,
         private val fileNamePattern: Pattern,
         private val resNumPatternForClickableSpan: Pattern,
@@ -190,628 +175,309 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val onResNumClickListener: ((resNum: String, resBody: String) -> Unit)?,
         private val zwsp: String
     ) : RecyclerView.ViewHolder(view) {
+
+        // 正: detail_item_text.xml の ID
         private val textView: TextView = view.findViewById(R.id.detailTextView)
-
-        private val patternsForZwspInsertion = listOf(
-            Regex("(\\d+)</strong>") to "$1$zwsp",
-            Regex("(無念)") to "$1$zwsp",
-            Regex("(Name)") to "$1$zwsp",
-            Regex("(としあき)") to "$1$zwsp",
-            Regex("(\\d{2}/\\d{2}/\\d{2}\\([^)]+\\)\\d{2}:\\d{2}:\\d{2})") to "$1$zwsp",
-            Regex("(ID:[\\w./+]+)") to "$1$zwsp",
-            Regex("(No\\.\\d+)") to "$1$zwsp"
-        )
-
-        private fun insertZwspForPadding(htmlContent: String): String {
-            var processedHtml = htmlContent
-            patternsForZwspInsertion.forEach { (pattern, replacement) ->
-                processedHtml = pattern.replace(processedHtml, replacement)
-            }
-            processedHtml = processedHtml.replaceFirst(Regex("^(\\d+)(?=\\s)"), "$1$zwsp")
-            return processedHtml
-        }
-
 
         fun bind(item: DetailContent.Text, searchQuery: String?) {
             val htmlWithZwsp = insertZwspForPadding(item.htmlContent)
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
-            val textWithVisualPadding = adapter.buildDisplayOnlyPaddedText(textView, textFromHtmlWithZwsp)
-            val spannableBuilder = SpannableStringBuilder(textWithVisualPadding)
+            val spannableBuilder = SpannableStringBuilder(adapter.buildDisplayOnlyPaddedText(textView, textFromHtmlWithZwsp))
             val contentString = spannableBuilder.toString()
 
             var mainResNum: String? = null
 
-            val resNumMatcher = resNumPatternForClickableSpan.matcher(contentString)
-            if (resNumMatcher.find()) {
-                mainResNum = resNumMatcher.group(1)
-                val start = resNumMatcher.start()
-                val end = resNumMatcher.end()
-
-                val resNumClickableSpan = object : ClickableSpan() {
-                    override fun onClick(widget: View) {
-                        val quotedResNum = ">No.${mainResNum}"
-                        onResNumClickListener?.invoke(mainResNum!!, quotedResNum)
-                    }
-                    override fun updateDrawState(ds: TextPaint) {
-                        super.updateDrawState(ds)
-                        ds.isUnderlineText = true
-                    }
-                }
-                if (start < end && end <= spannableBuilder.length) {
-                    spannableBuilder.setSpan(resNumClickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-            }
-
-            val quotePattern = Pattern.compile("^>(.+)$", Pattern.MULTILINE)
-            val quoteMatcher = quotePattern.matcher(contentString)
-            while (quoteMatcher.find()) {
-                val quoteText = quoteMatcher.group(1)?.trim()
-                if (quoteText != null) {
-                    val start = quoteMatcher.start()
-                    val end = quoteMatcher.end()
-                    val clickableSpan = object : ClickableSpan() {
-                        override fun onClick(widget: View) {
-                            Log.d("DetailAdapter", "Quote clicked: $quoteText")
-                            onQuoteClickListener?.invoke(quoteText)
-                        }
-                        override fun updateDrawState(ds: TextPaint) {
-                            super.updateDrawState(ds)
-                            ds.isUnderlineText = false
-                        }
-                    }
-                    if (start >= 0 && end <= spannableBuilder.length) {
-                        spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
-                }
-            }
-
-            val fileMatcher = fileNamePattern.matcher(contentString)
-            while (fileMatcher.find()) {
-                val fileName = fileMatcher.group(1)
-                if (fileName != null) {
-                    val start = fileMatcher.start()
-                    val end = fileMatcher.end()
-                    val clickableSpan = object : ClickableSpan() {
-                        override fun onClick(widget: View) {
-                            Log.d("DetailAdapter", "File name clicked: $fileName")
-                            onQuoteClickListener?.invoke(fileName)
-                        }
-                        override fun updateDrawState(ds: TextPaint) {
-                            super.updateDrawState(ds)
-                            ds.isUnderlineText = true
-                        }
-                    }
-                    if (start >= 0 && end <= spannableBuilder.length) {
-                        spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
-                }
-            }
-
-            if (mainResNum != null) {
-                val sodaNeMatcher = sodaNePatternForClick.matcher(contentString)
-                while (sodaNeMatcher.find()) {
-                    var spanStart = -1
-                    var spanEnd = -1
-                    val matchedSodaNeWithDigits = sodaNeMatcher.group(1)
-                    val matchedNoDotPatternWithPlus = sodaNeMatcher.group(2)
-
-                    if (matchedSodaNeWithDigits != null) {
-                        spanStart = sodaNeMatcher.start(1)
-                        spanEnd = sodaNeMatcher.end(1)
-                    } else if (matchedNoDotPatternWithPlus != null) {
-                        val tempResNumPattern = Pattern.compile("No\\.(\\d+)")
-                        val tempMatcher = tempResNumPattern.matcher(matchedNoDotPatternWithPlus)
-                        if (tempMatcher.find()) {
-                            val numInPlusContext = tempMatcher.group(1)
-                            if (numInPlusContext == mainResNum) {
-                                val actualPlusSign = sodaNeMatcher.group(3)
-                                if (actualPlusSign != null) {
-                                    spanStart = sodaNeMatcher.start(3)
-                                    spanEnd = sodaNeMatcher.end(3)
-                                } else {
-                                    continue
-                                }
-                            } else {
-                                continue
+            // No.xxx をクリック → 返信引用起動
+            run {
+                val m = resNumPatternForClickableSpan.matcher(contentString)
+                if (m.find()) {
+                    mainResNum = m.group(1)
+                    val s = m.start()
+                    val e = m.end()
+                    if (s >= 0 && e <= spannableBuilder.length) {
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) {
+                                val q = ">No.${mainResNum}"
+                                onResNumClickListener?.invoke(mainResNum!!, q)
                             }
-                        } else {
-                            continue
+                            override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
                         }
+                        spannableBuilder.setSpan(span, s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
+                }
+            }
 
-                    if (spanStart != -1 && spanEnd != -1 && spanEnd <= spannableBuilder.length) {
-                        // ViewModelからそうだねの状態を取得
-                        val isClicked = adapter.getSodaNeState?.invoke(mainResNum) ?: false
+            // 引用（> / >>）
+            run {
+                val quotePattern = Pattern.compile("^(>+)(.+)$", Pattern.MULTILINE)
+                val m = quotePattern.matcher(contentString)
+                while (m.find()) {
+                    val marks = m.group(1) ?: continue
+                    val body = m.group(2)?.trim() ?: continue
+                    val s = m.start()
+                    val e = m.end()
+                    if (s >= 0 && e <= spannableBuilder.length) {
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks$body") }
+                            override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
+                        }
+                        spannableBuilder.setSpan(span, s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            }
 
+            // ID:xxxx
+            run {
+                val idPattern = Pattern.compile("ID:([\\w./+]+)")
+                val im = idPattern.matcher(contentString)
+                while (im.find()) {
+                    val id = im.group(1) ?: continue
+                    val s = im.start(0)
+                    val e = im.end(0)
+                    if (s >= 0 && e <= spannableBuilder.length) {
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) { adapter.onIdClickListener?.invoke(id) }
+                            override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
+                        }
+                        spannableBuilder.setSpan(span, s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            }
+
+            run {
+                val m = sodaNePatternForClick.matcher(contentString)
+                while (m.find()) {
+                    val resNum = m.group(1) ?: continue
+                    val matchStart = m.start()
+                    val matchEnd = m.end()
+
+                    // マッチ範囲の中で、クリック対象となるトークン（+ または そうだねxN）の位置だけに span を貼る
+                    val matchedText = contentString.substring(matchStart, matchEnd)
+
+                    // “+ / ＋ / そうだねx数字” を探す
+                    val tokenRegex = Regex("(?:[+＋]|そうだねx\\d+)")
+                    val tokenMatch = tokenRegex.find(matchedText) ?: continue
+
+                    val tokenAbsStart = matchStart + tokenMatch.range.first
+                    val tokenAbsEnd   = matchStart + tokenMatch.range.last + 1
+
+                    if (tokenAbsStart >= 0 && tokenAbsEnd <= spannableBuilder.length) {
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) {
+                                onSodaNeClickListener?.invoke(resNum) // ← No の数字を渡す
+                            }
+                            override fun updateDrawState(ds: TextPaint) {
+                                ds.isUnderlineText = true // 見た目はお好みで
+                            }
+                        }
                         spannableBuilder.setSpan(
-                            SodaNeClickableSpan(mainResNum, onSodaNeClickListener, isClicked),
-                            spanStart,
-                            spanEnd,
-                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                            span, tokenAbsStart, tokenAbsEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
                     }
                 }
             }
 
-            if (!searchQuery.isNullOrEmpty()) {
-                val textLc = contentString.lowercase()
-                val queryLc = searchQuery.lowercase()
-                var startIndex = textLc.indexOf(queryLc)
-                while (startIndex >= 0) {
-                    val endIndex = startIndex + queryLc.length
-                    if (startIndex < endIndex && endIndex <= spannableBuilder.length) {
-                        spannableBuilder.setSpan(
-                            BackgroundColorSpan(Color.YELLOW),
-                            startIndex,
-                            endIndex,
-                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                        )
-                    } else {
-                        break
+            // 本文に含まれるファイル名
+            run {
+                val fm = fileNamePattern.matcher(contentString)
+                while (fm.find()) {
+                    val file = fm.group(1) ?: continue
+                    val s = fm.start()
+                    val e = fm.end()
+                    if (s >= 0 && e <= spannableBuilder.length) {
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) { onQuoteClickListener?.invoke(file) }
+                            override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
+                        }
+                        spannableBuilder.setSpan(span, s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
-                    startIndex = textLc.indexOf(queryLc, endIndex)
-                    if (startIndex == -1) break
+                }
+            }
+
+            // URLSpan を外部ブラウザ起動に差し替え
+            run {
+                val urlSpans = spannableBuilder.getSpans(0, spannableBuilder.length, URLSpan::class.java)
+                for (old in urlSpans) {
+                    val s = spannableBuilder.getSpanStart(old)
+                    val e = spannableBuilder.getSpanEnd(old)
+                    spannableBuilder.removeSpan(old)
+                    val span = object : ClickableSpan() {
+                        override fun onClick(widget: View) {
+                            try {
+                                val ctx = widget.context
+                                val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(old.url))
+                                ctx.startActivity(i)
+                            } catch (ex: Exception) {
+                                Log.e("DetailAdapter", "Failed to open url: ${old.url}", ex)
+                            }
+                        }
+                    }
+                    if (s >= 0 && e <= spannableBuilder.length) {
+                        spannableBuilder.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            }
+
+            // 検索ハイライト
+            if (!searchQuery.isNullOrEmpty()) {
+                val nq = Regex.escape(searchQuery)
+                val pat = Regex("(?i)$nq")
+                var idx = 0
+                while (idx < spannableBuilder.length) {
+                    val f = pat.find(spannableBuilder, idx) ?: break
+                    spannableBuilder.setSpan(
+                        BackgroundColorSpan(Color.YELLOW),
+                        f.range.first,
+                        f.range.last + 1,
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    idx = f.range.last + 1
                 }
             }
 
             textView.text = spannableBuilder
-            textView.movementMethod = object : LinkMovementMethod() {
-                override fun handleMovementKey(widget: TextView?, buffer: Spannable?, keyCode: Int, movementMetaState: Int, event: KeyEvent?): Boolean {
-                    return false
-                }
+            textView.movementMethod = LinkMovementMethod.getInstance()
 
-                override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
-                    val action = event.action
-
-                    if (action == MotionEvent.ACTION_UP) {
-                        var x = event.x.toInt()
-                        var y = event.y.toInt()
-
-                        x -= widget.totalPaddingLeft
-                        y -= widget.totalPaddingTop
-                        x += widget.scrollX
-                        y += widget.scrollY
-
-                        val layout = widget.layout
-                        val line = layout.getLineForVertical(y)
-                        if (line < 0 || line >= layout.lineCount) {
-                            return super.onTouchEvent(widget, buffer, event)
-                        }
-                        val off = layout.getOffsetForHorizontal(line, x.toFloat())
-                        if (off < 0 || off > buffer.length) {
-                            return super.onTouchEvent(widget, buffer, event)
-                        }
-
-                        val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
-
-                        if (spans.isNotEmpty()) {
-                            val sodaNeSpan = spans.firstOrNull { it is SodaNeClickableSpan }
-                            if (sodaNeSpan != null) {
-                                sodaNeSpan.onClick(widget)
-                                return true
-                            }
-
-                            val urlSpan = spans.firstOrNull { it is URLSpan }
-                            if (urlSpan != null) {
-                                val urlValue = (urlSpan as URLSpan).url
-                                if (urlValue != null) {
-                                    // リンク先がメディアファイルかどうかを判定
-                                    val isMediaFile = urlValue.substringAfterLast('.', "").lowercase() in adapter.mediaExt
-                                    if (isMediaFile) {
-                                        // メディアファイルなら、ファイル名で返信画面を呼ぶ
-                                        val fileName = urlValue.substringAfterLast('/')
-                                        Log.d("DetailAdapter", "Media URL clicked, invoking quote listener with: $fileName")
-                                        adapter.onQuoteClickListener?.invoke(fileName)
-                                        return true // 処理完了
-                                    } else if (!urlValue.startsWith("javascript:")) {
-                                        // 通常のURLならブラウザで開く
-                                        urlSpan.onClick(widget)
-                                        return true // 処理完了
-                                    }
-                                }
-                            }
-
-                            val otherClickableSpans = spans
-                                .filter { it !is SodaNeClickableSpan && it !is URLSpan }
-
-                            val target = otherClickableSpans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
-
-                            if (target != null) {
-                                target.onClick(widget)
-                                return true
-                            }
-                        }
-                    }
-                    return super.onTouchEvent(widget, buffer, event)
-                }
-            }
+            // 長押しコピー
             textView.setOnLongClickListener {
-                showCopyDialog(it.context, spannableBuilder.toString())
+                val ctx = it.context
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(
+                    ClipData.newPlainText("text", Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString())
+                )
                 true
             }
         }
 
-        private fun showCopyDialog(context: Context, textToCopy: String) {
-            AlertDialog.Builder(context)
-                .setItems(arrayOf("テキストをコピー")) { _, _ ->
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val modifiedText = textToCopy.lines().joinToString("\n") { "> $it" }
-                    val clip = ClipData.newPlainText("Copied Text", modifiedText)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
-                }
-                .show()
-        }
+        private fun insertZwspForPadding(html: String): String = adapter.insertZwspForPadding(html)
     }
 
     class ImageViewHolder(
         view: View,
-        private val onQuoteClickListener: ((quotedText: String) -> Unit)?,
+        private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
         private val fileNamePattern: Pattern
     ) : RecyclerView.ViewHolder(view) {
+
+        // 正: detail_item_image.xml の ID
         private val imageView: ImageView = view.findViewById(R.id.detailImageView)
-        private val promptTextView: TextView = view.findViewById(R.id.promptTextView)
+        private val promptView: TextView? = view.findViewById(R.id.promptTextView)
 
-        private fun Int.dpToPx(): Int {
-            val scale = itemView.resources.displayMetrics.density
-            return (this * scale + 0.5f).toInt()
-        }
-
-        fun bind(item: DetailContent.Image, searchQuery: String?) {
-            val progressDrawable = CircularProgressDrawable(itemView.context).apply {
-                strokeWidth = 5f
-                centerRadius = 30f
-                setColorSchemeColors(Color.DKGRAY)
-                start()
-            }
-
+        fun bind(item: DetailContent.Image) {
             imageView.load(item.imageUrl) {
                 crossfade(true)
-                placeholder(progressDrawable)
-                error(android.R.drawable.ic_dialog_alert)
-                listener(
-                    onStart = { _ ->
-                        imageView.minimumHeight = 10.dpToPx()
-                    },
-                    onSuccess = { _, _ ->
-                        imageView.minimumHeight = 0
-                    },
-                    onError = { _, _ ->
-                        imageView.minimumHeight = 0
-                    }
-                )
                 size(ViewSizeResolver(imageView))
             }
 
-            imageView.setOnClickListener {
-                val context = itemView.context
-                val intent = Intent(context, MediaViewActivity::class.java)
-                intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_IMAGE)
-                intent.putExtra(DetailAdapter.EXTRA_URL, item.imageUrl)
-                item.prompt?.let { intent.putExtra(DetailAdapter.EXTRA_TEXT, it) }
-                context.startActivity(intent)
-            }
-
-            if (!item.prompt.isNullOrBlank()) {
-                promptTextView.isVisible = true
-                val promptText = item.prompt
-                val spannableBuilder = SpannableStringBuilder(promptText)
-
-                val fileMatcher = fileNamePattern.matcher(promptText)
-                while (fileMatcher.find()) {
-                    val fileName = fileMatcher.group(1)
-                    if (fileName != null) {
-                        val start = fileMatcher.start()
-                        val end = fileMatcher.end()
-                        val clickableSpan = object : ClickableSpan() {
-                            override fun onClick(widget: View) {
-                                Log.d("DetailAdapter", "Prompt file name clicked: $fileName")
-                                onQuoteClickListener?.invoke(fileName)
+            promptView?.let { tv ->
+                val prompt = item.prompt.orEmpty()
+                if (prompt.isNotEmpty()) {
+                    val sp = SpannableString(prompt)
+                    val m = fileNamePattern.matcher(prompt)
+                    while (m.find()) {
+                        val file = m.group(1) ?: continue
+                        val s = m.start()
+                        val e = m.end()
+                        if (s >= 0 && e <= sp.length) {
+                            val span = object : ClickableSpan() {
+                                override fun onClick(widget: View) { onQuoteClickListener?.invoke(file) }
                             }
-                            override fun updateDrawState(ds: TextPaint) {
-                                super.updateDrawState(ds)
-                                ds.isUnderlineText = true
-                            }
-                        }
-                        if (start >= 0 && end <= spannableBuilder.length) {
-                            spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            sp.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
                     }
-                }
-
-                if (!searchQuery.isNullOrEmpty()) {
-                    val textLc = promptText.lowercase()
-                    val queryLc = searchQuery.lowercase()
-                    var startPos = textLc.indexOf(queryLc)
-                    while (startPos >= 0) {
-                        val endPos = startPos + queryLc.length
-                        if (startPos >= 0 && endPos <= spannableBuilder.length) {
-                            spannableBuilder.setSpan(BackgroundColorSpan(Color.YELLOW), startPos, endPos, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        }
-                        startPos = textLc.indexOf(queryLc, endPos)
-                    }
-                }
-                promptTextView.text = spannableBuilder
-                promptTextView.movementMethod = object : LinkMovementMethod() {
-                    override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
-                        if (event.action == MotionEvent.ACTION_UP) {
-                            var x = event.x.toInt()
-                            var y = event.y.toInt()
-                            x -= widget.totalPaddingLeft
-                            y -= widget.totalPaddingTop
-                            x += widget.scrollX
-                            y += widget.scrollY
-                            val layout = widget.layout
-                            val line = layout.getLineForVertical(y)
-                            val off = layout.getOffsetForHorizontal(line, x.toFloat())
-                            val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
-
-                            if (spans.isNotEmpty()) {
-                                val target = spans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
-                                target?.onClick(widget)
-                                return true
-                            }
-
-                            val context = widget.context
-                            val intent = Intent(context, MediaViewActivity::class.java)
-                            intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
-                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString())
-                            context.startActivity(intent)
-                            return true
-                        }
-                        return super.onTouchEvent(widget, buffer, event)
-                    }
-                }
-            } else {
-                promptTextView.isVisible = false
-                promptTextView.text = null
-            }
-
-            imageView.setOnLongClickListener {
-                showSaveDialog(item)
-                true
-            }
-            item.prompt?.takeIf { it.isNotBlank() }?.let { textToCopy ->
-                promptTextView.setOnLongClickListener {
-                    showCopyDialog(itemView.context, textToCopy)
-                    true
+                    tv.text = sp
+                    tv.movementMethod = LinkMovementMethod.getInstance()
+                    tv.visibility = View.VISIBLE
+                } else {
+                    tv.text = ""
+                    tv.visibility = View.GONE
                 }
             }
-        }
-
-        private fun showSaveDialog(item: DetailContent.Image) {
-            val context = itemView.context
-            AlertDialog.Builder(context)
-                .setTitle("画像の保存")
-                .setMessage("この画像を保存しますか？")
-                .setPositiveButton("保存") { _, _ ->
-                    itemView.findViewTreeLifecycleOwner()?.lifecycleScope?.launch {
-                        MediaSaver.saveImage(context, item.imageUrl)
-                    }
-                }
-                .setNegativeButton("キャンセル", null)
-                .show()
-        }
-
-        private fun showCopyDialog(context: Context, textToCopy: String) {
-            AlertDialog.Builder(context)
-                .setItems(arrayOf("テキストをコピー")) { _, _ ->
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Copied Text", textToCopy)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
-                }
-                .show()
         }
     }
 
     class VideoViewHolder(
         view: View,
-        private val onQuoteClickListener: ((quotedText: String) -> Unit)?,
+        private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
         private val fileNamePattern: Pattern
     ) : RecyclerView.ViewHolder(view) {
-        private val playerView: PlayerView = view.findViewById(R.id.playerView)
-        private val promptTextView: TextView = view.findViewById(R.id.promptTextView)
-        private var exoPlayer: ExoPlayer? = null
 
-        fun bind(item: DetailContent.Video, searchQuery: String?) {
-            releasePlayer()
-            val context = itemView.context
-            exoPlayer = ExoPlayer.Builder(context).build().also { player ->
-                playerView.player = player
-                val mediaItem = MediaItem.fromUri(item.videoUrl)
-                player.setMediaItem(mediaItem)
-                player.playWhenReady = false
-                player.prepare()
-            }
+        // 正: detail_item_video.xml の ID
+        private val playerView: androidx.media3.ui.PlayerView = view.findViewById(R.id.playerView)
+        private val promptView: TextView? = view.findViewById(R.id.promptTextView)
 
+        fun bind(item: DetailContent.Video) {
+            // 動画再生（最小実装：外部アプリへ委譲）
             playerView.setOnClickListener {
-                val context = itemView.context
-                val intent = Intent(context, MediaViewActivity::class.java)
-                intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_VIDEO)
-                intent.putExtra(DetailAdapter.EXTRA_URL, item.videoUrl)
-                item.prompt?.let { intent.putExtra(DetailAdapter.EXTRA_TEXT, it) }
-                context.startActivity(intent)
+                try {
+                    val ctx = it.context
+                    val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(item.videoUrl))
+                    ctx.startActivity(i)
+                } catch (e: Exception) {
+                    Log.e("DetailAdapter", "Failed to open videoUrl: ${item.videoUrl}", e)
+                }
             }
 
-            if (!item.prompt.isNullOrBlank()) {
-                promptTextView.isVisible = true
-                val promptText = item.prompt
-                val spannableBuilder = SpannableStringBuilder(promptText)
-
-                val fileMatcher = fileNamePattern.matcher(promptText)
-                while (fileMatcher.find()) {
-                    val fileName = fileMatcher.group(1)
-                    if (fileName != null) {
-                        val start = fileMatcher.start()
-                        val end = fileMatcher.end()
-                        val clickableSpan = object : ClickableSpan() {
-                            override fun onClick(widget: View) {
-                                Log.d("DetailAdapter", "Video prompt file name clicked: $fileName")
-                                onQuoteClickListener?.invoke(fileName)
+            promptView?.let { tv ->
+                val prompt = item.prompt.orEmpty()
+                if (prompt.isNotEmpty()) {
+                    val sp = SpannableString(prompt)
+                    val m = fileNamePattern.matcher(prompt)
+                    while (m.find()) {
+                        val file = m.group(1) ?: continue
+                        val s = m.start()
+                        val e = m.end()
+                        if (s >= 0 && e <= sp.length) {
+                            val span = object : ClickableSpan() {
+                                override fun onClick(widget: View) { onQuoteClickListener?.invoke(file) }
                             }
-                            override fun updateDrawState(ds: TextPaint) {
-                                super.updateDrawState(ds)
-                                ds.isUnderlineText = true
-                            }
-                        }
-                        if (start >= 0 && end <= spannableBuilder.length) {
-                            spannableBuilder.setSpan(clickableSpan, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            sp.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
                     }
+                    tv.text = sp
+                    tv.movementMethod = LinkMovementMethod.getInstance()
+                    tv.visibility = View.VISIBLE
+                } else {
+                    tv.text = ""
+                    tv.visibility = View.GONE
                 }
-
-                if (!searchQuery.isNullOrEmpty()) {
-                    val textLc = promptText.lowercase()
-                    val queryLc = searchQuery.lowercase()
-                    var startPos = textLc.indexOf(queryLc)
-                    while (startPos >= 0) {
-                        val endPos = startPos + queryLc.length
-                        if (startPos >= 0 && endPos <= spannableBuilder.length) {
-                            spannableBuilder.setSpan(BackgroundColorSpan(Color.YELLOW), startPos, endPos, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        }
-                        startPos = textLc.indexOf(queryLc, endPos)
-                    }
-                }
-                promptTextView.text = spannableBuilder
-                promptTextView.movementMethod = object : LinkMovementMethod() {
-                    override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
-                        if (event.action == MotionEvent.ACTION_UP) {
-                            var x = event.x.toInt()
-                            var y = event.y.toInt()
-                            x -= widget.totalPaddingLeft
-                            y -= widget.totalPaddingTop
-                            x += widget.scrollX
-                            y += widget.scrollY
-                            val layout = widget.layout
-                            val line = layout.getLineForVertical(y)
-                            val off = layout.getOffsetForHorizontal(line, x.toFloat())
-                            val spans = buffer.getSpans(off, off, ClickableSpan::class.java)
-
-                            if (spans.isNotEmpty()) {
-                                val target = spans.minByOrNull { buffer.getSpanEnd(it) - buffer.getSpanStart(it) }
-                                target?.onClick(widget)
-                                return true
-                            }
-
-                            val context = widget.context
-                            val intent = Intent(context, MediaViewActivity::class.java)
-                            intent.putExtra(DetailAdapter.EXTRA_TYPE, DetailAdapter.TYPE_TEXT)
-                            intent.putExtra(DetailAdapter.EXTRA_TEXT, widget.text.toString())
-                            context.startActivity(intent)
-                            return true
-                        }
-                        return super.onTouchEvent(widget, buffer, event)
-                    }
-                }
-            } else {
-                promptTextView.isVisible = false
-                promptTextView.text = null
-            }
-
-            playerView.setOnLongClickListener {
-                showSaveDialog(item)
-                true
-            }
-            item.prompt?.takeIf { it.isNotBlank() }?.let { textToCopy ->
-                promptTextView.setOnLongClickListener {
-                    showCopyDialog(itemView.context, textToCopy)
-                    true
-                }
-            }
-        }
-
-        private fun showSaveDialog(item: DetailContent.Video) {
-            val context = itemView.context
-            AlertDialog.Builder(context)
-                .setTitle("動画の保存")
-                .setMessage("この動画を保存しますか？")
-                .setPositiveButton("保存") { _, _ ->
-                    itemView.findViewTreeLifecycleOwner()?.lifecycleScope?.launch {
-                        MediaSaver.saveVideo(context, item.videoUrl)
-                    }
-                }
-                .setNegativeButton("キャンセル", null)
-                .show()
-        }
-
-        private fun showCopyDialog(context: Context, textToCopy: String) {
-            AlertDialog.Builder(context)
-                .setItems(arrayOf("テキストをコピー")) { _, _ ->
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Copied Text", textToCopy)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
-                }
-                .show()
-        }
-
-        fun releasePlayer() {
-            exoPlayer?.let { player ->
-                player.release()
-                exoPlayer = null
-                playerView.player = null
             }
         }
     }
 
     class ThreadEndTimeViewHolder(
         view: View,
-        private val onThreadEndTimeClickListener: (() -> Unit)?
+        private val onClick: (() -> Unit)?
     ) : RecyclerView.ViewHolder(view) {
-        private val endTimeTextView: TextView = view.findViewById(R.id.endTimeTextView)
-
+        // 正: detail_item_thread_end_time.xml の ID
+        private val endView: TextView = view.findViewById(R.id.endTimeTextView)
         fun bind(item: DetailContent.ThreadEndTime) {
-            endTimeTextView.text = item.endTime
-            endTimeTextView.setOnClickListener {
-                onThreadEndTimeClickListener?.invoke()
-            }
-            endTimeTextView.setOnLongClickListener {
-                val context = itemView.context
-                AlertDialog.Builder(context)
-                    .setItems(arrayOf("テキストをコピー")) { _, _ ->
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Copied End Time", item.endTime)
-                        clipboard.setPrimaryClip(clip)
-                        Toast.makeText(context, "終了時刻をコピーしました", Toast.LENGTH_SHORT).show()
-                    }
-                    .show()
-                true
-            }
+            endView.text = item.endTime
+            endView.setOnClickListener { onClick?.invoke() }
         }
     }
 
-    class SodaNeClickableSpan(
-        val resNum: String,
-        private val listener: ((String) -> Unit)?,
-        private val isClicked: Boolean = false
-    ) : ClickableSpan() {
-        override fun onClick(widget: View) {
-            if (!isClicked) {
-                listener?.invoke(resNum)
-            }
-        }
-
-        override fun updateDrawState(ds: TextPaint) {
-            super.updateDrawState(ds)
-            ds.isUnderlineText = !isClicked
-            ds.color = if (isClicked) Color.GRAY else Color.MAGENTA
-        }
-    }
+    // ---------- DiffUtil ----------
 
     class DetailDiffCallback : DiffUtil.ItemCallback<DetailContent>() {
         override fun areItemsTheSame(oldItem: DetailContent, newItem: DetailContent): Boolean {
-            return when {
-                oldItem is DetailContent.Image && newItem is DetailContent.Image -> oldItem.imageUrl == newItem.imageUrl
-                oldItem is DetailContent.Video && newItem is DetailContent.Video -> oldItem.videoUrl == newItem.videoUrl
-                oldItem is DetailContent.Text && newItem is DetailContent.Text -> oldItem.id == newItem.id
-                oldItem is DetailContent.ThreadEndTime && newItem is DetailContent.ThreadEndTime -> oldItem.id == newItem.id
-                else -> oldItem.javaClass == newItem.javaClass && oldItem.id == newItem.id
-            }
+            return oldItem.id == newItem.id && oldItem::class == newItem::class
         }
+        override fun areContentsTheSame(oldItem: DetailContent, newItem: DetailContent): Boolean = oldItem == newItem
+    }
 
-        override fun areContentsTheSame(oldItem: DetailContent, newItem: DetailContent): Boolean {
-            return oldItem == newItem
+    // ---------- 補助Span ----------
+
+    class PaddingAfterSpan(private val paddingPx: Int) : LineHeightSpan {
+        override fun chooseHeight(text: CharSequence?, start: Int, end: Int, spanstartv: Int, v: Int, fm: Paint.FontMetricsInt) {
+            fm.bottom += paddingPx; fm.descent += paddingPx
         }
+    }
+
+    class ZeroWidthCleanerSpan : LeadingMarginSpan {
+        override fun getLeadingMargin(first: Boolean): Int = 0
+        override fun drawLeadingMargin(
+            c: Canvas?, p: Paint?, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
+            text: CharSequence?, start: Int, end: Int, first: Boolean, layout: android.text.Layout?
+        ) {}
     }
 }
