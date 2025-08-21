@@ -85,6 +85,13 @@ dependencies {
 
     implementation("androidx.activity:activity-ktx:1.9.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
+
+    // 正しいアーティファクトID "coil-video" を使用します
+    implementation("io.coil-kt:coil-video:2.6.0")
+
+    // こちらは正しい記述です
+    implementation("io.coil-kt:coil:2.6.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -488,13 +488,49 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val fileNamePattern: Pattern
     ) : RecyclerView.ViewHolder(view) {
 
-        // 正: detail_item_video.xml の ID
+        // Viewの参照（変更なし）
         private val playerView: androidx.media3.ui.PlayerView = view.findViewById(R.id.playerView)
         private val promptView: TextView? = view.findViewById(R.id.promptTextView)
+        private val thumb: ImageView = view.findViewById(R.id.videoThumbView)
+
+        // ★★★ 修正点 1: ハードウェアアクセラレーション対策 ★★★
+        // initブロックを追加して、サムネイル用ImageViewの描画設定を行う
+        init {
+            thumb.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        }
 
         fun bind(item: DetailContent.Video) {
-            // ★ 既存の外部アプリ起動をやめ、アプリ内ビューアへ
-            playerView.setOnClickListener {
+            // ★★★ 修正点 2: レイアウトの競合対策 ★★★
+            // PlayerViewを非表示にして、サムネイルが隠れないようにする
+            playerView.visibility = View.GONE
+            thumb.visibility = View.VISIBLE
+
+            // Coilによるサムネイル読み込み（変更なし）
+            thumb.load(item.videoUrl) {
+                crossfade(true)
+                placeholder(R.drawable.ic_play_circle)
+                setParameter("video_frame_millis", 10000L) // 0ms位置のフレーム
+                // (オプション) もし問題が続くならエラー時の画像も指定すると原因究明に役立ちます
+                // error(R.drawable.ic_error)
+
+                // ★★★ このリスナーで原因を特定します ★★★
+                listener(
+                    onStart = {
+                        Log.d("Coil_Debug", "読み込み開始: ${item.videoUrl}")
+                    },
+                    onSuccess = { _, result ->
+                        Log.d("Coil_Debug", "読み込み成功: ${result.dataSource}")
+                    },
+                    onError = { _, result ->
+                        // エラーが発生した場合、ここに詳細が出力されます
+                        Log.e("Coil_Debug", "読み込みエラー", result.throwable)
+                    }
+                )
+
+            }
+
+            // クリックリスナー（変更なし）
+            val clickListener = View.OnClickListener {
                 val ctx = it.context
                 val i = Intent(ctx, MediaViewActivity::class.java).apply {
                     putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_VIDEO)
@@ -503,7 +539,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 }
                 ctx.startActivity(i)
             }
+            thumb.setOnClickListener(clickListener)
 
+            // プロンプト表示処理（変更なし）
             promptView?.let { tv ->
                 val prompt = item.prompt.orEmpty()
                 if (prompt.isNotEmpty()) {
@@ -524,7 +562,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     tv.movementMethod = LinkMovementMethod.getInstance()
                     tv.visibility = View.VISIBLE
 
-                    // ★ プロンプト全体タップでテキストビューア起動
                     tv.setOnClickListener { v ->
                         val ctx = v.context
                         val i = Intent(ctx, MediaViewActivity::class.java).apply {

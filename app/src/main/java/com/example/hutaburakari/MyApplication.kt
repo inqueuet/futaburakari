@@ -3,6 +3,7 @@ package com.example.hutaburakari
 import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import dagger.hilt.android.HiltAndroidApp
@@ -18,6 +19,10 @@ class MyApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            // ★★★ このブロックを追加してデコーダーを登録 ★★★
+            .components {
+                add(VideoFrameDecoder.Factory())
+            }
             .okHttpClient { NetworkModule.okHttpClient }
             .memoryCache {
                 MemoryCache.Builder(this)

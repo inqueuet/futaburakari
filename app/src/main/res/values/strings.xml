@@ -35,5 +35,8 @@
     <string name="save_success">画像を保存しました</string>
     <string name="save_failed">画像の保存に失敗しました</string>
 
+    <string name="video_thumbnail">動画サムネイル</string>
+
+
     <!-- <string name="reload">Reload</string> -->
 </resources>
