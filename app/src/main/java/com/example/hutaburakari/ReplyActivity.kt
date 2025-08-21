@@ -51,7 +51,6 @@ class ReplyActivity : AppCompatActivity() {
         binding = ActivityReplyNativeBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
         // 不可視 WebView ワーカーをアタッチして TokenProvider をセット
