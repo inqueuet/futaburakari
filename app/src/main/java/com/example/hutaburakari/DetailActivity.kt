@@ -35,6 +35,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     private var isInitialLoad = true // ★クラスのプロパティとして初期化
 
+    private var isFastScrolling = false // 追加
+
     companion object {
         const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
@@ -186,6 +188,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 if (dy <= 0) return
                 if (isRequestingMore) return
+                if (isFastScrolling) return
 
                 val lastVisible = layoutManager.findLastVisibleItemPosition()
                 if (lastVisible == RecyclerView.NO_POSITION) return
@@ -211,13 +214,17 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             }
         })
 
-        // ★ ファストスクロール初期化（スクロール“死に”対策 & つまみ操作）
+        // ★ FastScroll 初期化（ドラッグ状態コールバックを渡す）
         FastScrollHelper(
             recyclerView = binding.detailRecyclerView,
             fastScrollTrack = binding.fastScrollTrack,
             fastScrollThumb = binding.fastScrollThumb,
             layoutManager = layoutManager
-        )
+        ) { dragging ->
+            isFastScrolling = dragging
+            // プル更新の誤発火を防ぐ
+            binding.swipeRefreshLayout.isEnabled = !dragging
+        }
     }
 
     // ★ onStart() を追加・オーバーライド

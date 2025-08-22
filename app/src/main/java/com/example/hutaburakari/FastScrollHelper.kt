@@ -12,7 +12,8 @@ class FastScrollHelper(
     private val recyclerView: RecyclerView,
     private val fastScrollTrack: View,
     private val fastScrollThumb: View,
-    private val layoutManager: LinearLayoutManager
+    private val layoutManager: LinearLayoutManager,
+    private val onDragStateChanged: ((Boolean) -> Unit)? = null // 追加
 ) {
 
     private var isDragging = false
@@ -38,6 +39,7 @@ class FastScrollHelper(
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     isDragging = true
+                    onDragStateChanged?.invoke(true) // 追加
                     trackHeight = fastScrollTrack.height.toFloat()
                     thumbHeight = fastScrollThumb.height.toFloat()
                     true
@@ -50,6 +52,7 @@ class FastScrollHelper(
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     isDragging = false
+                    onDragStateChanged?.invoke(false) // 追加
                     true
                 }
                 else -> false
