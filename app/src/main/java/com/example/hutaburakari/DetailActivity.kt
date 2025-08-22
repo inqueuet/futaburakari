@@ -56,11 +56,16 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         binding = ActivityDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // ★ ここですぐに初期化
+        scrollStore = ScrollPositionStore(this)
+
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
-        viewModel = ViewModelProvider(this)[DetailViewModel::class.java]
-        scrollStore = ScrollPositionStore(this)
+        viewModel = ViewModelProvider(
+            this,
+            ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+        ).get(DetailViewModel::class.java)
 
         currentUrl = intent.getStringExtra(EXTRA_URL)
         binding.toolbarTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: ""
@@ -176,21 +181,30 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
         }
 
-        // ★ 追加：無限スクロール（底から5件手前で発火）
+        // ★ 追加：無限スクロール（底から1件手前で発火）
         binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 if (dy <= 0) return
-                val last = layoutManager.findLastVisibleItemPosition()
-                val total = detailAdapter.itemCount
-                val threshold = 5
-                if (!isRequestingMore && last >= total - 1 - threshold) {
-                    val url = currentUrl ?: return
-                    isRequestingMore = true
+                if (isRequestingMore) return
 
+                val lastVisible = layoutManager.findLastVisibleItemPosition()
+                if (lastVisible == RecyclerView.NO_POSITION) return
+
+                val lastContentIndex = findLastContentAdapterIndex()
+                if (lastContentIndex < 0) return
+
+                val threshold = 1
+                // ★ ThreadEndTime は判定から除外：可視最終位置が実質末尾 - threshold 以上なら発火
+                if (lastVisible >= lastContentIndex - threshold) {
+                    val url = currentUrl ?: return
+
+                    isRequestingMore = true
                     suppressNextRestore = true
 
-                    viewModel.checkForUpdates(url, total) { hasNew ->
-                        // 取得完了後に解除（新着なしでも解除）
+                    // ★ レス数だけをサーバへ渡す
+                    val postCount = countPostItems()
+                    viewModel.checkForUpdates(url, postCount) { hasNew ->
+                        // 新着有無に関わらず解除
                         isRequestingMore = false
                     }
                 }
@@ -220,19 +234,21 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private fun observeViewModel() {
         viewModel.detailContent.observe(this, Observer { list ->
             binding.swipeRefreshLayout.isRefreshing = false
-            detailAdapter.submitList(list)
+
+            // ★ ここで ThreadEndTime を最後の1件に絞る
+            val normalized = normalizeThreadEndTime(list)
+
+            // ★ これを submitList に渡す
+            detailAdapter.submitList(normalized)
 
             // （必要なら）検索ナビの表示切替
             binding.searchNavigationControls.isVisible = detailSearchManager.isSearchActive()
 
             // ★初回ロード時のみスクロールを復元するように変更
-            if (isInitialLoad) {
+            if (isInitialLoad && !suppressNextRestore) {
                 restoreScroll()
-                isInitialLoad = false // フラグを倒し、次回以降は復元しない
-            }
-
-            // suppressNextRestore のロジックは無限スクロール用に残す
-            if (suppressNextRestore) {
+                isInitialLoad = false
+            } else if (suppressNextRestore) {
                 suppressNextRestore = false
             }
         })
@@ -274,6 +290,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     }
 
     private fun restoreScroll() {
+        if (!::scrollStore.isInitialized) return
         currentUrl?.let { url ->
             val (pos, off) = scrollStore.getScrollState(url)
             binding.detailRecyclerView.post {
@@ -518,6 +535,45 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
         else -> null
+    }
+
+    // 末尾の ThreadEndTime を除いた「実質の最終アダプタ位置」を返す
+    private fun findLastContentAdapterIndex(): Int {
+        val list = viewModel.detailContent.value ?: return -1
+        // 末尾から走査して Text/Image/Video の最終位置を返す
+        for (i in list.size - 1 downTo 0) {
+            when (list[i]) {
+                is DetailContent.Text, is DetailContent.Image, is DetailContent.Video -> return i
+                else -> {}
+            }
+        }
+        return -1
+    }
+
+    // 末尾の ThreadEndTime を1件だけ残す
+    private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent> {
+        val endIndexes = src.withIndex()
+            .filter { it.value is DetailContent.ThreadEndTime }
+            .map { it.index }
+
+        if (endIndexes.isEmpty()) return src
+        val keepIndex = endIndexes.last()
+
+        val out = ArrayList<DetailContent>(src.size - (endIndexes.size - 1))
+        for ((i, item) in src.withIndex()) {
+            if (item is DetailContent.ThreadEndTime) {
+                if (i == keepIndex) out += item
+            } else {
+                out += item
+            }
+        }
+        return out
+    }
+
+    // レス数（Text/Image/Video の件数）を返す
+    private fun countPostItems(): Int {
+        val list = viewModel.detailContent.value ?: return 0
+        return list.count { it is DetailContent.Text || it is DetailContent.Image || it is DetailContent.Video }
     }
 
 }

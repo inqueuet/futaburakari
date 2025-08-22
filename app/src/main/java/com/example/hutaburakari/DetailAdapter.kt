@@ -588,9 +588,30 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
     class DetailDiffCallback : DiffUtil.ItemCallback<DetailContent>() {
         override fun areItemsTheSame(oldItem: DetailContent, newItem: DetailContent): Boolean {
-            return oldItem.id == newItem.id && oldItem::class == newItem::class
+            return when {
+                // ★ ThreadEndTime は「常に同一アイテム」とみなす
+                oldItem is DetailContent.ThreadEndTime && newItem is DetailContent.ThreadEndTime -> true
+                else -> oldItem.id == newItem.id && oldItem::class == newItem::class
+            }
         }
-        override fun areContentsTheSame(oldItem: DetailContent, newItem: DetailContent): Boolean = oldItem == newItem
+
+        override fun areContentsTheSame(oldItem: DetailContent, newItem: DetailContent): Boolean {
+            return when {
+                // ★ 中身（endTime）が同じなら変更なし、違えば更新
+                oldItem is DetailContent.ThreadEndTime && newItem is DetailContent.ThreadEndTime ->
+                    oldItem.endTime == newItem.endTime
+                else -> oldItem == newItem
+            }
+        }
+
+        // あるとよりスムーズ（任意）
+        override fun getChangePayload(oldItem: DetailContent, newItem: DetailContent): Any? {
+            return when {
+                oldItem is DetailContent.ThreadEndTime && newItem is DetailContent.ThreadEndTime ->
+                    if (oldItem.endTime != newItem.endTime) "THREAD_END_TIME_CHANGED" else null
+                else -> null
+            }
+        }
     }
 
     // ---------- 補助Span ----------
