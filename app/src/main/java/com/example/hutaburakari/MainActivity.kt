@@ -25,6 +25,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URL
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
@@ -49,27 +51,32 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
     private val minScrollDistanceThreshold = 200 // 最小スクロール距離（ピクセル）
     private val minBounceCountThreshold = 3 // 最小バウンス回数
 
+    private val catsetAppliedHosts = mutableSetOf<String>()
+
+    private var prefetchJob: Job? = null
+
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         loadAndFetchInitialData()
     }
 
-    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            lifecycleScope.launch {
-                Log.d("MainActivity", "Selected image URI: $uri")
-                val promptInfo = MetadataExtractor.extract(this@MainActivity, uri.toString())
-                Log.d("MainActivity", "Extracted prompt info: $promptInfo")
+    private val pickImageLauncher =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) {
+                lifecycleScope.launch {
+                    Log.d("MainActivity", "Selected image URI: $uri")
+                    val promptInfo = MetadataExtractor.extract(this@MainActivity, uri.toString())
+                    Log.d("MainActivity", "Extracted prompt info: $promptInfo")
 
-                val intent = Intent(this@MainActivity, ImageDisplayActivity::class.java).apply {
-                    putExtra(ImageDisplayActivity.EXTRA_IMAGE_URI, uri.toString())
-                    putExtra(ImageDisplayActivity.EXTRA_PROMPT_INFO, promptInfo)
+                    val intent = Intent(this@MainActivity, ImageDisplayActivity::class.java).apply {
+                        putExtra(ImageDisplayActivity.EXTRA_IMAGE_URI, uri.toString())
+                        putExtra(ImageDisplayActivity.EXTRA_PROMPT_INFO, promptInfo)
+                    }
+                    startActivity(intent)
                 }
-                startActivity(intent)
             }
         }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -158,7 +165,8 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
         // 境界での逆方向スクロール判定
         val isTopBounce = isAtTop && scrollDirection < 0 && !binding.swipeRefreshLayout.isRefreshing
-        val isBottomBounce = isAtBottom && scrollDirection > 0 && !binding.swipeRefreshLayout.isRefreshing
+        val isBottomBounce =
+            isAtBottom && scrollDirection > 0 && !binding.swipeRefreshLayout.isRefreshing
 
         return isTopBounce || isBottomBounce
     }
@@ -260,32 +268,38 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
     private fun fetchDataForCurrentUrl() {
         currentSelectedUrl?.let { url ->
-            lifecycleScope.launch {
-                val boardBaseUrl = url.substringBefore("futaba.php")
-                if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
+            // ★★★ 変更点: 2つの非同期処理を別々に起動する ★★★
+            val boardBaseUrl = url.substringBefore("futaba.php")
+            if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
+                // 設定適用は「投げっぱなし」でOKなので、別Coroutineで実行
+                lifecycleScope.launch {
                     applyCatalogSettings(boardBaseUrl)
-                } else {
-                    // Log.e("MainActivity", "Cannot derive boardBaseUrl from: $url. Skipping applyCatalogSettings.")
                 }
-                viewModel.fetchImagesFromUrl(url)
+            } else {
+                // Log.e(...)
             }
+            // 画像取得も（上記の完了を待たずに）すぐに開始
+            viewModel.fetchImagesFromUrl(url)
         } ?: run {
             showBookmarkSelectionDialog()
         }
     }
 
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
-        val settings = mapOf(
-            "mode" to "catset",
-            "cx" to "20",
-            "cy" to "10",
-            "cl" to "10"
-        )
+        val hostKey = URL(boardBaseUrl).host
+        if (catsetAppliedHosts.contains(hostKey)) return  // 以降スキップ
+
+        val settings = mapOf("mode" to "catset", "cx" to "20", "cy" to "10", "cl" to "10")
         try {
             NetworkClient.applySettings(boardBaseUrl, settings)
+            catsetAppliedHosts.add(hostKey)
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                Toast.makeText(this@MainActivity, "設定の適用に失敗: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this@MainActivity,
+                    "設定の適用に失敗: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
             e.printStackTrace()
         }
@@ -307,29 +321,35 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
                 Toast.makeText(this, getString(R.string.reloading), Toast.LENGTH_SHORT).show()
                 true
             }
+
             R.id.action_select_bookmark -> {
                 showBookmarkSelectionDialog()
                 true
             }
+
             R.id.action_manage_bookmarks -> {
                 val intent = Intent(this, BookmarkActivity::class.java)
                 bookmarkActivityResultLauncher.launch(intent)
                 true
             }
+
             R.id.action_image_edit -> {
                 val intent = Intent(this, ImagePickerActivity::class.java)
                 startActivity(intent)
                 true
             }
+
             R.id.action_browse_local_images -> {
                 pickImageLauncher.launch("image/*")
                 true
             }
+
             R.id.action_settings -> {
                 val intent = Intent(this, SettingsActivity::class.java)
                 startActivity(intent)
                 true
             }
+
             else -> super.onOptionsItemSelected(item)
         }
     }
@@ -362,7 +382,11 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         val bookmarkNames = bookmarks.map { it.name }.toTypedArray()
 
         if (bookmarkNames.isEmpty()) {
-            Toast.makeText(this, "ブックマークがありません。まずはブックマークを登録してください。", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "ブックマークがありません。まずはブックマークを登録してください。",
+                Toast.LENGTH_LONG
+            ).show()
             val intent = Intent(this, BookmarkActivity::class.java)
             bookmarkActivityResultLauncher.launch(intent)
             return
@@ -412,7 +436,11 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
                         .build()
                     imageLoader.enqueue(request)
                 } catch (e: Exception) {
-                    Log.e("MainActivity_Prefetch", "Prefetch failed for base:'$baseUrlString', image:'$imageUrlString'", e)
+                    Log.e(
+                        "MainActivity_Prefetch",
+                        "Prefetch failed for base:'$baseUrlString', image:'$imageUrlString'",
+                        e
+                    )
                 }
             }
 
@@ -429,10 +457,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
             if (!binding.swipeRefreshLayout.isRefreshing) {
                 binding.progressBar.isVisible = isLoading
             }
-            if (!isLoading) {
-                binding.swipeRefreshLayout.isRefreshing = false
-            }
-            // 読み込み中でもスワイプ更新中ならリストは表示したままにする
+            if (!isLoading) binding.swipeRefreshLayout.isRefreshing = false
             binding.recyclerView.isVisible = !isLoading || binding.swipeRefreshLayout.isRefreshing
         }
 
@@ -440,23 +465,48 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
             allItems = items
             filterImages(null)
 
-            // 一覧反映後に画面内＋先読み分をプリフェッチ
-            lifecycleScope.launch(Dispatchers.IO) {
-                val first = 0
-                val oneScreen = gridLayoutManager.spanCount * 4
-                val last = (first + oneScreen).coerceAtMost(items.lastIndex)
-                val slice = items.subList(first, last + 1)
+            // いったん既存プリフェッチを止める
+            prefetchJob?.cancel()
 
-                slice.mapNotNull { it.fullImageUrl ?: it.previewUrl }
-                    .forEach { url ->
-                        val req = ImageRequest.Builder(this@MainActivity)
-                            .data(url)
-                            .size(coil.size.Size.ORIGINAL)
-                            .precision(coil.size.Precision.EXACT)
-                            //.lifecycle(null) // バックグラウンド専用
-                            .build()
-                        this@MainActivity.imageLoader.enqueue(req)
-                    }
+            // レイアウトが確定してから可視範囲を算出
+            binding.recyclerView.post {
+                prefetchJob = lifecycleScope.launch {
+                    // 画面に表示されるおおよその件数（縦4行分）
+                    val span = gridLayoutManager.spanCount           // 例: 4
+                    val rowsOnScreen = 4
+                    val visibleMax = (span * rowsOnScreen).coerceAtMost(items.size)
+
+                    val first = gridLayoutManager.findFirstVisibleItemPosition().coerceAtLeast(0)
+                    val last = (first + visibleMax - 1).coerceAtMost(items.lastIndex)
+
+                    // 先読み件数を少量（例: 8件）だけ
+                    val prefetchAhead = 8
+                    val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
+
+                    val slice = items.subList(first, end + 1)
+
+                    // サムネに十分なサイズ（例: 200dp）
+                    val dm = resources.displayMetrics
+                    val thumbPx = (200 * dm.density).toInt().coerceAtLeast(120)
+
+                    // Coilはenqueueが非同期。大量同時投下を避けて小分けに投げる
+                    slice.mapNotNull { it.fullImageUrl ?: it.previewUrl }
+                        .chunked(4) // 小さなバッチで
+                        .forEach { batch ->
+                            batch.forEach { url ->
+                                val req = ImageRequest.Builder(this@MainActivity)
+                                    .data(url)
+                                    .size(thumbPx) // 一辺だけでもOK（正方サムネ想定）
+                                    .precision(coil.size.Precision.INEXACT) // サムネは厳密不要
+                                    .allowHardware(true)
+                                    // .memoryCacheKey(url + "_thumb") // 必要ならキー分離
+                                    .build()
+                                this@MainActivity.imageLoader.enqueue(req)
+                            }
+                            // UI初速を阻害しない程度に短い隙間を空ける
+                            delay(50)
+                        }
+                }
             }
         }
 
