@@ -32,6 +32,9 @@ import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import coil.size.ViewSizeResolver
 import java.util.regex.Pattern
+import android.content.DialogInterface
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 
 class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(DetailDiffCallback()) {
 
@@ -42,7 +45,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onResNumClickListener: ((resNum: String, resBody: String) -> Unit)? = null
     // 追加: IDクリック
     var onIdClickListener: ((id: String) -> Unit)? = null
-
+    // ★ 追加: 本文タップ時のコールバック
+    var onBodyClickListener: ((quotedBody: String) -> Unit)? = null
     private var currentSearchQuery: String? = null
 
     // “そうだね”状態問い合わせ（外部提供）
@@ -168,7 +172,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
             var mainResNum: String? = null
 
-            // No.xxx をクリック → 返信引用起動
+            // ★ 変更点 1: No.xxx をクリック → メニュー表示
             run {
                 val m = resNumPatternForClickableSpan.matcher(contentString)
                 if (m.find()) {
@@ -178,8 +182,21 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     if (s >= 0 && e <= spannableBuilder.length) {
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
-                                val q = ">No.${mainResNum}"
-                                onResNumClickListener?.invoke(mainResNum!!, q)
+                                val resNum = mainResNum ?: return
+                                val menuItems = arrayOf("返信", "削除") // 削除は未実装
+                                AlertDialog.Builder(widget.context)
+                                    .setItems(menuItems) { _: DialogInterface, which: Int ->
+                                        when (which) {
+                                            0 -> { // 返信
+                                                val q = ">No.$resNum"
+                                                onResNumClickListener?.invoke(resNum, q)
+                                            }
+                                            1 -> { // 削除
+                                                Toast.makeText(widget.context, "削除機能は未実装です", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                    .show()
                             }
                             override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
                         }
@@ -313,6 +330,16 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                     idx = f.range.last + 1
+                }
+            }
+
+            // ★ 変更点 2: 本文タップで引用付き返信
+            textView.setOnClickListener {
+                val bodyOnly = extractPlainBody(item.htmlContent)
+                if (bodyOnly.isNotBlank()) {
+                    // 全行の先頭に ">" を付けて引用
+                    val quotedBody = bodyOnly.lines().joinToString("\n") { ">$it" }
+                    adapter.onBodyClickListener?.invoke(quotedBody)
                 }
             }
 

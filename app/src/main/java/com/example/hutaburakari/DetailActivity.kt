@@ -125,6 +125,17 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             reloadDetails()
         }
 
+        // ★ 変更点 1: No.xxxタップ時の処理を共通メソッド呼び出しに変更
+        // レス番号(No.xxx)タップ → メニューの「返信」 → 返信画面へ
+        detailAdapter.onResNumClickListener = { _, resBody ->
+            launchReplyActivity(resBody)
+        }
+
+        // ★ 変更点 2: 本文タップ時の処理を新規追加
+        detailAdapter.onBodyClickListener = { quotedBody ->
+            launchReplyActivity(quotedBody)
+        }
+
         // レス番号(No.xxx)タップ → 返信画面へ（引用文付き）
         detailAdapter.onResNumClickListener = { _, resBody ->
             currentUrl?.let { url ->
@@ -270,6 +281,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                 }
                 replyActivityResultLauncher.launch(intent)
             }
+            launchReplyActivity("")
             true
         }
         R.id.action_reload -> { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails(); true }
@@ -288,6 +300,22 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         binding.searchNavigationControls.isVisible = false
     }
     override fun isBindingInitialized(): Boolean = ::binding.isInitialized
+
+    // ★ 変更点 4: 返信画面を起動する共通メソッド
+    private fun launchReplyActivity(quote: String) {
+        currentUrl?.let { url ->
+            val threadId = url.substringAfterLast("/").substringBefore(".htm")
+            val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+            val boardPostUrl = boardBasePath + "futaba.php"
+            val intent = Intent(this, ReplyActivity::class.java).apply {
+                putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
+                putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+                putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
+                putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, quote)
+            }
+            replyActivityResultLauncher.launch(intent)
+        }
+    }
 
     // =========================================================
     // ここから：ポップアップ表示（引用 / ID）と検索ヘルパー
