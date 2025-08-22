@@ -55,7 +55,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
     private val sodaNeStates = mutableMapOf<String, Boolean>()
 
     // (F) メタデータ抽出の並列数を制限
-    private val limitedIO = Dispatchers.IO.limitedParallelism(4)
+    private val limitedIO = Dispatchers.IO.limitedParallelism(2)
 
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")

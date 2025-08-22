@@ -71,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
 
         // HEAD で一気に確認（並列は控えめに）
-        val limitedIO = Dispatchers.IO.limitedParallelism(6)
+        val limitedIO = Dispatchers.IO.limitedParallelism(2)
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {

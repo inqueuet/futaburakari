@@ -180,7 +180,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             layoutManager = this@DetailActivity.layoutManager
             setHasFixedSize(true)
             itemAnimator = null
-            setItemViewCacheSize(100)
+            setItemViewCacheSize(150)
 
             // 「塊の末尾だけ」線を引くデコレーション
             // 画面端ピッタリで良ければ paddingStartDp/paddingEndDp は 0 のままでOK。
