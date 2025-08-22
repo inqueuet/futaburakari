@@ -53,6 +53,11 @@ class ReplyActivity : AppCompatActivity() {
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
+        // 独自の戻るボタンにクリックリスナーを付ける
+        binding.backButton.setOnClickListener {
+            finish()
+        }
+
         // 不可視 WebView ワーカーをアタッチして TokenProvider をセット
         val tag = "reply_token_worker"
         val worker = supportFragmentManager.findFragmentByTag(tag) as? ReplyTokenWorkerFragment
