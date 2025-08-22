@@ -72,6 +72,11 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
         binding.popupRecyclerView.itemAnimator = null
         binding.popupRecyclerView.setItemViewCacheSize(100)
 
+        // ここで適用
+        binding.popupRecyclerView.addItemDecoration(
+            BlockDividerDecoration(detailAdapter, requireContext(), paddingStartDp = 0, paddingEndDp = 0)
+        )
+
     }
 
     // --- データ解決ロジック ---

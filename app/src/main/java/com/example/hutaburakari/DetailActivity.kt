@@ -147,7 +147,12 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             setHasFixedSize(true)
             itemAnimator = null
             setItemViewCacheSize(100)
-            // XMLで clipToPadding=false / paddingEnd / paddingBottom を付与済み
+
+            // 「塊の末尾だけ」線を引くデコレーション
+            // 画面端ピッタリで良ければ paddingStartDp/paddingEndDp は 0 のままでOK。
+            // 例えば少し内側に寄せたいなら 8dp などに調整してください。
+            addItemDecoration(BlockDividerDecoration(detailAdapter, context, paddingStartDp = 0, paddingEndDp = 0))
+
         }
 
         // ★ 追加：無限スクロール（底から5件手前で発火）
