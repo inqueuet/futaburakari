@@ -285,7 +285,24 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     val e = fm.end()
                     if (s >= 0 && e <= spannableBuilder.length) {
                         val span = object : ClickableSpan() {
-                            override fun onClick(widget: View) { onQuoteClickListener?.invoke(file) }
+                            override fun onClick(widget: View) {
+                                // 「返信 / 確認」メニューを表示
+                                val items = arrayOf("返信", "確認")
+                                AlertDialog.Builder(widget.context)
+                                    .setItems(items) { _, which ->
+                                        when (which) {
+                                            0 -> {
+                                                // 返信: ">ファイル名" をコメントに自動入力して ReplyActivity 起動
+                                                adapter.onBodyClickListener?.invoke(">$file")
+                                            }
+                                            1 -> {
+                                                // 確認: 既存フラグメントで引用された中身を表示（従来動作）
+                                                onQuoteClickListener?.invoke(file)
+                                            }
+                                        }
+                                    }
+                                    .show()
+                            }
                             override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
                         }
                         spannableBuilder.setSpan(span, s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -334,26 +351,34 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 }
             }
 
-            // ★ 変更点 2: 本文タップで引用付き返信
-            textView.setOnClickListener {
-                val bodyOnly = extractPlainBody(item.htmlContent)
-                if (bodyOnly.isNotBlank()) {
-                    // 全行の先頭に ">" を付けて引用
-                    val quotedBody = bodyOnly.lines().joinToString("\n") { ">$it" }
-                    adapter.onBodyClickListener?.invoke(quotedBody)
-                }
-            }
-
             textView.text = spannableBuilder
             textView.movementMethod = LinkMovementMethod.getInstance()
 
-            // 長押しコピー
-            textView.setOnLongClickListener {
-                val ctx = it.context
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            // ★ 置き換え：本文“長押し”でメニュー
+            textView.setOnLongClickListener { v ->
+                val ctx = v.context
                 val bodyOnly = extractPlainBody(item.htmlContent)
-                cm.setPrimaryClip(ClipData.newPlainText("text", bodyOnly))
-                true
+                if (bodyOnly.isBlank()) return@setOnLongClickListener true
+
+                val items = arrayOf("引用して返信", "本文をコピー")
+                AlertDialog.Builder(ctx)
+                    .setItems(items) { _, which ->
+                        when (which) {
+                            0 -> {
+                                // 引用付きで返信
+                                val quotedBody = bodyOnly.lines().joinToString("\n") { ">$it" }
+                                adapter.onBodyClickListener?.invoke(quotedBody)
+                            }
+                            1 -> {
+                                // コピー
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("text", bodyOnly))
+                                Toast.makeText(ctx, "コピーしました", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    .show()
+                true // 長押しイベントを消費
             }
         }
 
