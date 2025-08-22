@@ -52,6 +52,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     // “そうだね”状態問い合わせ（外部提供）
     var getSodaNeState: ((String) -> Boolean)? = null
 
+    // ★ 追加: レス番号→現在のそうだね数（サーバ返り値）を覚えておく
+    private val sodaneOverrides = mutableMapOf<String, Int>()
+
     // パターン類
     private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
     private val resNumPatternOriginal = Pattern.compile("No\\.(\\d+)")
@@ -66,6 +69,63 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
     // 視覚余白用のゼロ幅スペース
     private val zwsp = "\u200B"
+
+
+    fun updateSodane(resNum: String, count: Int) {
+        sodaneOverrides[resNum] = count
+        val idx = currentList.indexOfFirst { content ->
+            content is DetailContent.Text && extractResNo(content.htmlContent) == resNum
+        }
+        if (idx >= 0) notifyItemChanged(idx, "SODANE_CHANGED")
+    }
+
+    private fun extractResNo(html: String): String? {
+        val m = resNumPatternOriginal.matcher(html)
+        return if (m.find()) m.group(1) else null
+    }
+
+    private fun injectSodaneCount(html: String, resNum: String?): String {
+        if (resNum == null) return html
+        val count = sodaneOverrides[resNum] ?: return html
+
+        // 1) No.{resNum} の位置を探す
+        val noMatch = Regex("""No\.$resNum""").find(html) ?: return html
+        val start = noMatch.range.first
+
+        // 2) 「同じ行」の終端（次の <br> まで）を見つける
+        val after = html.substring(start)
+        val brMatch = Regex("""(?i)<br\s*/?>""").find(after)
+        val endOffset = brMatch?.range?.first ?: after.length
+
+        // セグメント = "No.{resNum} ...（次の改行まで）"
+        val segment = after.substring(0, endOffset)
+
+        // 3) セグメント内の
+        //    - <a ...>(+ / ＋ / そうだねxN)</a>
+        //    - (+ / ＋ / そうだねxN)
+        //    を “何個でも”まとめて除去（空白や&nbsp;やZWSP込み）
+        var cleaned = segment
+        val toks = listOf(
+            // <a>で包まれているパターン
+            Regex("""(?:\s|&nbsp;|\u200B)*(?:<a\b[^>]*>\s*)?(?:[+＋]|そうだねx\d+)(?:\s*</a>)?""")
+        )
+        // 収束するまで繰り返し畳み替え（複数散在の想定）
+        repeat(10) {
+            var changed = false
+            for (rx in toks) {
+                val next = rx.replace(cleaned, "")
+                if (next != cleaned) { cleaned = next; changed = true }
+            }
+            if (!changed) return@repeat
+        }
+
+        // 4) 末尾の不要空白を整理し、統一表記を追加
+        cleaned = cleaned.replace(Regex("""\s+"""), " ").trimEnd()
+        val newSegment = "$cleaned そうだねx$count"
+
+        // 5) 元HTMLのセグメントを差し替え
+        return html.substring(0, start) + newSegment + after.substring(endOffset)
+    }
 
     fun setSearchQuery(query: String?) {
         currentSearchQuery = query
@@ -164,37 +224,36 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val textView: TextView = view.findViewById(R.id.detailTextView)
 
         fun bind(item: DetailContent.Text, searchQuery: String?) {
-            val htmlWithZwsp = insertZwspForPadding(item.htmlContent)
+            // 主No. をHTMLから抽出（例: "323724"）
+            val mainResNum = adapter.extractResNo(item.htmlContent)
+
+            // サーバ返り値をHTMLへ注入（無ければ原文のまま）
+            val htmlAppliedSodane = adapter.injectSodaneCount(item.htmlContent, mainResNum)
+
+            // ★ ここがポイント：以降は常に「注入後のHTML」を使う
+            val htmlWithZwsp = insertZwspForPadding(htmlAppliedSodane)
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
-            //val spannableBuilder = SpannableStringBuilder(adapter.buildDisplayOnlyPaddedText(textView, textFromHtmlWithZwsp))
             val spannableBuilder = SpannableStringBuilder(textFromHtmlWithZwsp)
             val contentString = spannableBuilder.toString()
 
-            var mainResNum: String? = null
-
-            // ★ 変更点 1: No.xxx をクリック → メニュー表示
+            // --- No.xxx クリック（返信/削除メニュー）の設定 ---
             run {
                 val m = resNumPatternForClickableSpan.matcher(contentString)
+                var matchedResNum: String? = null
                 if (m.find()) {
-                    mainResNum = m.group(1)
+                    matchedResNum = m.group(1)
                     val s = m.start()
                     val e = m.end()
                     if (s >= 0 && e <= spannableBuilder.length) {
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
-                                val resNum = mainResNum ?: return
-                                val menuItems = arrayOf("返信", "削除") // 削除は未実装
+                                val resNum = matchedResNum ?: mainResNum ?: return
+                                val menuItems = arrayOf("返信", "削除")
                                 AlertDialog.Builder(widget.context)
                                     .setItems(menuItems) { _: DialogInterface, which: Int ->
                                         when (which) {
-                                            0 -> { // 返信
-                                                val q = ">No.$resNum"
-                                                onResNumClickListener?.invoke(resNum, q)
-                                            }
-                                            1 -> { // 削除
-                                                // ★ ここをActivityへ委譲（resBodyは要らないので空文字で）
-                                                onResNumClickListener?.invoke(resNum, "")
-                                            }
+                                            0 -> onResNumClickListener?.invoke(resNum, ">No.$resNum")
+                                            1 -> onResNumClickListener?.invoke(resNum, "")
                                         }
                                     }
                                     .show()

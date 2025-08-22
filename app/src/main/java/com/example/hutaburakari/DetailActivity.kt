@@ -19,6 +19,7 @@ import com.example.hutaburakari.databinding.ActivityDetailBinding
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import android.content.DialogInterface
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 
 class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
@@ -270,6 +271,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                 binding.progressBar.isVisible = isLoading
             }
         })
+
+        // ★ 追加: 「そうだね」更新を購読して Adapter に反映
+        lifecycleScope.launchWhenStarted {
+            viewModel.sodaneUpdate.collect { (resNum, count) ->
+                detailAdapter.updateSodane(resNum, count)
+            }
+        }
+
     }
 
     private fun reloadDetails() {

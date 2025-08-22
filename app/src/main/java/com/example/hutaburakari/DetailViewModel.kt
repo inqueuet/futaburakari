@@ -18,6 +18,8 @@ import java.net.MalformedURLException
 import java.net.URL
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class DetailViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -31,8 +33,20 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
     val isLoading: LiveData<Boolean> = _isLoading
 
     // そうだねの更新通知用
-    private val _sodaNeUpdate = MutableLiveData<Pair<String, Boolean>>()
-    val sodaNeUpdate: LiveData<Pair<String, Boolean>> = _sodaNeUpdate
+    private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
+    val sodaneUpdate = _sodaneUpdate.asSharedFlow()
+
+    // 代わりに、レス番号で受ける関数を用意（UIから resNo だけ渡す）
+    fun onClickSodane(resNo: String, referer: String) {
+        viewModelScope.launch {
+            val count = NetworkClient.postSodaNe(resNo, referer) // Int? を返す想定
+            if (count != null) {
+                _sodaneUpdate.tryEmit(resNo to count)
+            } else {
+                _error.postValue("「そうだね」の送信に失敗しました。")
+            }
+        }
+    }
 
     private val cacheManager = DetailCacheManager(application)
     private var currentUrl: String? = null
@@ -380,22 +394,18 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ファイル下部の既存 postSodaNe(resNum: String) を「Int? 前提」に書き換え
     fun postSodaNe(resNum: String) {
         val url = currentUrl
         if (url == null) {
             _error.value = "「そうだね」の投稿に失敗しました: 対象のURLが不明です。"
             return
         }
-
         viewModelScope.launch {
             try {
-                val success = NetworkClient.postSodaNe(resNum, url)
-
-                if (success) {
-                    // そうだねの状態を更新
-                    sodaNeStates[resNum] = true
-                    // UIに部分更新を通知
-                    _sodaNeUpdate.postValue(Pair(resNum, true))
+                val count = NetworkClient.postSodaNe(resNum, url) // ← Int? を受ける
+                if (count != null) {
+                    _sodaneUpdate.tryEmit(resNum to count)        // ← _sodaneUpdate に統一
                 } else {
                     _error.value = "「そうだね」の投稿に失敗しました。"
                 }

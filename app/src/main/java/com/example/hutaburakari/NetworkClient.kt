@@ -44,28 +44,24 @@ object NetworkClient {
      * 「そうだね」を送信します。
      * ホスト名はRefererから動的に取得します。
      */
-    suspend fun postSodaNe(resNum: String, referer: String): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                // RefererのURLからホスト名を動的に取得
-                val host = referer.toHttpUrl().host
-                val url = "https://${host}/sd.php?b.$resNum"
+    suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
+        try {
+            val ref = referer.toHttpUrl()
+            val board = ref.pathSegments.firstOrNull() ?: return@withContext null
+            // 事前GETでCookieを確実に
+            runCatching { fetchDocument(referer) }
 
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Referer", referer)
-                    .get()
-                    .build()
-
-                httpClient.newCall(request).execute().use { response ->
-                    Log.d("NetworkClient", "postSodaNe: Response status code: ${response.code}")
-                    response.isSuccessful
-                }
-            } catch (e: Exception) {
-                Log.e("NetworkClient", "postSodaNeで例外発生", e)
-                false
+            val sdUrl = "https://${ref.host}/sd.php?$board.$resNum"
+            val req = Request.Builder().url(sdUrl).header("Referer", referer).get().build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val raw = resp.body?.bytes() ?: return@use null
+                val text = runCatching { String(raw, java.nio.charset.Charset.forName("Shift_JIS")).trim() }
+                    .getOrElse { String(raw).trim() }
+                // ← ここがポイント：返ってきた数字=現在のそうだね数
+                text.toIntOrNull()
             }
-        }
+        } catch (_: Exception) { null }
     }
 
     /**
