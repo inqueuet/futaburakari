@@ -176,9 +176,9 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 val textSourceElement = block.clone().apply { select("table").remove() }
 
                 // メディアファイルへのリンクをテキストコンテンツから除外
-                textSourceElement.select("a[target=_blank][href]")
-                    .filter { a -> isMediaUrl(a.attr("href")) }
-                    .forEach { it.remove() }
+                //textSourceElement.select("a[target=_blank][href]")
+                //    .filter { a -> isMediaUrl(a.attr("href")) }
+                //    .forEach { it.remove() }
 
                 html = textSourceElement.html()
             } else {
@@ -187,9 +187,9 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 if (rtd != null) {
                     val textBlock = rtd.clone()
                     // メディアファイルへのリンクをテキストコンテンツから除外
-                    textBlock.select("a[target=_blank][href]")
-                        .filter { a -> isMediaUrl(a.attr("href")) }
-                        .forEach { it.remove() }
+                    //textBlock.select("a[target=_blank][href]")
+                    //    .filter { a -> isMediaUrl(a.attr("href")) }
+                    //    .forEach { it.remove() }
                     html = textBlock.html()
                 } else {
                     html = ""
