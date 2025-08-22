@@ -36,6 +36,7 @@
         <activity android:name=".DetailActivity" />
         <activity
             android:name=".ReplyActivity"
+            android:launchMode="singleTop"
             android:label="レスを投稿"
             android:parentActivityName=".DetailActivity"
             android:windowSoftInputMode="adjustResize" />

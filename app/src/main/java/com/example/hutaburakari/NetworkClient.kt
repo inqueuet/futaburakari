@@ -93,4 +93,60 @@ object NetworkClient {
             }
         }
     }
+
+    /**
+     * レス削除をPOSTします。
+     * @param postUrl 例: https://<host>/<board>/futaba.php?guid=on
+     * @param referer スレURL（削除対象レスがあるページ）
+     * @param resNum  削除するレス番号（例: "123456789"）
+     * @param pwd     削除キー（AppPreferencesから取得した値）
+     * @return サーバが "OK"（2バイト/Shift_JIS）等を返しHTTP 200の場合 true
+     */
+    suspend fun deletePost(
+        postUrl: String,
+        referer: String,
+        resNum: String,
+        pwd: String
+    ): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val form = FormBody.Builder()
+                    .add(resNum, "delete")
+                    .add("responsemode", "ajax")
+                    .add("pwd", pwd)
+                    .add("onlyimgdel", "")   // 画像のみ削除しないなら空
+                    .add("mode", "usrdel")
+                    .build()
+
+                val origin = "${referer.toHttpUrl().scheme}://${referer.toHttpUrl().host}"
+
+                val req = Request.Builder()
+                    .url(postUrl) // .../futaba.php?guid=on
+                    .post(form)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", origin)
+                    .header("Referer", referer)
+                    .build()
+
+                httpClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        Log.w("NetworkClient", "deletePost: HTTP ${resp.code}")
+                        return@use false
+                    }
+                    // Futaba系は本文 "OK"（Shift_JISで2バイト）パターンあり
+                    val bodyBytes = resp.body?.bytes() ?: return@use false
+                    val okBySize = bodyBytes.size == 2
+                    val okByText = runCatching {
+                        String(bodyBytes, Charset.forName("Shift_JIS")).trim()
+                            .equals("OK", ignoreCase = true)
+                    }.getOrDefault(false)
+                    okBySize || okByText
+                }
+            } catch (e: Exception) {
+                Log.e("NetworkClient", "deletePostで例外発生", e)
+                false
+            }
+        }
+    }
+
 }

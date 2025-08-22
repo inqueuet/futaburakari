@@ -192,7 +192,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                                 onResNumClickListener?.invoke(resNum, q)
                                             }
                                             1 -> { // 削除
-                                                Toast.makeText(widget.context, "削除機能は未実装です", Toast.LENGTH_SHORT).show()
+                                                // ★ ここをActivityへ委譲（resBodyは要らないので空文字で）
+                                                onResNumClickListener?.invoke(resNum, "")
                                             }
                                         }
                                     }

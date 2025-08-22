@@ -17,6 +17,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.hutaburakari.databinding.ActivityDetailBinding
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import android.content.DialogInterface
+import androidx.appcompat.app.AlertDialog
 
 class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
@@ -30,6 +32,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private var currentUrl: String? = null
 
     private var isRequestingMore = false   // 追加：多重呼び出し防止
+
+    private var isInitialLoad = true // ★クラスのプロパティとして初期化
 
     companion object {
         const val EXTRA_URL = "extra_url"
@@ -127,8 +131,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
         // ★ 変更点 1: No.xxxタップ時の処理を共通メソッド呼び出しに変更
         // レス番号(No.xxx)タップ → メニューの「返信」 → 返信画面へ
-        detailAdapter.onResNumClickListener = { _, resBody ->
-            launchReplyActivity(resBody)
+        detailAdapter.onResNumClickListener = { resNum, resBody ->
+            if (resBody.isEmpty()) {
+                // 削除の場合
+                confirmAndDelete(resNum)
+            } else {
+                // 返信の場合
+                launchReplyActivity(resBody)
+            }
         }
 
         // ★ 変更点 2: 本文タップ時の処理を新規追加
@@ -137,20 +147,20 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         }
 
         // レス番号(No.xxx)タップ → 返信画面へ（引用文付き）
-        detailAdapter.onResNumClickListener = { _, resBody ->
-            currentUrl?.let { url ->
-                val threadId = url.substringAfterLast("/").substringBefore(".htm")
-                val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
-                val boardPostUrl = boardBasePath + "futaba.php"
-                val intent = Intent(this, ReplyActivity::class.java).apply {
-                    putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
-                    putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
-                    putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
-                    putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, resBody)
-                }
-                replyActivityResultLauncher.launch(intent)
-            }
-        }
+        //detailAdapter.onResNumClickListener = { _, resBody ->
+        //    currentUrl?.let { url ->
+        //        val threadId = url.substringAfterLast("/").substringBefore(".htm")
+        //        val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+        //        val boardPostUrl = boardBasePath + "futaba.php"
+        //        val intent = Intent(this, ReplyActivity::class.java).apply {
+        //            putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
+        //            putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+        //            putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
+        //            putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, resBody)
+        //        }
+        //        replyActivityResultLauncher.launch(intent)
+        //    }
+        //}
 
         binding.detailRecyclerView.apply {
             adapter = detailAdapter
@@ -196,6 +206,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         )
     }
 
+    // ★ onStart() を追加・オーバーライド
+    override fun onStart() {
+        super.onStart()
+        // アクティビティがバックグラウンドから復帰した場合も
+        // スクロール復元の対象とするためにフラグをリセットする
+        isInitialLoad = true
+    }
+
     // -------------------------
     // LiveData監視
     // -------------------------
@@ -207,10 +225,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             // （必要なら）検索ナビの表示切替
             binding.searchNavigationControls.isVisible = detailSearchManager.isSearchActive()
 
-            // スクロール復元
-            if (!suppressNextRestore) {
+            // ★初回ロード時のみスクロールを復元するように変更
+            if (isInitialLoad) {
                 restoreScroll()
-            } else {
+                isInitialLoad = false // フラグを倒し、次回以降は復元しない
+            }
+
+            // suppressNextRestore のロジックは無限スクロール用に残す
+            if (suppressNextRestore) {
                 suppressNextRestore = false
             }
         })
@@ -232,6 +254,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             suppressNextRestore = false
             saveScroll()
             detailSearchManager.clearSearch()
+            isInitialLoad = true // ★リロード時は再度復元を許可する
             viewModel.fetchDetails(url, forceRefresh = true)
         }
     }
@@ -279,7 +302,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                     putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
                     putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, "")
                 }
-                replyActivityResultLauncher.launch(intent)
+                //replyActivityResultLauncher.launch(intent)
             }
             launchReplyActivity("")
             true
@@ -467,6 +490,26 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     private fun showToastOnUiThread(message: String, duration: Int) {
         runOnUiThread { Toast.makeText(this, message, duration).show() }
+    }
+
+    private fun confirmAndDelete(resNum: String) {
+        AlertDialog.Builder(this)
+            .setMessage("No.$resNum を削除しますか？")
+            .setPositiveButton("削除") { _, _ ->
+                val pwd = AppPreferences.getPwd(this) ?: ""
+                val threadUrl = currentUrl ?: return@setPositiveButton
+                val threadId = threadUrl.substringAfterLast("/").substringBefore(".htm")
+                val boardBase = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                val postUrl = boardBase + "futaba.php?guid=on"
+                viewModel.deletePost(
+                    postUrl = postUrl,
+                    referer = threadUrl,
+                    resNum = resNum,
+                    pwd = pwd
+                )
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
     }
 
     private fun extractResNo(c: DetailContent): Int? = when (c) {

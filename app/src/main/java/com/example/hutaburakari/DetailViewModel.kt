@@ -416,6 +416,38 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         sodaNeStates.clear()
     }
 
+    // 削除
+    fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String) {
+        viewModelScope.launch {
+            try {
+                _isLoading.postValue(true)
+
+                // 念のため直前にスレGETしてCookieを埋める（posttime等）
+                withContext(Dispatchers.IO) { NetworkClient.fetchDocument(referer) }
+
+                val ok = withContext(Dispatchers.IO) {
+                    NetworkClient.deletePost(
+                        postUrl = postUrl,
+                        referer = referer,
+                        resNum = resNum,
+                        pwd = pwd
+                    )
+                }
+
+                if (ok) {
+                    // 成功したらスレ再取得（forceRefresh）
+                    currentUrl?.let { fetchDetails(it, forceRefresh = true) }
+                } else {
+                    _error.postValue("削除に失敗しました。削除キーが違う可能性があります。")
+                }
+            } catch (e: Exception) {
+                _error.postValue("削除中にエラーが発生しました: ${e.message}")
+            } finally {
+                _isLoading.postValue(false)
+            }
+        }
+    }
+
     // ===== Helpers & Regex =====
 
     private fun isMediaUrl(rawHref: String): Boolean {
@@ -424,7 +456,6 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 h.endsWith(".gif") || h.endsWith(".webp") ||
                 h.endsWith(".webm") || h.endsWith(".mp4")
     }
-
     companion object {
         // (E) プリコンパイル済み正規表現
         private val DOC_WRITE = Regex("""document\.write\s*\(\s*'(.*?)'\s*\)""")

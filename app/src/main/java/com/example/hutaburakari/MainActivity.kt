@@ -209,7 +209,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         isAutoUpdateEnabled = true
 
         // 更新予告のトーストを表示（オプション）
-        showToastOnUiThread("更新を確認中...", Toast.LENGTH_SHORT)
+        // showToastOnUiThread("更新を確認中...", Toast.LENGTH_SHORT)
 
         // 小さなローディング表示
         showAutoUpdateIndicator(true)
@@ -232,9 +232,9 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
                     isAutoUpdateEnabled = false
 
                     if (hasUpdates) {
-                        showToastOnUiThread("新しいスレッドが追加されました", Toast.LENGTH_SHORT)
+                        // showToastOnUiThread("新しいスレッドが追加されました", Toast.LENGTH_SHORT)
                     } else {
-                        showToastOnUiThread("更新はありません", Toast.LENGTH_SHORT)
+                        // showToastOnUiThread("更新はありません", Toast.LENGTH_SHORT)
                     }
                 }
             }
@@ -265,7 +265,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
                 if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
                     applyCatalogSettings(boardBaseUrl)
                 } else {
-                    Log.e("MainActivity", "Cannot derive boardBaseUrl from: $url. Skipping applyCatalogSettings.")
+                    // Log.e("MainActivity", "Cannot derive boardBaseUrl from: $url. Skipping applyCatalogSettings.")
                 }
                 viewModel.fetchImagesFromUrl(url)
             }
@@ -386,7 +386,7 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
     private fun setupRecyclerView() {
         imageAdapter = ImageAdapter()
-        gridLayoutManager = GridLayoutManager(this@MainActivity, 5)
+        gridLayoutManager = GridLayoutManager(this@MainActivity, 4)
         binding.recyclerView.apply {
             layoutManager = gridLayoutManager
             adapter = imageAdapter
