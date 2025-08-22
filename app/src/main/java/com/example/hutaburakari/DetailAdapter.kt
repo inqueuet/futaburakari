@@ -55,6 +55,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     // ★ 追加: レス番号→現在のそうだね数（サーバ返り値）を覚えておく
     private val sodaneOverrides = mutableMapOf<String, Int>()
 
+    // 追加: 確認ボタン用のコールバック
+    var onResNumConfirmClickListener: ((resNum: String) -> Unit)? = null
+
     // パターン類
     private val fileNamePattern = Pattern.compile("\\b([a-zA-Z0-9_.-]+\\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mov|avi|flv|mkv))\\b", Pattern.CASE_INSENSITIVE)
     private val resNumPatternOriginal = Pattern.compile("No\\.(\\d+)")
@@ -248,12 +251,13 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
                                 val resNum = matchedResNum ?: mainResNum ?: return
-                                val menuItems = arrayOf("返信", "削除")
+                                val menuItems = arrayOf("返信", "削除", "確認")
                                 AlertDialog.Builder(widget.context)
                                     .setItems(menuItems) { _: DialogInterface, which: Int ->
                                         when (which) {
                                             0 -> onResNumClickListener?.invoke(resNum, ">No.$resNum")
                                             1 -> onResNumClickListener?.invoke(resNum, "")
+                                            2 -> adapter.onResNumConfirmClickListener?.invoke(resNum) // ★ 追加
                                         }
                                     }
                                     .show()
@@ -268,18 +272,76 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             // 引用（> / >>）
             run {
                 val quotePattern = Pattern.compile("^(>+)(.+)$", Pattern.MULTILINE)
-                val m = quotePattern.matcher(contentString)
-                while (m.find()) {
-                    val marks = m.group(1) ?: continue
-                    val body = m.group(2)?.trim() ?: continue
-                    val s = m.start()
-                    val e = m.end()
-                    if (s >= 0 && e <= spannableBuilder.length) {
-                        val span = object : ClickableSpan() {
-                            override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks$body") }
+                val quoteMatcher = quotePattern.matcher(contentString)
+
+                while (quoteMatcher.find()) {
+                    val fullQuoteStart = quoteMatcher.start()
+                    val fullQuoteEnd = quoteMatcher.end()
+                    val marks = quoteMatcher.group(1) ?: continue
+                    val body = quoteMatcher.group(2) ?: continue // trim()しない生のbody
+
+                    // 引用された本文(body)内に "No.xxx" が含まれるかチェック
+                    val resNumMatcher = resNumPatternForClickableSpan.matcher(body)
+
+                    if (resNumMatcher.find()) {
+                        // --- ケース1: 引用内にレス番号が含まれる場合 ---
+                        val resNum = resNumMatcher.group(1) ?: continue
+
+                        // レス番号部分の絶対位置を計算
+                        // bodyの開始位置 + body内でのレス番号の開始位置
+                        val bodyStartOffset = quoteMatcher.start(2)
+                        val resNumStart = bodyStartOffset + resNumMatcher.start()
+                        val resNumEnd = bodyStartOffset + resNumMatcher.end()
+
+                        // 1. レス番号部分に「返信/削除メニュー」用のSpanを設定
+                        if (resNumStart >= 0 && resNumEnd <= spannableBuilder.length) {
+                            val resNumSpan = object : ClickableSpan() {
+                                override fun onClick(widget: View) {
+                                    val menuItems = arrayOf("返信", "削除", "確認")
+                                    AlertDialog.Builder(widget.context)
+                                        .setItems(menuItems) { _, which ->
+                                            when (which) {
+                                                0 -> onResNumClickListener?.invoke(resNum, ">No.$resNum")
+                                                1 -> onResNumClickListener?.invoke(resNum, "")
+                                                2 -> adapter.onResNumConfirmClickListener?.invoke(resNum)
+                                            }
+                                        }
+                                        .show()
+                                }
+                                override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
+                            }
+                            spannableBuilder.setSpan(resNumSpan, resNumStart, resNumEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+
+                        // 2. レス番号 "以外" の部分に「引用ポップアップ」用のSpanを設定
+                        val generalQuoteSpan = object : ClickableSpan() {
+                            override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${body.trim()}") }
                             override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
                         }
-                        spannableBuilder.setSpan(span, s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+                        // レス番号より前の部分 (例: `>>`)
+                        if (fullQuoteStart < resNumStart) {
+                            spannableBuilder.setSpan(generalQuoteSpan, fullQuoteStart, resNumStart, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                        // レス番号より後の部分 (例: ` No.123` の後のテキスト)
+                        if (resNumEnd < fullQuoteEnd) {
+                            // 2つ目のSpanはインスタンスを分ける必要があるため、再生成する
+                            val generalQuoteSpanAfter = object : ClickableSpan() {
+                                override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${body.trim()}") }
+                                override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
+                            }
+                            spannableBuilder.setSpan(generalQuoteSpanAfter, resNumEnd, fullQuoteEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+
+                    } else {
+                        // --- ケース2: 引用内にレス番号が含まれない通常の引用 ---
+                        if (fullQuoteStart >= 0 && fullQuoteEnd <= spannableBuilder.length) {
+                            val span = object : ClickableSpan() {
+                                override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${body.trim()}") }
+                                override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
+                            }
+                            spannableBuilder.setSpan(span, fullQuoteStart, fullQuoteEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                     }
                 }
             }

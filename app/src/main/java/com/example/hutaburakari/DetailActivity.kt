@@ -20,6 +20,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import android.content.DialogInterface
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import java.text.Normalizer
 
 class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
@@ -154,6 +155,10 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             launchReplyActivity(quotedBody)
         }
 
+        // setupRecyclerView() 内に追記
+        detailAdapter.onResNumConfirmClickListener = { resNum ->
+            showResReferencesPopup(resNum)
+        }
         // レス番号(No.xxx)タップ → 返信画面へ（引用文付き）
         //detailAdapter.onResNumClickListener = { _, resBody ->
         //    currentUrl?.let { url ->
@@ -591,5 +596,94 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         val list = viewModel.detailContent.value ?: return 0
         return list.count { it is DetailContent.Text || it is DetailContent.Image || it is DetailContent.Video }
     }
+
+    // 追加：No の参照（引用）を一覧表示
+    private fun showResReferencesPopup(resNum: String) {
+        val all = viewModel.detailContent.value ?: return
+
+        // 引用判定用のパターン：
+        // 新: 本文どこでもヒットOK（誤検知を抑えるための境界条件つき）
+        val patterns = listOf(
+            // 「No. 1234」, 「No.1234」など
+            Regex("""\bNo\.?\s*$resNum\b""", RegexOption.IGNORE_CASE),
+            // 「>>1234」
+            Regex("""\B>>\s*$resNum\b""", RegexOption.IGNORE_CASE),
+            // 予防的に“裸の数字”でも一致させる（前後が数字でないことを保証）
+            // 例: 1234 が 12345 に誤マッチしない
+            Regex("""(?<!\d)$resNum(?!\d)""")
+        )
+
+        // 「確認」ポップアップ用の検索ロジック（既存のヒット抽出箇所）を置き換え
+        val hitIndexes = all.withIndex().filter { (_, c) ->
+            c is DetailContent.Text && matchesResRef(c.htmlContent, resNum)
+        }.map { it.index }
+
+        if (hitIndexes.isEmpty()) {
+            Toast.makeText(this, "No.$resNum の引用は見つかりませんでした", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Text 本体＋直後の Image/Video を同梱
+        val result = mutableListOf<DetailContent>()
+        for (i in hitIndexes) {
+            result += all[i]
+            var j = i + 1
+            while (j < all.size) {
+                when (val c = all[j]) {
+                    is DetailContent.Image, is DetailContent.Video -> { result += c; j++ }
+                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+                }
+            }
+        }
+
+        // レス番号順に整序（見やすさ向上）
+        val ordered = result
+            .distinctBy { it.id }
+            .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
+
+        showContentListBottomSheet(ordered)
+    }
+
+    // 追加: 共通のマッチ関数
+    private fun matchesResRef(html: String, resNum: String): Boolean {
+        val plain = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT).toString()
+
+        // 見た目の差異を吸収（ZWSP, 全角, 記号類）
+        val norm = Normalizer.normalize(
+            plain
+                .replace("\u200B", "")  // ZWSP除去
+                .replace('　', ' ')      // 全角空白→半角
+                .replace('＞', '>')      // 全角> → >
+                .replace('≫', '>')      // ≫    → >
+            , Normalizer.Form.NFKC
+        )
+
+        val esc = Regex.escape(resNum)
+
+        val textPatterns = listOf(
+            // 1) No. の直接表記: "No.1234", "No 1234", "no.1234"
+            Regex("""\bNo\.?\s*$esc\b""", RegexOption.IGNORE_CASE),
+
+            // 2) 引用表記（行頭に '>' が1つ以上）
+            //    ">No.1234", ">>1234", ">>> No.1234" など
+            Regex("""^>+\s*(?:No\.?\s*)?$esc\b""",
+                setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE)),
+
+            // 3) 行頭以外でも ">>1234" / ">> No.1234" を拾う（安全側）
+            Regex("""\B>+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE),
+
+            // 4) 裸の数字（前後が数字じゃない）—必要な場合のみ残す
+            Regex("""(?<!\d)$esc(?!\d)""")
+        )
+        if (textPatterns.any { it.containsMatchIn(norm) }) return true
+
+        // HTML実体化や属性での参照（保険）
+        val htmlPatterns = listOf(
+            Regex("""data-res\s*=\s*["']\s*$esc\s*["']""", RegexOption.IGNORE_CASE),
+            Regex("""&gt;+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE) // &gt;&gt;No.1234
+        )
+        return htmlPatterns.any { it.containsMatchIn(html) }
+    }
+
 
 }
