@@ -602,7 +602,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             thumb.load(item.videoUrl) {
                 crossfade(true)
                 placeholder(R.drawable.ic_play_circle)
-                setParameter("video_frame_millis", 10000L) // 0ms位置のフレーム
+                setParameter("video_frame_millis", 0L) // 0ms位置のフレーム
                 // (オプション) もし問題が続くならエラー時の画像も指定すると原因究明に役立ちます
                 // error(R.drawable.ic_error)
             }
