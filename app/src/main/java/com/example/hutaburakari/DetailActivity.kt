@@ -31,6 +31,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     private lateinit var detailSearchManager: DetailSearchManager
     private lateinit var scrollStore: ScrollPositionStore
 
+    private var pendingScrollPosition: Pair<Int, Int>? = null
+
     private var currentUrl: String? = null
 
     private var isRequestingMore = false   // 追加：多重呼び出し防止
@@ -112,6 +114,11 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
         // 「そうだね」状態
         detailAdapter.getSodaNeState = { resNum -> viewModel.getSodaNeState(resNum) }
+
+        // 画像読み込み完了時にスクロール位置を再補正する
+        detailAdapter.onImageLoaded = {
+            applyPendingScroll()
+        }
 
         // 引用（> / >> / >>> ...）タップ → ポップアップ表示
         detailAdapter.onQuoteClickListener = { token ->
@@ -236,9 +243,12 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     // ★ onStart() を追加・オーバーライド
     override fun onStart() {
         super.onStart()
-        // アクティビティがバックグラウンドから復帰した場合も
-        // スクロール復元の対象とするためにフラグをリセットする
+        // アクティビティが表示されるたびにスクロール位置の復元を試みる
+        // isInitialLoadフラグはリロード時の復元制御に利用するため残す
         isInitialLoad = true
+        if (!suppressNextRestore) {
+            restoreScroll()
+        }
     }
 
     // -------------------------
@@ -251,17 +261,17 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             // ★ ここで ThreadEndTime を最後の1件に絞る
             val normalized = normalizeThreadEndTime(list)
 
-            // ★ これを submitList に渡す
-            detailAdapter.submitList(normalized)
+            // ↓↓↓★ submitListに完了コールバックを追加 ★↓↓↓
+            detailAdapter.submitList(normalized) {
+                // リストの更新が完了したタイミングで、保留中のスクロールを適用する
+                applyPendingScroll()
+            }
 
             // （必要なら）検索ナビの表示切替
             binding.searchNavigationControls.isVisible = detailSearchManager.isSearchActive()
 
-            // ★初回ロード時のみスクロールを復元するように変更
-            if (isInitialLoad && !suppressNextRestore) {
-                restoreScroll()
-                isInitialLoad = false
-            } else if (suppressNextRestore) {
+            // suppressNextRestoreフラグのリセットのみ残す
+            if (suppressNextRestore) {
                 suppressNextRestore = false
             }
         })
@@ -314,9 +324,27 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         if (!::scrollStore.isInitialized) return
         currentUrl?.let { url ->
             val (pos, off) = scrollStore.getScrollState(url)
+            // すぐにスクロールせず、保留中の位置としてセットする
+            pendingScrollPosition = pos to off
+            // 新しい適用メソッドを呼び出す
+            applyPendingScroll()
+        }
+    }
+
+    // ↓↓↓★ このメソッドをまるごと追加 ★↓↓↓
+    private fun applyPendingScroll() {
+        pendingScrollPosition?.let { (pos, off) ->
+            // アダプターにアイテムがなければ何もしない
+            if (detailAdapter.itemCount == 0) return
+
             binding.detailRecyclerView.post {
-                if (pos >= 0) layoutManager.scrollToPositionWithOffset(pos, off)
-                else layoutManager.scrollToPosition(0)
+                if (pos >= 0) {
+                    layoutManager.scrollToPositionWithOffset(pos, off)
+                } else {
+                    layoutManager.scrollToPosition(0)
+                }
+                // 適用したら保留状態を解除
+                pendingScrollPosition = null
             }
         }
     }

@@ -47,6 +47,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onIdClickListener: ((id: String) -> Unit)? = null
     // ★ 追加: 本文タップ時のコールバック
     var onBodyClickListener: ((quotedBody: String) -> Unit)? = null
+    var onImageLoaded: (() -> Unit)? = null
     private var currentSearchQuery: String? = null
 
     // “そうだね”状態問い合わせ（外部提供）
@@ -185,12 +186,14 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             VIEW_TYPE_IMAGE -> ImageViewHolder(
                 inf.inflate(R.layout.detail_item_image, parent, false),
                 onQuoteClickListener,
-                fileNamePattern
+                fileNamePattern,
+                onImageLoaded // ★ ViewHolderにコールバックを渡す
             )
             VIEW_TYPE_VIDEO -> VideoViewHolder(
                 inf.inflate(R.layout.detail_item_video, parent, false),
                 onQuoteClickListener,
-                fileNamePattern
+                fileNamePattern,
+                onImageLoaded // ★ この行を追加
             )
             VIEW_TYPE_THREAD_END -> ThreadEndTimeViewHolder(
                 inf.inflate(R.layout.detail_item_thread_end_time, parent, false),
@@ -576,7 +579,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     class ImageViewHolder(
         view: View,
         private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
-        private val fileNamePattern: Pattern
+        private val fileNamePattern: Pattern,
+        private val onImageLoaded: (() -> Unit)? // Add this parameter
     ) : RecyclerView.ViewHolder(view) {
 
         // 正: detail_item_image.xml の ID
@@ -587,6 +591,10 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             imageView.load(item.imageUrl) {
                 crossfade(true)
                 size(ViewSizeResolver(imageView))
+                listener(onSuccess = { _, _ ->
+                    // 画像の読み込みが成功したらActivityに通知する
+                    onImageLoaded?.invoke()
+                })
             }
 
             // ★ 画像タップで MediaViewActivity 起動
@@ -640,7 +648,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     class VideoViewHolder(
         view: View,
         private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
-        private val fileNamePattern: Pattern
+        private val fileNamePattern: Pattern,
+        private val onImageLoaded: (() -> Unit)? // ★ パラメータを追加
     ) : RecyclerView.ViewHolder(view) {
 
         // Viewの参照（変更なし）
@@ -665,6 +674,10 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 crossfade(true)
                 placeholder(R.drawable.ic_play_circle)
                 setParameter("video_frame_millis", 0L) // 0ms位置のフレーム
+                listener(onSuccess = { _, _ -> // ★ listenerを追加
+                    // 読み込みが成功したらActivityに通知する
+                    onImageLoaded?.invoke()
+                })
                 // (オプション) もし問題が続くならエラー時の画像も指定すると原因究明に役立ちます
                 // error(R.drawable.ic_error)
             }
