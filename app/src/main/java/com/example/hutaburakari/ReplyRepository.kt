@@ -6,12 +6,14 @@ import android.net.Uri
 import android.webkit.MimeTypeMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Cookie
 import org.jsoup.Jsoup
 import java.io.IOException
 import java.nio.charset.Charset
@@ -59,7 +61,15 @@ class ReplyRepository(
                 throw IllegalArgumentException("boardUrl が futaba.php を含んでいません: $boardUrl")
             }
             val threadPageUrl = baseBoardUrl + "res/$resto.htm"
-            val origin = baseBoardUrl.removeSuffix("/")
+            // ✅ Origin は「https://host[:port]」にする（パスは含めない）
+            val parsed = boardUrl.toHttpUrl()
+            val origin = buildString {
+                append(parsed.scheme).append("://").append(parsed.host)
+                val p = parsed.port
+                if (!((parsed.scheme == "https" && p == 443) || (parsed.scheme == "http" && p == 80))) {
+                    append(":").append(p)
+                }
+            }
 
             // hash は通常スレHTMLから抽出するが、extra に入っていればそれを最優先で利用
             // extra が無い場合のみフェッチ
@@ -88,7 +98,7 @@ class ReplyRepository(
             val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
 
             // 基本フォーム
-            bodyBuilder.addFormDataPart("mode", null, "regist".toShiftJISRequestBody())
+            //bodyBuilder.addFormDataPart("mode", null, "regist".toShiftJISRequestBody())
             bodyBuilder.addFormDataPart("resto", null, resto.toShiftJISRequestBody())
             name?.takeIf { it.isNotEmpty() }?.let {
                 bodyBuilder.addFormDataPart("name", null, it.toShiftJISRequestBody())
@@ -112,6 +122,9 @@ class ReplyRepository(
             // 添付/テキストのみ
             if (textOnly || upfileUri == null) {
                 bodyBuilder.addFormDataPart("textonly", null, "on".toShiftJISRequestBody())
+                // ✅ ブラウザ挙動に合わせて空の upfile も送る
+                val empty = ByteArray(0).toRequestBody("application/octet-stream".toMediaTypeOrNull())
+                bodyBuilder.addFormDataPart("upfile", "", empty)
             } else {
                 val fileName = guessFileName(context.contentResolver, upfileUri)
                 val mime = guessMimeType(context.contentResolver, upfileUri)
@@ -126,34 +139,91 @@ class ReplyRepository(
                 bodyBuilder.addFormDataPart(k, null, v.toShiftJISRequestBody())
             }
 
+            // ★ 最後に必ず固定：mode=regist（トークン内の mode を上書き）
+            bodyBuilder.addFormDataPart("mode", null, "regist".toShiftJISRequestBody())
+
             val finalBody = bodyBuilder.build()
-            val req = Request.Builder()
-                .url(boardUrl)
-                .header("Referer", threadPageUrl)
-                .header("Origin", origin)
+            //android.util.Log.d("ReplyRepo", "form extras: ${extra.keys}")
+
+            // -----------------------------
+            // Cookie 結合（WebView + OkHttpJar）
+            // -----------------------------
+            val cm = android.webkit.CookieManager.getInstance()
+            val webViewCookie = cm.getCookie(threadPageUrl) ?: cm.getCookie(origin)
+
+            val httpUrl = boardUrl.toHttpUrl()
+            val jarCookies: List<Cookie> = runCatching {
+                httpClient.cookieJar.loadForRequest(httpUrl)
+            }.getOrElse { emptyList() }
+            val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
+
+            fun parseCookieString(s: String?): Map<String, String> =
+                s?.split(";")?.mapNotNull {
+                    val i = it.indexOf('=')
+                    if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+                }?.toMap() ?: emptyMap()
+
+            // 同名キーは WebView を優先
+            val merged = parseCookieString(jarCookie) + parseCookieString(webViewCookie)
+            val mergedCookie = merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
+
+            // UA を WebView / TokenProvider と合わせる（ptua 整合）
+            val userAgent = Ua.STRING
+            //android.util.Log.d("ReplyRepo", "ua=$userAgent")
+
+            // ログ
+            //android.util.Log.d("ReplyRepo", "origin=$origin")
+            //android.util.Log.d("ReplyRepo", "referer=$threadPageUrl")
+            //android.util.Log.d("ReplyRepo", "cookie.len=${mergedCookie?.length ?: 0} cookie.head=${mergedCookie?.take(120)}")
+            //android.util.Log.d("ReplyRepo", "ua=$userAgent")
+
+            // リクエスト
+            val rb = Request.Builder()
+                .url(boardUrl)                    // 例: .../futaba.php?guid=on
+                .header("Referer", threadPageUrl) // ブラウザ成功例と同じく res/*.htm
+                .header("Origin", origin)         // ✅ 正しい Origin（パスなし）
+                .header("User-Agent", Ua.STRING)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                .header("X-Requested-With", "XMLHttpRequest") // responsemode=ajax と相性◎
                 .post(finalBody)
-                .build()
+            if (!mergedCookie.isNullOrBlank()) rb.header("Cookie", mergedCookie)
+            val req = rb.build()
 
             httpClient.newCall(req).execute().use { resp ->
+                val raw = resp.body?.bytes() ?: ByteArray(0)
+                // Futaba は Shift_JIS な短文HTML or JSON を返す
+                val sjis = try { String(raw, Charset.forName("Shift_JIS")) } catch (_: Exception) { String(raw) }
+                //android.util.Log.d("ReplyRepo", "resp.head=${sjis.trim().take(200)}")
                 if (!resp.isSuccessful) {
-                    val code = resp.code
-                    val msg = resp.message
-                    val raw = resp.body?.bytes() ?: ByteArray(0)
-                    // Futaba は SJIS HTML を返すので内容も見ておく
-                    val decoded = try {
-                        String(raw, Charset.forName("Shift_JIS"))
-                    } catch (_: Exception) {
-                        raw.toString()
+                    //android.util.Log.w("ReplyRepo", "HTTP ${resp.code} ${resp.message}")
+                    throw IOException("HTTP ${resp.code} ${resp.message}\n$sjis")
+                }
+
+                 val trimmed = sjis.trim()
+                // 1) JSON なら thisno を抜いて返す（例: {"status":"ok","thisno":1345629398,...}）
+                val jsonThisNo = Regex("""\"thisno\"\s*:\s*(\d{6,})""").find(trimmed)?.groupValues?.getOrNull(1)
+                if (jsonThisNo != null) {
+                    return@use "送信完了 No.$jsonThisNo"
+                }
+
+                // 2) HTML の「書きこみました/送信完了」系なら成功扱い。
+                //    Futaba の成功ページは非常に短い（content-length ~ 80-120）ことが多い。
+                if (!looksLikeError(trimmed)) {
+                    // HTML 側からも番号らしきものが拾えれば返す（数字6桁以上が多い）
+                    val htmlNo = Regex("""No\.?\s*(\d{6,})""").find(trimmed)?.groupValues?.getOrNull(1)
+                    if (!htmlNo.isNullOrBlank()) {
+                        return@use "送信完了 No.$htmlNo"
                     }
-                    throw IOException("HTTP ${code} ${msg}\n$decoded")
+                    // 番号が見つからなくても成功として文言を返す
+                    if (Regex("書きこみ|完了|送信完了").containsMatchIn(trimmed)) {
+                        return@use "送信完了"
+                    }
                 }
-                val bytes = resp.body?.bytes() ?: ByteArray(0)
-                // 成功時も HTML のことが多いので、エラー文言が無いか軽く見る
-                val html = String(bytes, Charset.forName("Shift_JIS"))
-                if (looksLikeError(html)) {
-                    throw IOException(parseErrorMessage(html))
-                }
-                html
+
+                // それ以外は失敗扱い
+                val head = if (trimmed.length > 200) trimmed.substring(0, 200) + "…" else trimmed
+                throw IOException("投稿に失敗しました: $head")
             }
         }
     }
@@ -181,11 +251,13 @@ class ReplyRepository(
         }
 
     private fun looksLikeError(html: String): Boolean {
-        val lowered = html.lowercase()
+        val t = html
         // 代表的な失敗キーワードを簡易判定（必要に応じて追加）
-        return listOf(
-            "エラー", "error", "連投", "本文なし", "不正", "ブロック", "拒否", "失敗"
-        ).any { lowered.contains(it.lowercase()) }
+        val words = listOf(
+            "エラー", "error", "連投", "本文なし", "不正", "ブロック", "拒否", "失敗",
+            "NG", "荒らし", "規制", "拒絶", "同一内容", "時間をおいて", "Cookie", "IP", "環境変数"
+        )
+        return words.any { t.contains(it, ignoreCase = true) }
     }
 
     private fun parseErrorMessage(html: String): String {
