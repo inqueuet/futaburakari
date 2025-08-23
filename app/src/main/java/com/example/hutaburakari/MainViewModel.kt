@@ -71,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
 
         // HEAD で一気に確認（並列は控えめに）
-        val limitedIO = Dispatchers.IO.limitedParallelism(2)
+        val limitedIO = Dispatchers.IO.limitedParallelism(4)
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {
@@ -176,10 +176,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cells = document.select("#cattable td")
 
         for (cell in cells) {
-            val linkTag = cell.select("a").first()
-            val imgTag = cell.select("img").first()
-            val smallTag = cell.select("small").first()
-            val fontTag = cell.select("font").first()
+            val linkTag = cell.selectFirst("a")
+            val imgTag = linkTag?.selectFirst("img")
+            val smallTag = cell.selectFirst("small")
+            val fontTag = cell.selectFirst("font")
 
             if (linkTag != null && imgTag != null && smallTag != null && fontTag != null) {
                 val imageUrl = imgTag.absUrl("src")
