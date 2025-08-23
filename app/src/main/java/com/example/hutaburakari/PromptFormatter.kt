@@ -1,8 +1,9 @@
 package com.example.hutaburakari
 
+import android.graphics.Typeface
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.Html
+import android.text.style.StyleSpan
 import org.json.JSONObject
 import org.json.JSONException
 
@@ -18,49 +19,59 @@ object PromptFormatter {
     fun parse(raw: String?): PromptViewData? {
         if (raw.isNullOrBlank()) return null
 
-        // 1) JSONパス（Animagine系/拡張JSON 等）
+        // 1) JSON 形式なら JSON 解析ルート
         parseJson(raw)?.let { return it }
 
-        // 2) テキストパス（"Negative prompt:" 区切り + 末尾メタ）
+        // 2) それ以外はレガシーテキスト解析ルート
         return parseLegacyText(raw)
     }
 
-    /** 表示用データ → HTML(CharSequence) */
-    fun toHtml(pd: PromptViewData): CharSequence {
-        val sb = StringBuilder()
+    /** 表示用データ → Spannable (見出し太字・改行区切り) */
+    fun toSpannable(pd: PromptViewData): CharSequence {
+        val sb = SpannableStringBuilder()
 
-        fun escape(s: String) = Html.escapeHtml(s)
+        fun addHeader(text: String) {
+            val start = sb.length
+            sb.append(text).append("\n")
+            sb.setSpan(
+                StyleSpan(Typeface.BOLD),
+                start,
+                start + text.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+
+        fun addLines(lines: List<String>) {
+            lines.forEach { line -> sb.append(line).append("\n") }
+        }
+
+        fun addKv(label: String, value: String) {
+            val start = sb.length
+            sb.append(label).append(": ")
+            sb.setSpan(
+                StyleSpan(Typeface.BOLD),
+                start,
+                start + label.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            sb.append(value).append("\n")
+        }
 
         if (pd.positive.isNotEmpty()) {
-            sb.append("<h4>Positive</h4>")
-            sb.append("<div>")
-            pd.positive.forEach { tag ->
-                sb.append("・").append(escape(tag)).append("<br>")
-            }
-            sb.append("</div>")
+            addHeader("Positive")
+            addLines(pd.positive)
+            sb.append("\n")
         }
         if (pd.negative.isNotEmpty()) {
-            sb.append("<h4>Negative</h4>")
-            sb.append("<div>")
-            pd.negative.forEach { tag ->
-                sb.append("・").append(escape(tag)).append("<br>")
-            }
-            sb.append("</div>")
+            addHeader("Negative")
+            addLines(pd.negative)
+            sb.append("\n")
         }
         if (pd.settings.isNotEmpty()) {
-            sb.append("<h4>Settings</h4>")
-            sb.append("<table>")
-            pd.settings.forEach { (k, v) ->
-                sb.append("<tr><td><b>")
-                    .append(escape(k))
-                    .append("</b></td><td>")
-                    .append(escape(v))
-                    .append("</td></tr>")
-            }
-            sb.append("</table>")
+            addHeader("Settings")
+            pd.settings.forEach { (k, v) -> addKv(k, v) }
         }
-
-        return Html.fromHtml(sb.toString(), Html.FROM_HTML_MODE_COMPACT)
+        return sb
     }
 
     // --------------------
@@ -73,7 +84,6 @@ object PromptFormatter {
         val negative = mutableListOf<String>()
         val settings = linkedMapOf<String, String>()
 
-        // 代表的キー
         val prompt = json.optString("prompt", null)
             ?: json.optJSONObject("caption")?.optString("base_caption", null)
             ?: json.optJSONObject("v4_prompt")?.optJSONObject("caption")?.optString("base_caption", null)
@@ -82,11 +92,9 @@ object PromptFormatter {
             ?: json.optString("uc", null)
             ?: json.optJSONObject("v4_negative_prompt")?.optJSONObject("caption")?.optString("base_caption", null)
 
-        // 文字列→タグ配列
         positive += splitTags(prompt)
         negative += splitTags(negativePrompt)
 
-        // よくあるパラメータ類
         appendIfExists(settings, "Steps", json, "steps", "num_inference_steps")
         appendIfExists(settings, "Sampler", json, "sampler", "Sampler")
         appendIfExists(settings, "CFG", json, "scale", "guidance_scale")
@@ -95,7 +103,8 @@ object PromptFormatter {
         val w = json.optInt("width", -1)
         val h = json.optInt("height", -1)
         if (w > 0 && h > 0) settings["Size"] = "${w}x$h"
-        json.optString("resolution", null)?.takeIf { it.contains("x", true) }?.let { settings.putIfAbsent("Size", it) }
+        json.optString("resolution", null)?.takeIf { it.contains("x", true) }
+            ?.let { settings.putIfAbsent("Size", it) }
 
         appendIfExists(settings, "Model", json, "Model", "model")
         appendIfExists(settings, "Model hash", json, "Model hash", "model_hash")
@@ -104,7 +113,6 @@ object PromptFormatter {
     }
 
     private fun findJsonObject(text: String): JSONObject? {
-        // テキスト内の最初の {...} を試す
         val start = text.indexOf('{')
         val end = text.lastIndexOf('}')
         if (start >= 0 && end > start) {
@@ -130,23 +138,18 @@ object PromptFormatter {
     private fun parseLegacyText(raw: String): PromptViewData {
         val settings = linkedMapOf<String, String>()
 
-        // 1) 「Negative prompt:」の“見出し行”を正規表現で見つける
-        //    見出しの直後から、次の見出し（大文字始まりの Key: など）や文末までを Negative 本文として抜く
-        val negHeaderRegex =
-            Regex("""(?im)^[ \t]*Negative\s*prompt\s*:?[ \t]*\r?\n?""") // 見出しそのもの
-        val metaHeaderRegex =
-            Regex("""(?im)^[ \t]*[A-Z][\w ]+:\s?.*$""") // Steps:, Sampler: などの見出し行
+        // Negative prompt 見出しを探す
+        val negHeaderRegex = Regex("""(?im)^[ \t]*Negative\s*prompt\s*:?[ \t]*\r?\n?""")
+        val metaHeaderRegex = Regex("""(?im)^[ \t]*[A-Z][\w ]+:\s?.*$""")
 
         val negHeaderMatch = negHeaderRegex.find(raw)
         val positiveBlob: String
         val negativeBlob: String?
 
         if (negHeaderMatch != null) {
-            // Positive は見出し開始位置より前だけを採用（←ここが重要）
             val positiveEnd = negHeaderMatch.range.first
             positiveBlob = raw.substring(0, positiveEnd)
 
-            // Negative 本文は見出し直後から、次のメタ見出し or 末尾まで
             val rest = raw.substring(negHeaderMatch.range.last + 1)
             val nextMeta = metaHeaderRegex.find(rest)
             negativeBlob = if (nextMeta != null) {
@@ -155,20 +158,16 @@ object PromptFormatter {
                 rest
             }
         } else {
-            // Negative 見出しがなければ全文を Positive 候補に
             positiveBlob = raw
             negativeBlob = null
         }
 
-        // 2) 設定行（Steps: など）を Positive / Negative から除去しておく
         val cleanedPositive = stripSettingsLines(positiveBlob)
         val cleanedNegative = stripSettingsLines(negativeBlob)
 
-        // 3) タグ分割（(tag:1.3) → "tag (×1.3)" 正規化）
         val positive = splitTags(cleanedPositive)
         val negative = splitTags(cleanedNegative)
 
-        // 4) 末尾の設定（メタ）を抽出
         fun pick(pattern: String, label: String) {
             Regex(pattern, RegexOption.IGNORE_CASE).find(raw)?.groupValues?.getOrNull(1)?.let {
                 settings[label] = it.trim()
@@ -185,17 +184,15 @@ object PromptFormatter {
         return PromptViewData(positive, negative, settings)
     }
 
-    /** Positive/Negative 本文から Steps: などの“見出し行”を取り除く */
     private fun stripSettingsLines(text: String?): String {
         if (text.isNullOrBlank()) return text ?: ""
-        // 見出しっぽい行（"Key: value"）を削除
         val headerLike = Regex("""(?im)^[ \t]*[A-Z][\w ]+:\s?.*$\r?\n?""")
         return text.replace(headerLike, "").trim()
     }
 
-    // 1) カンマ以外では絶対に区切らない。括弧()や山括弧<>の“内側”のカンマは無視する。
-//    改行や '、' があっても「括弧内」なら分割しない。
-//    最後に \(...\) / \, のエスケープだけ見た目用に戻す。
+    // --------------------
+    // タグ分割
+    // --------------------
     private fun splitTags(src: String?): List<String> {
         if (src.isNullOrBlank()) return emptyList()
         val out = mutableListOf<String>()
@@ -213,48 +210,34 @@ object PromptFormatter {
         src.forEach { ch ->
             if (escape) { sb.append(ch); escape = false; return@forEach }
             when (ch) {
-                '\\' -> { sb.append(ch); escape = true }     // バックスラッシュは保持（あとで見た目用に戻す）
+                '\\' -> { sb.append(ch); escape = true }
                 '('  -> { depthParen++; sb.append(ch) }
                 ')'  -> { depthParen = (depthParen - 1).coerceAtLeast(0); sb.append(ch) }
                 '<'  -> { depthAngle++; sb.append(ch) }
                 '>'  -> { depthAngle = (depthAngle - 1).coerceAtLeast(0); sb.append(ch) }
-
-                // “外側”のカンマだけ分割トリガ
                 ','  -> if (depthParen == 0 && depthAngle == 0) flush() else sb.append(ch)
-
-                // 改行や '、' は分割しない（そのまま文字として残す）
-                '\n','\r','、' -> sb.append(ch)
-
                 else -> sb.append(ch)
             }
         }
         flush()
 
-        // 見た目用にエスケープ解除
         return out.map { it.replace("\\(", "(").replace("\\)", ")").replace("\\,", ",") }
     }
 
-
-    // 2) “重み”の正規化は、(word:1.2) / word:1.2 の“素直な形”だけに限定。
-//    <lora:...:0.75> のようなタグや、コロンが2つ以上あるケースは“そのまま”返す。
     private fun normalizeWeight(tag: String): String {
         val t = tag.trim()
-        // LoRA 等の山括弧タグは触らない
         if (t.startsWith("<") && t.endsWith(">")) return t
 
-        // (xxx:1.23) かつ “中のコロンが1個だけ”のときだけ正規化
         val paren = Regex("""^\(([^():]+):\s*([0-9.]+)\)$""")
         paren.matchEntire(t)?.let { m ->
             return "${m.groupValues[1].trim()} (×${m.groupValues[2].trim()})"
         }
 
-        // xxx:1.23（括弧なし）で、コロンが1個だけ
         val plain = Regex("""^([^():]+):\s*([0-9.]+)$""")
         plain.matchEntire(t)?.let { m ->
             return "${m.groupValues[1].trim()} (×${m.groupValues[2].trim()})"
         }
 
-        // それ以外（例: "(exrtra ears hair intakes :3:1.25)" や "^_^" など）はそのまま
         return t
     }
 }

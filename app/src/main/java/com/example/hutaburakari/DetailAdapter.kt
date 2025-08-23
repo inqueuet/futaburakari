@@ -581,10 +581,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         view: View,
         private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
         private val fileNamePattern: Pattern,
-        private val onImageLoaded: (() -> Unit)? // Add this parameter
-    ) : RecyclerView.ViewHolder(view) {
+        private val onImageLoaded: (() -> Unit)?
+    ) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view) {
 
-        // 正: detail_item_image.xml の ID
         private val imageView: ImageView = view.findViewById(R.id.detailImageView)
         private val promptView: TextView? = view.findViewById(R.id.promptTextView)
 
@@ -592,13 +591,13 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val spinner: View? = view.findViewById(R.id.loadingSpinner)
 
         fun bind(item: DetailContent.Image) {
-            // --- 画像ローディング（元の挙動を維持） ---
+            // --- 画像ローディング ---
             spinner?.visibility = View.VISIBLE
             image.visibility = View.INVISIBLE
 
             image.layoutParams = image.layoutParams.apply {
                 width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = image.resources.displayMetrics.density.let { (100 * it).toInt() } // 100dp
+                height = (image.resources.displayMetrics.density * 100).toInt() // 100dp
             }
             image.scaleType = ImageView.ScaleType.CENTER_CROP
             image.adjustViewBounds = false
@@ -611,7 +610,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         image.visibility = View.INVISIBLE
                     },
                     onSuccess = { _, _ ->
-                        // 本来の比率で表示に戻す
                         image.layoutParams = image.layoutParams.apply {
                             width = ViewGroup.LayoutParams.MATCH_PARENT
                             height = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -621,43 +619,37 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
                         spinner?.visibility = View.GONE
                         image.visibility = View.VISIBLE
-
                         onImageLoaded?.invoke()
                     },
                     onError = { _, _ ->
                         spinner?.visibility = View.GONE
-                        image.visibility = View.VISIBLE // エラードローアブルがあれば見せる
+                        image.visibility = View.VISIBLE
                     }
                 )
             }
 
-            // ★ 画像タップで MediaViewActivity 起動（既存機能を維持）
+            // 画像タップでビューア
             imageView.setOnClickListener {
                 val ctx = it.context
                 val i = Intent(ctx, MediaViewActivity::class.java).apply {
                     putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_IMAGE)
                     putExtra(MediaViewActivity.EXTRA_URL, item.imageUrl)
-                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt) // サブタイトル等に表示
+                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt)
                 }
                 ctx.startActivity(i)
             }
 
-            // --- ここからプロンプト表示（整形＋折りたたみ付き） ---
+            // --- プロンプト表示 ---
             promptView?.let { tv ->
                 val raw = item.prompt.orEmpty()
                 if (raw.isNotEmpty()) {
-                    // 1) まずは「人間に読みやすい」整形を試す（JSON/テキスト両対応）
-                    val formatted = PromptFormatter.parse(raw)?.let { pd ->
-                        PromptFormatter.toHtml(pd) // CharSequence（Spanned）
-                    }
-
-                    if (formatted != null) {
-                        // 整形できたらそれを表示（表見出し・箇条書き・表形式）
-                        setPromptWithToggle(tv, formatted, maxLines = 8)
-                        // HTML内のリンク等を使うなら movementMethod を設定してもよい
-                        // tv.movementMethod = LinkMovementMethod.getInstance()
+                    val promptRaw = raw
+                    val pd = PromptFormatter.parse(raw)
+                    if (pd != null) {
+                        val pretty = PromptFormatter.toSpannable(pd)
+                        setPromptWithToggle(tv, pretty, maxLines = 8)
                     } else {
-                        // 2) フォールバック：生テキスト＋ファイル名クリック可能（元コードの振る舞い）
+                        // フォールバック：生テキストにファイル名スパンを付与
                         val sp = SpannableString(raw)
                         val m = fileNamePattern.matcher(raw)
                         while (m.find()) {
@@ -673,21 +665,30 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 sp.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                             }
                         }
-                        setPromptWithToggle(tv, sp, maxLines = 8)
                         tv.movementMethod = LinkMovementMethod.getInstance()
+                        setPromptWithToggle(tv, sp, maxLines = 8)
                     }
 
                     tv.visibility = View.VISIBLE
 
-                    // ★ 全体タップでテキストビューア起動（既存機能を温存）
-                    tv.setOnClickListener { v ->
-                        val ctx = v.context
-                        val i = Intent(ctx, MediaViewActivity::class.java).apply {
-                            putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
-                            putExtra(MediaViewActivity.EXTRA_TEXT, raw)
+                    // シングル＝折りたたみ/展開、ダブル＝全文ビューア
+                    tv.setSingleAndDoubleClickListener(
+                        onSingleClick = {
+                            val collapsed = tv.maxLines != Int.MAX_VALUE
+                            tv.maxLines = if (collapsed) Int.MAX_VALUE else 8
+                            // 再設定（Spannable が切れないように）
+                            val again = pd?.let { PromptFormatter.toSpannable(it) } ?: tv.text
+                            tv.text = again
+                        },
+                        onDoubleClick = {
+                            val ctx = tv.context
+                            val i = Intent(ctx, MediaViewActivity::class.java).apply {
+                                putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
+                                putExtra(MediaViewActivity.EXTRA_TEXT, promptRaw) // ★ raw を固定で渡す
+                            }
+                            ctx.startActivity(i)
                         }
-                        ctx.startActivity(i)
-                    }
+                    )
                 } else {
                     tv.text = ""
                     tv.visibility = View.GONE
@@ -695,7 +696,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             }
         }
 
-        // --- 折りたたみ/展開の簡易ユーティリティ（直書き版） ---
+        // 折りたたみ/展開の簡易ヘルパ（TextView内完結）
         private fun setPromptWithToggle(tv: TextView, content: CharSequence, maxLines: Int = 8) {
             tv.text = content
             tv.visibility = View.VISIBLE
@@ -703,13 +704,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 val needsFold = tv.lineCount > maxLines
                 if (!needsFold) return@post
                 tv.maxLines = maxLines
-                // タップで折りたたみ/展開をトグル
-                tv.setOnClickListener {
-                    val collapsed = tv.maxLines != Integer.MAX_VALUE
-                    tv.maxLines = if (collapsed) Integer.MAX_VALUE else maxLines
-                    // 展開時もテキストを保持
-                    tv.text = content
-                }
             }
         }
     }
@@ -720,27 +714,24 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val onQuoteClickListener: ((quotedToken: String) -> Unit)?,
         private val fileNamePattern: Pattern,
         private val onImageLoaded: (() -> Unit)?
-    ) : RecyclerView.ViewHolder(view) {
+    ) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view) {
 
         private val thumb: ImageView = view.findViewById(R.id.videoThumbView)
         private val spinner: View?   = view.findViewById(R.id.videoLoadingSpinner)
         private val promptView: TextView? = view.findViewById(R.id.promptTextView)
-        // （PlayerView は一覧では非表示のまま据え置き）
 
         fun bind(item: DetailContent.Video) {
-            // --- サムネ読み込み（既存の挙動に準拠） ---
+            // --- サムネローディング ---
             spinner?.visibility = View.VISIBLE
             thumb.visibility = View.INVISIBLE
 
-            // ローディング中は 100dp 固定のプレースホルダー比率
             thumb.layoutParams = thumb.layoutParams.apply {
                 width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = thumb.resources.displayMetrics.density.let { (100 * it).toInt() }
+                height = (thumb.resources.displayMetrics.density * 100).toInt() // 100dp
             }
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
             thumb.adjustViewBounds = false
 
-            // サムネとして動画URLを直接読み込む or 事前生成されたプレビュー画像URLがあればそちらを使う
             thumb.load(item.videoUrl) {
                 crossfade(true)
                 listener(
@@ -749,7 +740,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         thumb.visibility = View.INVISIBLE
                     },
                     onSuccess = { _, _ ->
-                        // 本来の比率で表示に戻す
                         thumb.layoutParams = thumb.layoutParams.apply {
                             width = ViewGroup.LayoutParams.MATCH_PARENT
                             height = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -768,28 +758,28 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 )
             }
 
-            // ★ サムネタップで MediaViewActivity（動画ビューア）起動
+            // サムネタップで動画ビューア
             thumb.setOnClickListener {
                 val ctx = it.context
                 val i = Intent(ctx, MediaViewActivity::class.java).apply {
                     putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_VIDEO)
                     putExtra(MediaViewActivity.EXTRA_URL, item.videoUrl)
-                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt) // キャプション等に利用
+                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt)
                 }
                 ctx.startActivity(i)
             }
 
-            // --- プロンプト表示（整形＋折りたたみ付き、Image版と同じ） ---
+            // --- プロンプト表示 ---
             promptView?.let { tv ->
                 val raw = item.prompt.orEmpty()
                 if (raw.isNotEmpty()) {
-                    val formatted = PromptFormatter.parse(raw)?.let { pd ->
-                        PromptFormatter.toHtml(pd)
-                    }
-                    if (formatted != null) {
-                        setPromptWithToggle(tv, formatted, maxLines = 8)
-                        // 必要ならリンク可：tv.movementMethod = LinkMovementMethod.getInstance()
+                    val promptRaw = raw
+                    val pd = PromptFormatter.parse(raw)
+                    if (pd != null) {
+                        val pretty = PromptFormatter.toSpannable(pd)
+                        setPromptWithToggle(tv, pretty, maxLines = 8)
                     } else {
+                        // フォールバック：生テキストにファイル名スパン
                         val sp = SpannableString(raw)
                         val m = fileNamePattern.matcher(raw)
                         while (m.find()) {
@@ -798,25 +788,36 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             val e = m.end()
                             if (s >= 0 && e <= sp.length) {
                                 val span = object : ClickableSpan() {
-                                    override fun onClick(widget: View) { onQuoteClickListener?.invoke(file) }
+                                    override fun onClick(widget: View) {
+                                        onQuoteClickListener?.invoke(file)
+                                    }
                                 }
                                 sp.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                             }
                         }
-                        setPromptWithToggle(tv, sp, maxLines = 8)
                         tv.movementMethod = LinkMovementMethod.getInstance()
+                        setPromptWithToggle(tv, sp, maxLines = 8)
                     }
+
                     tv.visibility = View.VISIBLE
 
-                    // 全体タップでテキストビューア
-                    tv.setOnClickListener { v ->
-                        val ctx = v.context
-                        val i = Intent(ctx, MediaViewActivity::class.java).apply {
-                            putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
-                            putExtra(MediaViewActivity.EXTRA_TEXT, raw)
+                    // シングル＝折りたたみ/展開、ダブル＝全文ビューア
+                    tv.setSingleAndDoubleClickListener(
+                        onSingleClick = {
+                            val collapsed = tv.maxLines != Int.MAX_VALUE
+                            tv.maxLines = if (collapsed) Int.MAX_VALUE else 8
+                            val again = pd?.let { PromptFormatter.toSpannable(it) } ?: tv.text
+                            tv.text = again
+                        },
+                        onDoubleClick = {
+                            val ctx = tv.context
+                            val i = Intent(ctx, MediaViewActivity::class.java).apply {
+                                putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
+                                putExtra(MediaViewActivity.EXTRA_TEXT, promptRaw) // ★ raw を固定で渡す
+                            }
+                            ctx.startActivity(i)
                         }
-                        ctx.startActivity(i)
-                    }
+                    )
                 } else {
                     tv.text = ""
                     tv.visibility = View.GONE
@@ -824,7 +825,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             }
         }
 
-        // 画像版と同じ簡易折りたたみヘルパ（直書き）
         private fun setPromptWithToggle(tv: TextView, content: CharSequence, maxLines: Int = 8) {
             tv.text = content
             tv.visibility = View.VISIBLE
@@ -832,11 +832,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 val needsFold = tv.lineCount > maxLines
                 if (!needsFold) return@post
                 tv.maxLines = maxLines
-                tv.setOnClickListener {
-                    val collapsed = tv.maxLines != Integer.MAX_VALUE
-                    tv.maxLines = if (collapsed) Integer.MAX_VALUE else maxLines
-                    tv.text = content
-                }
             }
         }
     }
