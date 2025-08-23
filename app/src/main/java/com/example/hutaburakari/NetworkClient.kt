@@ -1,10 +1,14 @@
 package com.example.hutaburakari
 
 import android.util.Log
+import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import okhttp3.Cookie
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -13,136 +17,158 @@ import java.nio.charset.Charset
 
 object NetworkClient {
 
-    // NetworkModuleで定義された、アプリで唯一のOkHttpClientインスタンスを使用する
-    private val httpClient = NetworkModule.okHttpClient
+    private val httpClient: OkHttpClient = NetworkModule.okHttpClient
 
-    /**
-     * 指定されたURLからHTMLドキュメントを取得します。
-     * OkHttpクライアントを使用するため、Cookieは自動的に管理されます。
-     */
-    suspend fun fetchDocument(url: String): Document {
-        return withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url(url)
-                .build()
+    // ===== Cookie ユーティリティ =====
+    private fun parseCookieString(s: String?): Map<String, String> =
+        s?.split(";")?.mapNotNull {
+            val i = it.indexOf('=')
+            if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+        }?.toMap() ?: emptyMap()
 
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("HTTPエラー: ${response.code} ${response.message}")
-                }
-                // レスポンスボディをShift_JISでデコードする
-                val responseBodyBytes = response.body!!.bytes()
-                val decodedBody = String(responseBodyBytes, Charset.forName("Shift_JIS"))
+    private fun mergeCookies(vararg cookieStrs: String?): String? {
+        val merged = cookieStrs.fold(emptyMap<String, String>()) { acc, s -> acc + parseCookieString(s) }
+        return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
+    }
 
-                // Jsoupでパースして返す
-                Jsoup.parse(decodedBody, url)
+    // ===== HTML GET（Shift_JIS） =====
+    suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .build()
+
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw IOException("HTTPエラー: ${resp.code} ${resp.message}")
             }
+            val bytes = resp.body!!.bytes()
+            val decoded = String(bytes, Charset.forName("Shift_JIS"))
+            Jsoup.parse(decoded, url)
         }
     }
 
-    /**
-     * 「そうだね」を送信します。
-     * ホスト名はRefererから動的に取得します。
-     */
+    // ===== そうだね =====
     suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
-        try {
-            val ref = referer.toHttpUrl()
-            val board = ref.pathSegments.firstOrNull() ?: return@withContext null
-            // 事前GETでCookieを確実に
-            runCatching { fetchDocument(referer) }
+        val refUrl = referer.toHttpUrl()
+        val board = refUrl.pathSegments.firstOrNull() ?: return@withContext null
+        val origin = "${refUrl.scheme}://${refUrl.host}"
+        val sdUrl = "$origin/sd.php?$board.$resNum"
 
-            val sdUrl = "https://${ref.host}/sd.php?$board.$resNum"
-            val req = Request.Builder().url(sdUrl).header("Referer", referer).get().build()
-            httpClient.newCall(req).execute().use { resp ->
+        // ★ ここを“必ず戻り値を返す式”に修正
+        suspend fun once(): Int? {
+            val jarCookies: List<Cookie> = runCatching { httpClient.cookieJar.loadForRequest(sdUrl.toHttpUrl()) }
+                .getOrElse { emptyList() }
+            val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
+
+            val cm = CookieManager.getInstance()
+            val webCookieRef = cm.getCookie(referer)
+            val webCookieOrg = cm.getCookie(origin)
+            val mergedCookie = mergeCookies(jarCookie, webCookieOrg, webCookieRef)
+
+            val req = Request.Builder()
+                .url(sdUrl)
+                .get()
+                .header("User-Agent", Ua.STRING)
+                .header("Referer", referer)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                .header("Cache-Control", "no-cache")
+                .header("Pragma", "no-cache")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .apply { if (!mergedCookie.isNullOrBlank()) header("Cookie", mergedCookie) }
+                .build()
+
+            // use の“戻り値”をそのまま返す
+            return httpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val raw = resp.body?.bytes() ?: return@use null
-                val text = runCatching { String(raw, java.nio.charset.Charset.forName("Shift_JIS")).trim() }
-                    .getOrElse { String(raw).trim() }
-                // ← ここがポイント：返ってきた数字=現在のそうだね数
+                val text = try {
+                    String(raw, Charset.forName("UTF-8")).trim()
+                } catch (_: Exception) {
+                    String(raw).trim()
+                }
                 text.toIntOrNull()
             }
-        } catch (_: Exception) { null }
+        }
+
+        val first = once()
+        if (first != null) return@withContext first
+
+        runCatching { fetchDocument(referer) }
+        delay(1000L)
+        return@withContext once()
     }
 
-    /**
-     * カタログの設定をPOST送信します。
-     */
+    // ===== カタログ設定 =====
     suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
         withContext(Dispatchers.IO) {
             val settingsUrl = "${boardBaseUrl}futaba.php?mode=catset"
-
-            // POSTするフォームデータを作成
             val formBody = FormBody.Builder().apply {
-                settings.forEach { (key, value) ->
-                    add(key, value)
-                }
+                settings.forEach { (k, v) -> add(k, v) }
             }.build()
 
-            val request = Request.Builder()
+            val req = Request.Builder()
                 .url(settingsUrl)
                 .post(formBody)
+                .header("User-Agent", Ua.STRING)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                 .build()
 
-            // レスポンスは特に使わないので、リクエストを投げるだけ
-            httpClient.newCall(request).execute().use { response ->
-                Log.d("NetworkClient", "applySettings: Response status code: ${response.code}")
+            httpClient.newCall(req).execute().use { resp ->
+                Log.d("NetworkClient", "applySettings: HTTP ${resp.code}")
             }
         }
     }
 
-    /**
-     * レス削除をPOSTします。
-     * @param postUrl 例: https://<host>/<board>/futaba.php?guid=on
-     * @param referer スレURL（削除対象レスがあるページ）
-     * @param resNum  削除するレス番号（例: "123456789"）
-     * @param pwd     削除キー（AppPreferencesから取得した値）
-     * @return サーバが "OK"（2バイト/Shift_JIS）等を返しHTTP 200の場合 true
-     */
+    // ===== レス削除 =====
     suspend fun deletePost(
         postUrl: String,
         referer: String,
         resNum: String,
         pwd: String
-    ): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                val form = FormBody.Builder()
-                    .add(resNum, "delete")
-                    .add("responsemode", "ajax")
-                    .add("pwd", pwd)
-                    .add("onlyimgdel", "")   // 画像のみ削除しないなら空
-                    .add("mode", "usrdel")
-                    .build()
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val form = FormBody.Builder()
+                .add(resNum, "delete")
+                .add("responsemode", "ajax")
+                .add("pwd", pwd)
+                .add("onlyimgdel", "")
+                .add("mode", "usrdel")
+                .build()
 
-                val origin = "${referer.toHttpUrl().scheme}://${referer.toHttpUrl().host}"
+            val ref = referer.toHttpUrl()
+            val origin = "${ref.scheme}://${ref.host}"
 
-                val req = Request.Builder()
-                    .url(postUrl) // .../futaba.php?guid=on
-                    .post(form)
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", origin)
-                    .header("Referer", referer)
-                    .build()
+            val req = Request.Builder()
+                .url(postUrl)
+                .post(form)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Origin", origin)
+                .header("Referer", referer)
+                .header("User-Agent", Ua.STRING)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                .build()
 
-                httpClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        Log.w("NetworkClient", "deletePost: HTTP ${resp.code}")
-                        return@use false
-                    }
-                    // Futaba系は本文 "OK"（Shift_JISで2バイト）パターンあり
-                    val bodyBytes = resp.body?.bytes() ?: return@use false
-                    val okBySize = bodyBytes.size == 2
-                    val okByText = runCatching {
-                        String(bodyBytes, Charset.forName("Shift_JIS")).trim()
-                            .equals("OK", ignoreCase = true)
-                    }.getOrDefault(false)
-                    okBySize || okByText
+            return@withContext httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.w("NetworkClient", "deletePost: HTTP ${resp.code}")
+                    return@use false
                 }
-            } catch (e: Exception) {
-                Log.e("NetworkClient", "deletePostで例外発生", e)
-                false
+                val body = resp.body?.bytes() ?: return@use false
+                val okBySize = body.size == 2
+                val okByText = runCatching {
+                    String(body, Charset.forName("Shift_JIS")).trim().equals("OK", true)
+                }.getOrDefault(false)
+                okBySize || okByText
             }
+        } catch (e: Exception) {
+            Log.e("NetworkClient", "deletePostで例外発生", e)
+            return@withContext false
         }
     }
-
 }
