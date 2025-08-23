@@ -193,27 +193,68 @@ object PromptFormatter {
         return text.replace(headerLike, "").trim()
     }
 
-    // "a, b, (c:1.3)" など → ["a", "b", "c (×1.3)"]
+    // 1) カンマ以外では絶対に区切らない。括弧()や山括弧<>の“内側”のカンマは無視する。
+//    改行や '、' があっても「括弧内」なら分割しない。
+//    最後に \(...\) / \, のエスケープだけ見た目用に戻す。
     private fun splitTags(src: String?): List<String> {
         if (src.isNullOrBlank()) return emptyList()
-        return src.split(',', '、', '\n')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .map { normalizeWeight(it) }
+        val out = mutableListOf<String>()
+        val sb = StringBuilder()
+        var depthParen = 0
+        var depthAngle = 0
+        var escape = false
+
+        fun flush() {
+            val raw = sb.toString().trim()
+            if (raw.isNotEmpty()) out += normalizeWeight(raw)
+            sb.setLength(0)
+        }
+
+        src.forEach { ch ->
+            if (escape) { sb.append(ch); escape = false; return@forEach }
+            when (ch) {
+                '\\' -> { sb.append(ch); escape = true }     // バックスラッシュは保持（あとで見た目用に戻す）
+                '('  -> { depthParen++; sb.append(ch) }
+                ')'  -> { depthParen = (depthParen - 1).coerceAtLeast(0); sb.append(ch) }
+                '<'  -> { depthAngle++; sb.append(ch) }
+                '>'  -> { depthAngle = (depthAngle - 1).coerceAtLeast(0); sb.append(ch) }
+
+                // “外側”のカンマだけ分割トリガ
+                ','  -> if (depthParen == 0 && depthAngle == 0) flush() else sb.append(ch)
+
+                // 改行や '、' は分割しない（そのまま文字として残す）
+                '\n','\r','、' -> sb.append(ch)
+
+                else -> sb.append(ch)
+            }
+        }
+        flush()
+
+        // 見た目用にエスケープ解除
+        return out.map { it.replace("\\(", "(").replace("\\)", ")").replace("\\,", ",") }
     }
 
+
+    // 2) “重み”の正規化は、(word:1.2) / word:1.2 の“素直な形”だけに限定。
+//    <lora:...:0.75> のようなタグや、コロンが2つ以上あるケースは“そのまま”返す。
     private fun normalizeWeight(tag: String): String {
-        // (word:1.2) / word:1.2 → "word (×1.2)"
-        val rx1 = Regex("""^\((.+?):\s*([0-9.]+)\)$""")
-        val rx2 = Regex("""^(.+?):\s*([0-9.]+)$""")
-        rx1.matchEntire(tag)?.let {
-            val (w, s) = it.destructured
-            return "${w.trim()} (×${s.trim()})"
+        val t = tag.trim()
+        // LoRA 等の山括弧タグは触らない
+        if (t.startsWith("<") && t.endsWith(">")) return t
+
+        // (xxx:1.23) かつ “中のコロンが1個だけ”のときだけ正規化
+        val paren = Regex("""^\(([^():]+):\s*([0-9.]+)\)$""")
+        paren.matchEntire(t)?.let { m ->
+            return "${m.groupValues[1].trim()} (×${m.groupValues[2].trim()})"
         }
-        rx2.matchEntire(tag)?.let {
-            val (w, s) = it.destructured
-            return "${w.trim()} (×${s.trim()})"
+
+        // xxx:1.23（括弧なし）で、コロンが1個だけ
+        val plain = Regex("""^([^():]+):\s*([0-9.]+)$""")
+        plain.matchEntire(t)?.let { m ->
+            return "${m.groupValues[1].trim()} (×${m.groupValues[2].trim()})"
         }
-        return tag
+
+        // それ以外（例: "(exrtra ears hair intakes :3:1.25)" や "^_^" など）はそのまま
+        return t
     }
 }
