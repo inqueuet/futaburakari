@@ -100,7 +100,8 @@ class ReplyActivity : AppCompatActivity() {
             val name = binding.inputName.text?.toString()
             val email = binding.inputEmail.text?.toString()
             val sub = binding.inputSub.text?.toString()
-            val com = binding.inputComment.text?.toString().orEmpty()
+            val rawCom = binding.inputComment.text?.toString().orEmpty()
+            val com = sanitizeComment(rawCom) // ← 改行・不可視文字を正規化してから送る
 
             // 入力欄に値があればそれを優先、空なら保存済みを再適用
             val inputPwdField = binding.inputPassword.text?.toString()
@@ -159,6 +160,20 @@ class ReplyActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    // 入力本文の改行や不可視文字を正規化（Shift_JISで化けやすい文字を排除/統一）
+    private fun sanitizeComment(text: String): String {
+        return text
+            // 改行コードをLFに統一
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            // Unicodeの改行系（U2028 行区切り, U2029 段落区切り）をLFへ
+            .replace(Regex("[\\u2028\\u2029]"), "\n")
+            // ゼロ幅スペース類（U200B..U200D, UFEFF）を除去
+            .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
+            // ついでに不可視制御文字のうち、印字不能で化けやすいものを間引く（TABは残す）
+            .replace(Regex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]"), "")
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
