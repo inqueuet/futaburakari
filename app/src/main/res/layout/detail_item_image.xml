@@ -7,12 +7,28 @@
     android:paddingEnd="8dp"
     android:paddingBottom="8dp">
 
-    <ImageView
-        android:id="@+id/detailImageView"
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:adjustViewBounds="true"
-        android:contentDescription="詳細画像" />
+        android:layout_height="wrap_content">
+
+        <ImageView
+            android:id="@+id/detailImageView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:adjustViewBounds="true"
+            android:visibility="invisible" />
+
+        <!-- 左上に重ねるスピナー -->
+        <ProgressBar
+            android:id="@+id/loadingSpinner"
+            style="?android:attr/progressBarStyleLarge"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_gravity="left|top"
+            android:clickable="false"
+            android:focusable="false" />
+    </FrameLayout>
+
     <TextView
         android:id="@+id/promptTextView"
         android:layout_width="match_parent"

@@ -587,14 +587,48 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val imageView: ImageView = view.findViewById(R.id.detailImageView)
         private val promptView: TextView? = view.findViewById(R.id.promptTextView)
 
+        private val image: ImageView = view.findViewById(R.id.detailImageView)
+        private val spinner: View? = view.findViewById(R.id.loadingSpinner)
+
         fun bind(item: DetailContent.Image) {
-            imageView.load(item.imageUrl) {
+            // 初期状態：スピナー表示、画像は見せない（100dpでプレースホールド）
+            spinner?.visibility = View.VISIBLE
+            image.visibility = View.INVISIBLE
+
+            // 読み込み中は 100dp * 100dp で固定表示
+            image.layoutParams = image.layoutParams.apply {
+                width = ViewGroup.LayoutParams.MATCH_PARENT
+                height = image.resources.displayMetrics.density.let { (100 * it).toInt() } // 100dp
+            }
+            image.scaleType = ImageView.ScaleType.CENTER_CROP
+            image.adjustViewBounds = false
+
+            image.load(item.imageUrl) {
                 crossfade(true)
-                size(ViewSizeResolver(imageView))
-                listener(onSuccess = { _, _ ->
-                    // 画像の読み込みが成功したらActivityに通知する
-                    onImageLoaded?.invoke()
-                })
+                listener(
+                    onStart = {
+                        spinner?.visibility = View.VISIBLE
+                        image.visibility = View.INVISIBLE
+                    },
+                    onSuccess = { _, _ ->
+                        // 本来の比率で表示に戻す
+                        image.layoutParams = image.layoutParams.apply {
+                            width = ViewGroup.LayoutParams.MATCH_PARENT
+                            height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        }
+                        image.adjustViewBounds = true
+                        image.scaleType = ImageView.ScaleType.FIT_CENTER
+
+                        spinner?.visibility = View.GONE
+                        image.visibility = View.VISIBLE
+
+                        onImageLoaded?.invoke()
+                    },
+                    onError = { _, _ ->
+                        spinner?.visibility = View.GONE
+                        image.visibility = View.VISIBLE // エラードローアブルがあれば見せる
+                    }
+                )
             }
 
             // ★ 画像タップで MediaViewActivity 起動
@@ -657,6 +691,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val promptView: TextView? = view.findViewById(R.id.promptTextView)
         private val thumb: ImageView = view.findViewById(R.id.videoThumbView)
 
+        private val spinner: View? = view.findViewById(R.id.videoLoadingSpinner)
+
         // ★★★ 修正点 1: ハードウェアアクセラレーション対策 ★★★
         // initブロックを追加して、サムネイル用ImageViewの描画設定を行う
         init {
@@ -664,22 +700,43 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         }
 
         fun bind(item: DetailContent.Video) {
-            // ★★★ 修正点 2: レイアウトの競合対策 ★★★
-            // PlayerViewを非表示にして、サムネイルが隠れないようにする
-            playerView.visibility = View.GONE
-            thumb.visibility = View.VISIBLE
+            spinner?.visibility = View.VISIBLE
+            thumb.visibility = View.INVISIBLE
 
-            // Coilによるサムネイル読み込み（変更なし）
+            // 読み込み中は 100dp * 100dp
+            thumb.layoutParams = thumb.layoutParams.apply {
+                width = ViewGroup.LayoutParams.MATCH_PARENT
+                height = thumb.resources.displayMetrics.density.let { (100 * it).toInt() }
+            }
+            thumb.scaleType = ImageView.ScaleType.CENTER_CROP
+            thumb.adjustViewBounds = false
+
+            // 動画のサムネイルを Coil で取得（環境に合わせて VideoFrameDecoder などが有効なら自動）
             thumb.load(item.videoUrl) {
                 crossfade(true)
-                placeholder(R.drawable.ic_play_circle)
-                setParameter("video_frame_millis", 0L) // 0ms位置のフレーム
-                listener(onSuccess = { _, _ -> // ★ listenerを追加
-                    // 読み込みが成功したらActivityに通知する
-                    onImageLoaded?.invoke()
-                })
-                // (オプション) もし問題が続くならエラー時の画像も指定すると原因究明に役立ちます
-                // error(R.drawable.ic_error)
+                listener(
+                    onStart = {
+                        spinner?.visibility = View.VISIBLE
+                        thumb.visibility = View.INVISIBLE
+                    },
+                    onSuccess = { _, _ ->
+                        thumb.layoutParams = thumb.layoutParams.apply {
+                            width = ViewGroup.LayoutParams.MATCH_PARENT
+                            height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        }
+                        thumb.adjustViewBounds = true
+                        thumb.scaleType = ImageView.ScaleType.FIT_CENTER
+
+                        spinner?.visibility = View.GONE
+                        thumb.visibility = View.VISIBLE
+
+                        onImageLoaded?.invoke()
+                    },
+                    onError = { _, _ ->
+                        spinner?.visibility = View.GONE
+                        thumb.visibility = View.VISIBLE
+                    }
+                )
             }
 
             // クリックリスナー（変更なし）

@@ -8,14 +8,27 @@
     android:paddingEnd="8dp"
     android:paddingBottom="8dp">
 
-    <!-- ★ 追加：動画サムネイル表示用 -->
-    <ImageView
-        android:id="@+id/videoThumbView"
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:adjustViewBounds="true"
-        android:scaleType="centerCrop"
-        android:contentDescription="@string/video_thumbnail" />
+        android:layout_height="wrap_content">
+
+        <ImageView
+            android:id="@+id/videoThumbView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:adjustViewBounds="true"
+            android:scaleType="centerCrop"
+            android:visibility="invisible" />
+
+        <ProgressBar
+            android:id="@+id/videoLoadingSpinner"
+            style="?android:attr/progressBarStyleLarge"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_gravity="left|top"
+            android:clickable="false"
+            android:focusable="false" />
+    </FrameLayout>
 
     <!-- 既存：PlayerView（将来のインライン再生用に残す / 一覧では非表示） -->
     <androidx.media3.ui.PlayerView
