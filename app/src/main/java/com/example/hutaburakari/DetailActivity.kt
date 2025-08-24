@@ -340,7 +340,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             val key = UrlNormalizer.threadKey(url)     // ★ ここで正規化
             val (pos, off) = scrollStore.getScrollState(key)
             pendingScrollPosition = pos to off
-            applyPendingScroll()
+            //applyPendingScroll()
         }
     }
 
