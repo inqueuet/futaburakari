@@ -226,17 +226,11 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val zwsp: String
     ) : RecyclerView.ViewHolder(view) {
 
-        // 正: detail_item_text.xml の ID
         private val textView: TextView = view.findViewById(R.id.detailTextView)
 
         fun bind(item: DetailContent.Text, searchQuery: String?) {
-            // 主No. をHTMLから抽出（例: "323724"）
             val mainResNum = adapter.extractResNo(item.htmlContent)
-
-            // サーバ返り値をHTMLへ注入（無ければ原文のまま）
             val htmlAppliedSodane = adapter.injectSodaneCount(item.htmlContent, mainResNum)
-
-            // ★ ここがポイント：以降は常に「注入後のHTML」を使う
             val htmlWithZwsp = insertZwspForPadding(htmlAppliedSodane)
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
             val spannableBuilder = SpannableStringBuilder(textFromHtmlWithZwsp)
@@ -260,7 +254,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                         when (which) {
                                             0 -> onResNumClickListener?.invoke(resNum, ">No.$resNum")
                                             1 -> onResNumClickListener?.invoke(resNum, "")
-                                            2 -> adapter.onResNumConfirmClickListener?.invoke(resNum) // ★ 追加
+                                            2 -> adapter.onResNumConfirmClickListener?.invoke(resNum)
                                         }
                                     }
                                     .show()
@@ -281,22 +275,40 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     val fullQuoteStart = quoteMatcher.start()
                     val fullQuoteEnd = quoteMatcher.end()
                     val marks = quoteMatcher.group(1) ?: continue
-                    val body = quoteMatcher.group(2) ?: continue // trim()しない生のbody
+                    val body = quoteMatcher.group(2) ?: continue
 
-                    // 引用された本文(body)内に "No.xxx" が含まれるかチェック
-                    val resNumMatcher = resNumPatternForClickableSpan.matcher(body)
+                    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    // ★ 修正点：ゼロ幅スペース(zwsp)を除去してから判定する
+                    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    val cleanedBody = body.replace(zwsp, "").trim()
 
+                    val idPattern = Pattern.compile("^ID:([\\w./+]+)")
+                    val idMatcher = idPattern.matcher(cleanedBody) // 綺麗にした文字列で判定
+
+                    if (idMatcher.find()) {
+                        val id = idMatcher.group(1) ?: continue
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) {
+                                adapter.onIdClickListener?.invoke(id)
+                            }
+                            override fun updateDrawState(ds: TextPaint) {
+                                ds.isUnderlineText = true
+                            }
+                        }
+                        spannableBuilder.setSpan(span, fullQuoteStart, fullQuoteEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        continue
+                    }
+
+                    // --- IDでなかった場合にのみ、以下の通常の引用処理が実行される ---
+
+                    val trimmedBody = body.trim() // 通常のtrimも念のため残す
+                    val resNumMatcher = resNumPatternForClickableSpan.matcher(trimmedBody)
                     if (resNumMatcher.find()) {
-                        // --- ケース1: 引用内にレス番号が含まれる場合 ---
                         val resNum = resNumMatcher.group(1) ?: continue
-
-                        // レス番号部分の絶対位置を計算
-                        // bodyの開始位置 + body内でのレス番号の開始位置
                         val bodyStartOffset = quoteMatcher.start(2)
                         val resNumStart = bodyStartOffset + resNumMatcher.start()
                         val resNumEnd = bodyStartOffset + resNumMatcher.end()
 
-                        // 1. レス番号部分に「返信/削除メニュー」用のSpanを設定
                         if (resNumStart >= 0 && resNumEnd <= spannableBuilder.length) {
                             val resNumSpan = object : ClickableSpan() {
                                 override fun onClick(widget: View) {
@@ -316,31 +328,26 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             spannableBuilder.setSpan(resNumSpan, resNumStart, resNumEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
 
-                        // 2. レス番号 "以外" の部分に「引用ポップアップ」用のSpanを設定
                         val generalQuoteSpan = object : ClickableSpan() {
-                            override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${body.trim()}") }
+                            override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${trimmedBody}") }
                             override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
                         }
 
-                        // レス番号より前の部分 (例: `>>`)
                         if (fullQuoteStart < resNumStart) {
                             spannableBuilder.setSpan(generalQuoteSpan, fullQuoteStart, resNumStart, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
-                        // レス番号より後の部分 (例: ` No.123` の後のテキスト)
                         if (resNumEnd < fullQuoteEnd) {
-                            // 2つ目のSpanはインスタンスを分ける必要があるため、再生成する
                             val generalQuoteSpanAfter = object : ClickableSpan() {
-                                override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${body.trim()}") }
+                                override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${trimmedBody}") }
                                 override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
                             }
                             spannableBuilder.setSpan(generalQuoteSpanAfter, resNumEnd, fullQuoteEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
 
                     } else {
-                        // --- ケース2: 引用内にレス番号が含まれない通常の引用 ---
                         if (fullQuoteStart >= 0 && fullQuoteEnd <= spannableBuilder.length) {
                             val span = object : ClickableSpan() {
-                                override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${body.trim()}") }
+                                override fun onClick(widget: View) { onQuoteClickListener?.invoke("$marks${trimmedBody}") }
                                 override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = false }
                             }
                             spannableBuilder.setSpan(span, fullQuoteStart, fullQuoteEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -367,35 +374,29 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 }
             }
 
+            // そうだね
             run {
                 val m = sodaNePatternForClick.matcher(contentString)
                 while (m.find()) {
                     val resNum = m.group(1) ?: continue
                     val matchStart = m.start()
                     val matchEnd = m.end()
-
-                    // マッチ範囲の中で、クリック対象となるトークン（+ または そうだねxN）の位置だけに span を貼る
                     val matchedText = contentString.substring(matchStart, matchEnd)
-
-                    // “+ / ＋ / そうだねx数字” を探す
                     val tokenRegex = Regex("(?:[+＋]|そうだねx\\d+)")
                     val tokenMatch = tokenRegex.find(matchedText) ?: continue
-
                     val tokenAbsStart = matchStart + tokenMatch.range.first
                     val tokenAbsEnd   = matchStart + tokenMatch.range.last + 1
 
                     if (tokenAbsStart >= 0 && tokenAbsEnd <= spannableBuilder.length) {
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
-                                onSodaNeClickListener?.invoke(resNum) // ← No の数字を渡す
+                                onSodaNeClickListener?.invoke(resNum)
                             }
                             override fun updateDrawState(ds: TextPaint) {
-                                ds.isUnderlineText = true // 見た目はお好みで
+                                ds.isUnderlineText = true
                             }
                         }
-                        spannableBuilder.setSpan(
-                            span, tokenAbsStart, tokenAbsEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                        )
+                        spannableBuilder.setSpan(span, tokenAbsStart, tokenAbsEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                 }
             }
@@ -410,19 +411,12 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     if (s >= 0 && e <= spannableBuilder.length) {
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
-                                // 「返信 / 確認」メニューを表示
                                 val items = arrayOf("返信", "確認")
                                 AlertDialog.Builder(widget.context)
                                     .setItems(items) { _, which ->
                                         when (which) {
-                                            0 -> {
-                                                // 返信: ">ファイル名" をコメントに自動入力して ReplyActivity 起動
-                                                adapter.onBodyClickListener?.invoke(">$file")
-                                            }
-                                            1 -> {
-                                                // 確認: 既存フラグメントで引用された中身を表示（従来動作）
-                                                onQuoteClickListener?.invoke(file)
-                                            }
+                                            0 -> adapter.onBodyClickListener?.invoke(">$file")
+                                            1 -> onQuoteClickListener?.invoke(file)
                                         }
                                     }
                                     .show()
@@ -478,7 +472,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             textView.text = spannableBuilder
             textView.movementMethod = LinkMovementMethod.getInstance()
 
-            // ★ 置き換え：本文“長押し”でメニュー
+            // 本文長押しでメニュー
             textView.setOnLongClickListener { v ->
                 val ctx = v.context
                 val bodyOnly = extractPlainBody(item.htmlContent)
@@ -489,12 +483,10 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     .setItems(items) { _, which ->
                         when (which) {
                             0 -> {
-                                // 引用付きで返信
                                 val quotedBody = bodyOnly.lines().joinToString("\n") { ">$it" }
                                 adapter.onBodyClickListener?.invoke(quotedBody)
                             }
                             1 -> {
-                                // コピー
                                 val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 cm.setPrimaryClip(ClipData.newPlainText("text", bodyOnly))
                                 Toast.makeText(ctx, "コピーしました", Toast.LENGTH_SHORT).show()
@@ -502,7 +494,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         }
                     }
                     .show()
-                true // 長押しイベントを消費
+                true
             }
         }
 
@@ -510,34 +502,11 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
         private fun extractPlainBody(html: String): String {
             val plain = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT).toString()
-
-            // 例: 08/21/25(水)23:11:22 のような投稿メタ時刻
             val dateRegex = Regex("""\d{2}/\d{2}/\d{2}\([^)]+\)\d{2}:\d{2}:\d{2}""")
+            val fileExtRegex = Regex("""\.(?:jpg|jpeg|png|gif|webp|bmp|svg|webm|mp4|mov|mkv|avi|wmv|flv)\b""", RegexOption.IGNORE_CASE)
+            val sizeSuffixRegex = Regex("""[ \t]*[\\-ー−―–—]?\s*\(\s*\d+(?:\.\d+)?\s*(?:[kKmMgGtT]?[bB])\s*\)""")
+            val headLabelRegex = Regex("""^(?:画像|動画|ファイル名|ファイル|添付|サムネ|サムネイル)(?:\s*ファイル名)?\s*[:：]""", RegexOption.IGNORE_CASE)
 
-            // 画像/動画/ファイル拡張子（表示説明に混ざるのを検出する用）
-            val fileExtRegex = Regex(
-                """\.(?:jpg|jpeg|png|gif|webp|bmp|svg|webm|mp4|mov|mkv|avi|wmv|flv)\b""",
-                RegexOption.IGNORE_CASE
-            )
-
-            // -(123B), -(1.2MB) などサイズ表記（全角/半角/各種ダッシュを許容）
-            val sizeSuffixRegex = Regex(
-                """[ \t]*[\\-ー−―–—]?\s*\(\s*\d+(?:\.\d+)?\s*(?:[kKmMgGtT]?[bB])\s*\)"""
-            )
-
-            // ✅ 行頭ラベル（「画像」「動画」「ファイル名」「添付」「サムネ」など＋任意の「ファイル名」語）
-            //   例:
-            //   - 画像: test.jpg -(123B)
-            //   - 動画ファイル名：sample.mp4 ー(12.3MB)
-            //   - ファイル名: pic.webp
-            //   - サムネ: xxx.jpg
-            val headLabelRegex = Regex(
-                """^(?:画像|動画|ファイル名|ファイル|添付|サムネ|サムネイル)(?:\s*ファイル名)?\s*[:：]""",
-                RegexOption.IGNORE_CASE
-            )
-
-            // ✅ 「画像ファイル名：ー(123B)」のように“ファイル名が空”でもサイズだけ付く行も除外
-            //   （行頭ラベル + 何かしらのサイズ表記があれば弾く）
             fun isLabeledSizeOnlyLine(t: String): Boolean {
                 return headLabelRegex.containsMatchIn(t) && sizeSuffixRegex.containsMatchIn(t)
             }
@@ -547,33 +516,18 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 .map { it.trimEnd() }
                 .filterNot { line ->
                     val t = line.trim()
-
-                    // 既存のメタ行を除外
-                    t.startsWith("ID:") ||
-                            t.startsWith("No.") ||
-                            dateRegex.containsMatchIn(t) ||
-                            t.contains("Name")
+                    t.startsWith("ID:") || t.startsWith("No.") || dateRegex.containsMatchIn(t) || t.contains("Name")
                 }
                 .filterNot { line ->
                     val t = line.trim()
-
-                    // 1) 行頭が 画像/動画/ファイル名/添付/サムネ などのラベルなら除外
                     headLabelRegex.containsMatchIn(t) ||
-
-                            // 2) 「xxx.jpg -(123B)」のような 拡張子+サイズ併記も除外
                             (fileExtRegex.containsMatchIn(t) && sizeSuffixRegex.containsMatchIn(t)) ||
-
-                            // 3) 「画像ファイル名：ー(123B)」のように“名前が空”でもサイズだけの行も除外
                             isLabeledSizeOnlyLine(t) ||
-
-                            // 4) サムネ表記が混入した説明行
                             (fileExtRegex.containsMatchIn(t) && t.contains("サムネ"))
                 }
                 .joinToString("\n")
                 .trimEnd()
         }
-
-
     }
 
     // DetailAdapter.ImageViewHolder （マージ後）

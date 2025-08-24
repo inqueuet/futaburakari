@@ -11,7 +11,7 @@ import androidx.core.os.bundleOf
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.activityViewModels
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.example.hutaburakari.databinding.FragmentQuotePopupBinding // レイアウトファイル名に合わせてください
+import com.example.hutaburakari.databinding.FragmentQuotePopupBinding
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 
 class QuotePopupFragment : BottomSheetDialogFragment() {
@@ -24,7 +24,6 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
     private lateinit var detailAdapter: DetailAdapter
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        // レイアウトファイル名は 'fragment_quote_popup.xml' を想定しています
         _binding = FragmentQuotePopupBinding.inflate(inflater, container, false)
         return binding.root
     }
@@ -48,7 +47,10 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
             }
             MODE_ID -> {
                 val id = requireArguments().getString(ARG_ID).orEmpty()
-                resolveIdContent(allContent, id)
+                // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                // ★ 修正点②：IDがクリックされた際に、新しい全文検索の関数を呼び出す
+                // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                resolveIdReferences(allContent, id)
             }
             else -> emptyList()
         }
@@ -67,19 +69,17 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
         binding.popupRecyclerView.layoutManager = LinearLayoutManager(requireContext())
         binding.popupRecyclerView.adapter = detailAdapter
 
-        // ★ 追加（Activity と同等の安定表示設定）
         binding.popupRecyclerView.setHasFixedSize(true)
         binding.popupRecyclerView.itemAnimator = null
         binding.popupRecyclerView.setItemViewCacheSize(100)
 
-        // ここで適用
         binding.popupRecyclerView.addItemDecoration(
             BlockDividerDecoration(detailAdapter, requireContext(), paddingStartDp = 0, paddingEndDp = 0)
         )
-
     }
 
     // --- データ解決ロジック ---
+
     private fun resolveQuotedContent(
         all: List<DetailContent>,
         quotedText: String,
@@ -97,14 +97,32 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
         return collectWithTrailingMedia(all, textIndexes)
     }
 
-    private fun resolveIdContent(all: List<DetailContent>, id: String): List<DetailContent> {
-        val key = "ID:$id"
-        val textIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text &&
-                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(key)
+    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    // ★ 修正点③：IDの全文検索を行う新しい関数
+    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    /**
+     * 指定されたIDを持つ投稿と、そのIDを引用している投稿をすべて検索して返す
+     */
+    private fun resolveIdReferences(all: List<DetailContent>, id: String): List<DetailContent> {
+        val searchKey = "ID:$id"
+
+        // 全てのテキストコンテンツに対して全文検索を実行
+        val textIndexes = all.withIndex().filter { (_, content) ->
+            if (content is DetailContent.Text) {
+                // HTMLをプレーンテキストに変換してから検索
+                val plainText = Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                // "ID:xxxx" という文字列が含まれていればヒットとする
+                // これで元の投稿も引用も両方見つかる
+                plainText.contains(searchKey, ignoreCase = true)
+            } else {
+                false
+            }
         }.map { it.index }
+
+        // 見つかった投稿と、それに続く画像/動画をまとめて返す
         return collectWithTrailingMedia(all, textIndexes)
     }
+
 
     private fun findContentByText(all: List<DetailContent>, searchText: String): DetailContent? {
         // 1) レス番号 (No.123)
@@ -133,7 +151,6 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
             Html.fromHtml(it.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         } ?: return emptyList()
 
-        // 行頭が '>' 1個で始まる行のみ（'>>' 以上はここでは除外）
         return Regex("^>([^>].+)$", RegexOption.MULTILINE)
             .findAll(text)
             .map { it.groupValues[1].trim() }
@@ -146,18 +163,18 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
         _binding = null
     }
 
-    // 直後の画像/動画を「次の Text/ThreadEndTime まで」同梱して返す（登場順を維持）
+    // 直後の画像/動画を「次の Text/ThreadEndTime まで」同梱して返す
     private fun collectWithTrailingMedia(
         all: List<DetailContent>,
         textIndexes: List<Int>
     ): List<DetailContent> {
-        val paired = mutableListOf<Pair<Int, DetailContent>>() // (全体インデックス, アイテム)
+        val paired = mutableListOf<Pair<Int, DetailContent>>()
 
         for (i in textIndexes) {
             if (i !in all.indices) continue
             // 本文
             paired += i to all[i]
-            // 直後メディア（次の Text/ThreadEndTime まで）
+            // 直後メディア
             var j = i + 1
             while (j < all.size) {
                 when (val c = all[j]) {
@@ -167,8 +184,7 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
             }
         }
 
-        // ❌ 削除：paired.sortBy { it.first }  ← これが分離の元凶になりやすい
-        // 収集した順（= スレ内登場順）のまま重複だけ落とす
+        // 重複を除いて返す
         val seen = HashSet<String>()
         val out = ArrayList<DetailContent>(paired.size)
         for ((_, item) in paired) if (seen.add(item.id)) out += item
@@ -191,7 +207,7 @@ class QuotePopupFragment : BottomSheetDialogFragment() {
         }
 
         fun showForId(fm: FragmentManager, id: String) {
-            newInstance(MODE_ID, "ID: $id の投稿", null, 0, id)
+            newInstance(MODE_ID, "ID: $id の関連投稿", null, 0, id)
                 .show(fm, "id_popup")
         }
 
