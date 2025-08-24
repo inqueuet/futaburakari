@@ -2,6 +2,7 @@ package com.example.hutaburakari
 
 import android.content.Intent
 import android.net.Uri
+import java.nio.charset.Charset
 import android.os.Bundle
 import android.view.MenuItem
 import android.widget.Toast
@@ -164,16 +165,29 @@ class ReplyActivity : AppCompatActivity() {
 
     // 入力本文の改行や不可視文字を正規化（Shift_JISで化けやすい文字を排除/統一）
     private fun sanitizeComment(text: String): String {
-        return text
-            // 改行コードをLFに統一
+        // 1. 既存の正規化処理を先に実行
+        val normalizedText = text
             .replace("\r\n", "\n")
             .replace("\r", "\n")
-            // Unicodeの改行系（U2028 行区切り, U2029 段落区切り）をLFへ
             .replace(Regex("[\\u2028\\u2029]"), "\n")
-            // ゼロ幅スペース類（U200B..U200D, UFEFF）を除去
             .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
-            // ついでに不可視制御文字のうち、印字不能で化けやすいものを間引く（TABは残す）
             .replace(Regex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]"), "")
+
+        // 2. Shift_JISでエンコードできない文字をチェックして置換する処理を追加
+        val sjisCharset = Charset.forName("Shift_JIS")
+        val encoder = sjisCharset.newEncoder()
+        val builder = StringBuilder(normalizedText.length)
+
+        for (char in normalizedText) {
+            if (encoder.canEncode(char)) {
+                // エンコード可能な文字はそのまま追加
+                builder.append(char)
+            } else {
+                // エンコード不能な文字は '?' に置き換える（または除去も可能）
+                builder.append('?')
+            }
+        }
+        return builder.toString()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
