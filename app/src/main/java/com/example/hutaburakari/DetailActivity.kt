@@ -120,6 +120,17 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             applyPendingScroll()
         }
 
+        // ユーザーが手動でスクロールを開始したら、保留中の自動スクロールをキャンセルする
+        binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                super.onScrollStateChanged(recyclerView, newState)
+                // ユーザーが指でドラッグし始めたら、自動復元を停止
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    pendingScrollPosition = null
+                }
+            }
+        })
+
         // 引用（> / >> / >>> ...）タップ → ポップアップ表示
         detailAdapter.onQuoteClickListener = { token ->
             // 先頭の '>' 個数を引用レベルに
@@ -335,18 +346,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     // ↓↓↓★ このメソッドをまるごと追加 ★↓↓↓
     private fun applyPendingScroll() {
+        // 保留中のスクロール位置がある場合のみ実行
         pendingScrollPosition?.let { (pos, off) ->
-            // アダプターにアイテムがなければ何もしない
-            if (detailAdapter.itemCount == 0) return
-
-            binding.detailRecyclerView.post {
-                if (pos >= 0) {
+            // アダプターにアイテムがあり、位置が有効な範囲内か確認
+            if (detailAdapter.itemCount > 0 && pos < detailAdapter.itemCount) {
+                // RecyclerViewのレイアウトが完了した後にスクロールを実行
+                binding.detailRecyclerView.post {
                     layoutManager.scrollToPositionWithOffset(pos, off)
-                } else {
-                    layoutManager.scrollToPosition(0)
                 }
-                // 適用したら保留状態を解除
-                pendingScrollPosition = null
             }
         }
     }
