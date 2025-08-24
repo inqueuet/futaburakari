@@ -187,7 +187,11 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
             val html: String
             if (isOp) {
                 // OPの場合、子要素の返信テーブルを除外したクローンを作成
-                val textSourceElement = block.clone().apply { select("table").remove() }
+                val textSourceElement = block.clone().apply {
+                    select("table").remove()       // 返信テーブルを除去
+                    select("img").remove()         // ← 小さい四角の原因なので削除
+                    // <a href="..."> は残すのでそのまま
+                }
 
                 // メディアファイルへのリンクをテキストコンテンツから除外
                 //textSourceElement.select("a[target=_blank][href]")
@@ -199,11 +203,9 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 // 返信の場合、.rtdセルからHTMLを取得
                 val rtd = block.selectFirst(".rtd")
                 if (rtd != null) {
-                    val textBlock = rtd.clone()
-                    // メディアファイルへのリンクをテキストコンテンツから除外
-                    //textBlock.select("a[target=_blank][href]")
-                    //    .filter { a -> isMediaUrl(a.attr("href")) }
-                    //    .forEach { it.remove() }
+                    val textBlock = rtd.clone().apply {
+                        select("img").remove()     // ← 同じく <img> を除去
+                    }
                     html = textBlock.html()
                 } else {
                     html = ""
