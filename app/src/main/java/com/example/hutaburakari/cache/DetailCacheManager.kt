@@ -10,6 +10,7 @@ import com.google.gson.reflect.TypeToken
 // import com.example.hutaburakari.util.DetailContentTypeAdapterFactory
 import java.io.File
 import java.util.concurrent.TimeUnit
+import com.example.hutaburakari.UrlNormalizer
 
 data class CachedDetails(
     val timestamp: Long,
@@ -31,8 +32,9 @@ class DetailCacheManager(private val context: Context) {
     }
 
     private fun getCacheFile(url: String): File {
-        val fileName = url.sha256()
-        Log.d("DetailCacheManager", "URL: $url -> FileName: $fileName")
+        val key = UrlNormalizer.threadKey(url)   // ★ 正規化キーに変換
+        val fileName = key.sha256()
+        Log.d("DetailCacheManager", "Key: $key -> FileName: $fileName")
         return File(cacheDir, fileName)
     }
 

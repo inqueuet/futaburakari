@@ -316,17 +316,19 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         if (first != RecyclerView.NO_POSITION) {
             val v = layoutManager.findViewByPosition(first)
             val off = v?.top ?: 0
-            currentUrl?.let { url -> scrollStore.saveScrollState(url, first, off) }
+            currentUrl?.let { url ->
+                val key = UrlNormalizer.threadKey(url)  // ★ ここで正規化
+                scrollStore.saveScrollState(key, first, off)
+            }
         }
     }
 
     private fun restoreScroll() {
         if (!::scrollStore.isInitialized) return
         currentUrl?.let { url ->
-            val (pos, off) = scrollStore.getScrollState(url)
-            // すぐにスクロールせず、保留中の位置としてセットする
+            val key = UrlNormalizer.threadKey(url)     // ★ ここで正規化
+            val (pos, off) = scrollStore.getScrollState(key)
             pendingScrollPosition = pos to off
-            // 新しい適用メソッドを呼び出す
             applyPendingScroll()
         }
     }
