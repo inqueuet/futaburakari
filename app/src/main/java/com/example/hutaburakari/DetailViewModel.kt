@@ -120,32 +120,33 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 // 新しいコンテンツをパース
                 val newContentList = parseContentFromDocument(document, url)
 
-                // 現在のコンテンツと比較
+                // --- ▼▼▼ ここから修正 ▼▼▼ ---
+
                 val currentContent = _detailContent.value ?: emptyList()
-                val hasNewContent = newContentList.size > currentContent.size
 
-                if (hasNewContent) {
-                    // 新しいコンテンツのみを抽出
-                    val newItems = newContentList.drop(currentContent.size)
+                // 1. 現在表示しているコンテンツのIDをSetとして保持する
+                val currentIds = currentContent.map { it.id }.toSet()
 
-                    // 既存のコンテンツに新しいアイテムを追加
+                // 2. 新しく取得したリストの中から、まだ表示されていないIDを持つアイテムだけを抽出する
+                val newItems = newContentList.filter { it.id !in currentIds }
+
+                if (newItems.isNotEmpty()) {
+                    // 3. 新しいアイテムが存在する場合のみ、リストを更新する
                     val updatedContent = currentContent + newItems
 
-                    // UIを更新
                     _detailContent.postValue(updatedContent)
 
-                    // キャッシュも更新
                     withContext(Dispatchers.IO) {
                         cacheManager.saveDetails(url, updatedContent)
                     }
 
-                    // 新しいアイテムのメタデータも取得
                     updateMetadataInBackground(newItems, url)
-
                     callback(true)
                 } else {
                     callback(false)
                 }
+
+                // --- ▲▲▲ ここまで修正 ▲▲▲ ---
 
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error checking for updates", e)
