@@ -49,6 +49,11 @@ class HistoryActivity : AppCompatActivity() {
                 HistoryManager.delete(this@HistoryActivity, item.key)
                 // 監視も停止
                 com.example.hutaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
+                // キャッシュ/アーカイブも削除
+                com.example.hutaburakari.cache.DetailCacheManager(this@HistoryActivity).apply {
+                    invalidateCache(item.url)
+                    clearArchiveForUrl(item.url)
+                }
                 refresh()
             }
         })
@@ -71,6 +76,8 @@ class HistoryActivity : AppCompatActivity() {
                     HistoryManager.clear(this)
                     // 監視を全停止
                     com.example.hutaburakari.worker.ThreadMonitorWorker.cancelAll(this)
+                    // すべてのキャッシュ/アーカイブも削除
+                    com.example.hutaburakari.cache.DetailCacheManager(this).clearAllCache()
                     refresh()
                 }
                 .setNegativeButton(android.R.string.cancel, null)
