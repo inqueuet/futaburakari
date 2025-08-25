@@ -28,3 +28,4 @@
 -keep class com.example.hutaburakari.DetailContent { *; }
 -keep class com.example.hutaburakari.DetailContent$* { *; }
 -keep class com.example.hutaburakari.FutabaResponse { *; }
+-keep class com.example.hutaburakari.HistoryEntry { *; }

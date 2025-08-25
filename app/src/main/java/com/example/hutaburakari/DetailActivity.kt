@@ -78,6 +78,15 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         currentUrl = intent.getStringExtra(EXTRA_URL)
         binding.toolbarTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: ""
 
+        // 履歴に記録（タイトルがない場合はURL末尾などで代替も可）
+        currentUrl?.let { url ->
+            val title = binding.toolbarTitle.text?.toString().orEmpty().ifBlank { url }
+            HistoryManager.addOrUpdate(this, url, title)
+
+            // バックグラウンド監視が有効ならスケジュール
+            com.example.hutaburakari.worker.ThreadMonitorWorker.schedule(this, url)
+        }
+
         setupRecyclerView()
 
         // DetailSearchManager は (binding, callback) で生成
@@ -297,6 +306,22 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
             // ★ ここで ThreadEndTime を最後の1件に絞る
             val normalized = normalizeThreadEndTime(list)
+
+            // 履歴のサムネイル更新（最初のメディアを採用）
+            runCatching {
+                val media = normalized.firstOrNull {
+                    it is DetailContent.Image || it is DetailContent.Video
+                }
+                val url = when (media) {
+                    is DetailContent.Image -> media.imageUrl
+                    is DetailContent.Video -> media.videoUrl
+                    else -> null
+                }
+                val threadUrl = currentUrl
+                if (!url.isNullOrBlank() && !threadUrl.isNullOrBlank()) {
+                    HistoryManager.updateThumbnail(this, threadUrl, url)
+                }
+            }
 
             // ↓↓↓★ submitListに完了コールバックを追加 ★↓↓↓
             detailAdapter.submitList(normalized) {
@@ -769,6 +794,5 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         )
         return htmlPatterns.any { it.containsMatchIn(html) }
     }
-
 
 }

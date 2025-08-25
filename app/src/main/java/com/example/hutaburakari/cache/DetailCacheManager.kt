@@ -23,6 +23,9 @@ class DetailCacheManager(private val context: Context) {
     private val cacheDir: File by lazy {
         File(context.cacheDir, "details_cache").apply { mkdirs() }
     }
+    private val archiveRoot: File by lazy {
+        File(context.filesDir, "archive_media").apply { mkdirs() }
+    }
 
     init { // ★ init ブロックを修正
         gson = GsonBuilder()
@@ -36,6 +39,12 @@ class DetailCacheManager(private val context: Context) {
         val fileName = key.sha256()
         Log.d("DetailCacheManager", "Key: $key -> FileName: $fileName")
         return File(cacheDir, fileName)
+    }
+
+    fun getArchiveDirForUrl(url: String): File {
+        val key = UrlNormalizer.threadKey(url)
+        val dirName = key.sha256()
+        return File(archiveRoot, dirName).apply { mkdirs() }
     }
 
     fun saveDetails(url: String, details: List<DetailContent>) {
@@ -98,6 +107,15 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    fun clearArchiveForUrl(url: String) {
+        val dir = getArchiveDirForUrl(url)
+        if (dir.exists()) {
+            if (!dir.deleteRecursively()) {
+                Log.w("DetailCacheManager", "Failed to delete archive dir: ${dir.absolutePath}")
+            }
+        }
+    }
+
     // ★★★ ここから追加 ★★★
     /**
      * すべてのスレッド内容キャッシュを削除します。
@@ -112,6 +130,15 @@ class DetailCacheManager(private val context: Context) {
             }
             // ディレクトリ自体は再作成しておく
             cacheDir.mkdirs()
+        }
+
+        if (archiveRoot.exists()) {
+            if (archiveRoot.deleteRecursively()) {
+                Log.d("DetailCacheManager", "Successfully cleared all archived media.")
+            } else {
+                Log.w("DetailCacheManager", "Failed to clear archived media.")
+            }
+            archiveRoot.mkdirs()
         }
     }
 
