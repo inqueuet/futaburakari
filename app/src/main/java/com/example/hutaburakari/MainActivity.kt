@@ -350,6 +350,12 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
                 true
             }
 
+            R.id.action_history -> {
+                val intent = Intent(this, HistoryActivity::class.java)
+                startActivity(intent)
+                true
+            }
+
             else -> super.onOptionsItemSelected(item)
         }
     }
