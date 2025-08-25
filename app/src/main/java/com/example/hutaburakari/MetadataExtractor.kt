@@ -47,10 +47,11 @@ object MetadataExtractor {
     // ====== Public API ======
     suspend fun extract(context: Context, uriOrUrl: String): String? = withContext(Dispatchers.IO) {
         try {
-            if (uriOrUrl.startsWith("content://")) {
+            if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
                 context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
-                    val local = input.readBytes()
-                    return@withContext extractByType(local, uriOrUrl)
+                    // ローカルは全体（または上限）を読んでタイプ別に抽出
+                    val all = input.readBytes(limit = GLOBAL_MAX_BYTES)
+                    return@withContext extractByType(all, uriOrUrl)
                 }
                 return@withContext null
             }

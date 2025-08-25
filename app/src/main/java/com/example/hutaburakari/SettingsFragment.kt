@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
+import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import coil.imageLoader
@@ -46,6 +47,31 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 // UIスレッドでToastを表示
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "すべてのキャッシュを削除しました", Toast.LENGTH_SHORT).show()
+                }
+            }
+            true
+        }
+
+        // バックグラウンド監視のトグル
+        val bgPref: androidx.preference.SwitchPreferenceCompat? = findPreference("pref_key_bg_monitor_enabled")
+        bgPref?.setOnPreferenceChangeListener { _, newValue ->
+            val enabled = (newValue as? Boolean) == true
+            // 保存（Worker側はSharedPreferencesで参照）
+            requireContext().getSharedPreferences(
+                com.example.hutaburakari.worker.ThreadMonitorWorker.PREFS_BG,
+                android.content.Context.MODE_PRIVATE
+            ).edit().putBoolean(
+                com.example.hutaburakari.worker.ThreadMonitorWorker.KEY_BG_ENABLED,
+                enabled
+            ).apply()
+
+            if (!enabled) {
+                com.example.hutaburakari.worker.ThreadMonitorWorker.cancelAll(requireContext())
+            } else {
+                // 有効化時：履歴にある全スレッドをスケジュール
+                val all = HistoryManager.getAll(requireContext())
+                all.forEach { entry ->
+                    com.example.hutaburakari.worker.ThreadMonitorWorker.schedule(requireContext(), entry.url)
                 }
             }
             true

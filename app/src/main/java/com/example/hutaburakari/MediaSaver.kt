@@ -8,6 +8,7 @@ import android.webkit.MimeTypeMap
 import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.net.Uri
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -60,22 +61,32 @@ object MediaSaver {
                     return@withContext
                 }
 
-                // ファイルをダウンロードして書き込む
+                // ファイルをコピーして書き込む（file:// はローカルコピー、http(s) はダウンロード）
                 resolver.openOutputStream(uri).use { outputStream ->
                     if (outputStream == null) {
                         showToast(context, "ファイルの保存に失敗しました。")
                         return@withContext
                     }
-                    val connection = URL(url).openConnection() as HttpURLConnection
-                    connection.connect()
-                    if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                        connection.inputStream.use { inputStream ->
-                            inputStream.copyTo(outputStream)
+                    if (url.startsWith("file://") || url.startsWith("content://")) {
+                        val src = context.contentResolver.openInputStream(Uri.parse(url))
+                        if (src == null) {
+                            showToast(context, "ファイルの読み込みに失敗しました。")
+                            resolver.delete(uri, null, null)
+                            return@withContext
                         }
+                        src.use { input -> input.copyTo(outputStream) }
                     } else {
-                        showToast(context, "ファイルのダウンロードに失敗しました。")
-                        resolver.delete(uri, null, null) // 失敗した場合はエントリーを削除
-                        return@withContext
+                        val connection = URL(url).openConnection() as HttpURLConnection
+                        connection.connect()
+                        if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                            connection.inputStream.use { inputStream ->
+                                inputStream.copyTo(outputStream)
+                            }
+                        } else {
+                            showToast(context, "ファイルのダウンロードに失敗しました。")
+                            resolver.delete(uri, null, null) // 失敗した場合はエントリーを削除
+                            return@withContext
+                        }
                     }
                 }
 

@@ -21,4 +21,12 @@
 
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="バックグラウンド">
+        <SwitchPreferenceCompat
+            app:key="pref_key_bg_monitor_enabled"
+            app:title="@string/bg_monitor"
+            app:summary="@string/bg_monitor_summary"
+            app:defaultValue="false" />
+    </PreferenceCategory>
+
 </PreferenceScreen>

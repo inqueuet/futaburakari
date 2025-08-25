@@ -78,8 +78,8 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
 
-    implementation("com.google.dagger:hilt-android:2.55") // バージョンを2.56.2に変更
-    ksp("com.google.dagger:hilt-compiler:2.55")      // バージョンを2.56.2に変更
+    implementation("com.google.dagger:hilt-android:2.56.2")
+    ksp("com.google.dagger:hilt-compiler:2.56.2")
     implementation("com.github.franmontiel:PersistentCookieJar:v1.0.1")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
@@ -92,6 +92,9 @@ dependencies {
 
     // こちらは正しい記述です
     implementation("io.coil-kt:coil:2.7.0")
+
+    // WorkManager for background monitoring
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
