@@ -93,6 +93,9 @@ dependencies {
     // こちらは正しい記述です
     implementation("io.coil-kt:coil:2.7.0")
 
+    // Google Mobile Ads SDK (AdMob)
+    implementation("com.google.android.gms:play-services-ads:23.3.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

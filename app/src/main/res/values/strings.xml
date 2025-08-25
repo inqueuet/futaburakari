@@ -39,4 +39,8 @@
 
 
     <!-- <string name="reload">Reload</string> -->
+
+    <!-- AdMob test IDs (replace in production) -->
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
+    <string name="admob_banner_id">ca-app-pub-3940256099942544/6300978111</string>
 </resources>

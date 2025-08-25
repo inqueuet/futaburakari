@@ -21,6 +21,8 @@ import android.content.DialogInterface
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import java.text.Normalizer
+import androidx.preference.PreferenceManager
+import com.google.android.gms.ads.AdRequest
 
 class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
@@ -103,6 +105,28 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             saveScroll()
             onBackPressedDispatcher.onBackPressed()
         }
+    }
+
+    private fun setupAdBanner() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val showAds = prefs.getBoolean("pref_key_ads_enabled", true)
+        val adView = binding.adView
+        if (showAds) {
+            adView.isVisible = true
+            val adRequest = AdRequest.Builder().build()
+            adView.loadAd(adRequest)
+            setRecyclerBottomPaddingDp(130)
+        } else {
+            adView.isVisible = false
+            setRecyclerBottomPaddingDp(80)
+        }
+    }
+
+    private fun setRecyclerBottomPaddingDp(dp: Int) {
+        val density = resources.displayMetrics.density
+        val px = (dp * density).toInt()
+        val rv = binding.detailRecyclerView
+        rv.setPadding(rv.paddingLeft, rv.paddingTop, rv.paddingRight, px)
     }
 
     // -------------------------
@@ -260,6 +284,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         if (!suppressNextRestore) {
             restoreScroll()
         }
+        // 設定変更（広告ON/OFF）を戻り時にも反映
+        setupAdBanner()
     }
 
     // -------------------------
@@ -319,7 +345,27 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     override fun onPause() {
         super.onPause()
+        // AdMob: 一時停止
+        if (::binding.isInitialized) {
+            binding.adView.pause()
+        }
         saveScroll()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // AdMob: 再開
+        if (::binding.isInitialized) {
+            binding.adView.resume()
+        }
+    }
+
+    override fun onDestroy() {
+        // AdMob: 解放
+        if (::binding.isInitialized) {
+            binding.adView.destroy()
+        }
+        super.onDestroy()
     }
 
     private fun saveScroll() {
@@ -711,6 +757,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
             // 4) 裸の数字（前後が数字じゃない）—必要な場合のみ残す
             Regex("""(?<!\d)$esc(?!\d)""")
+        // 広告の表示設定に応じてバナーを表示/非表示
+        setupAdBanner()
         )
         if (textPatterns.any { it.containsMatchIn(norm) }) return true
 

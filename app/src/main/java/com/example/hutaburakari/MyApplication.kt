@@ -10,6 +10,7 @@ import coil.decode.ImageDecoderDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import dagger.hilt.android.HiltAndroidApp
+import com.google.android.gms.ads.MobileAds
 
 @HiltAndroidApp
 class MyApplication : Application(), ImageLoaderFactory {
@@ -18,6 +19,8 @@ class MyApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         // ▼▼▼ 修正: PersistentCookieJarを初期化するコードをここに追加 ▼▼▼
         PersistentCookieJar.init(applicationContext)
+        // Initialize Google Mobile Ads SDK
+        MobileAds.initialize(this)
     }
 
     override fun newImageLoader(): ImageLoader {
