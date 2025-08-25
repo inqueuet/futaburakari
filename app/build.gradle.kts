@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     id("com.google.dagger.hilt.android") // Hiltプラグインを追加
     id("com.google.devtools.ksp")      // KSPプラグインを追加
-    id("com.android.application")
     id("com.google.gms.google-services")
 }
 
