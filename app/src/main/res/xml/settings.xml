@@ -21,12 +21,21 @@
 
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="広告表示">
+
+        <SwitchPreferenceCompat
+            app:key="pref_key_ads_enabled"
+            app:title="広告を表示"
+            app:summary="Detail画面下部にバナー広告を固定表示します"
+            app:defaultValue="true" />
+
     <PreferenceCategory app:title="バックグラウンド">
         <SwitchPreferenceCompat
             app:key="pref_key_bg_monitor_enabled"
             app:title="@string/bg_monitor"
             app:summary="@string/bg_monitor_summary"
             app:defaultValue="false" />
-    </PreferenceCategory>
 
+    </PreferenceCategory>
+      
 </PreferenceScreen>

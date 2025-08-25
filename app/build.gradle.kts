@@ -93,6 +93,9 @@ dependencies {
     // こちらは正しい記述です
     implementation("io.coil-kt:coil:2.7.0")
 
+    // Google Mobile Ads SDK (AdMob)
+    implementation("com.google.android.gms:play-services-ads:23.3.0")
+
     // WorkManager for background monitoring
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 

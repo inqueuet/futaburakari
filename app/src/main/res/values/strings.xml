@@ -37,8 +37,12 @@
 
     <string name="video_thumbnail">動画サムネイル</string>
 
-
     <!-- <string name="reload">Reload</string> -->
+
+    <!-- AdMob test IDs (replace in production) -->
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
+    <string name="admob_banner_id">ca-app-pub-3940256099942544/6300978111</string>
+
     <string name="history">履歴</string>
     <string name="history_title">閲覧履歴</string>
     <string name="clear_history">履歴を全削除</string>
@@ -46,4 +50,5 @@
     <string name="no_history">履歴がありません</string>
     <string name="bg_monitor">バックグラウンド監視</string>
     <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
+
 </resources>
