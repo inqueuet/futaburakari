@@ -41,7 +41,7 @@
 
     <!-- AdMob test IDs (replace in production) -->
     <string name="admob_app_id">ca-app-pub-6403856201304924~8100902512</string>
-    <string name="admob_banner_id">ca-app-pub-6403856201304924/2864069462</string>
+    <string name="admob_banner_id">ca-app-pub-3940256099942544/9257395921</string>
 
     <string name="history">履歴</string>
     <string name="history_title">閲覧履歴</string>
