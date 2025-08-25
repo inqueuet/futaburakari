@@ -782,8 +782,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
             // 4) 裸の数字（前後が数字じゃない）—必要な場合のみ残す
             Regex("""(?<!\d)$esc(?!\d)""")
-        // 広告の表示設定に応じてバナーを表示/非表示
-        setupAdBanner()
         )
         if (textPatterns.any { it.containsMatchIn(norm) }) return true
 

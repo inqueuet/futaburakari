@@ -29,6 +29,8 @@
             app:summary="Detail画面下部にバナー広告を固定表示します"
             app:defaultValue="true" />
 
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="バックグラウンド">
         <SwitchPreferenceCompat
             app:key="pref_key_bg_monitor_enabled"
