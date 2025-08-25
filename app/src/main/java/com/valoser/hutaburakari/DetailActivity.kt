@@ -2,6 +2,7 @@ package com.valoser.hutaburakari
 
 import android.app.Activity
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.Html
 import android.view.Menu
@@ -51,6 +52,13 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
     private var suppressNextRestore: Boolean = false
 
+    private lateinit var prefs: SharedPreferences
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "pref_key_ads_enabled") {
+            setupAdBanner()
+        }
+    }
+
     private val replyActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -75,7 +83,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             this,
             ViewModelProvider.AndroidViewModelFactory.getInstance(application)
         ).get(DetailViewModel::class.java)
-
+        // SharedPreferences 準備（設定変更のリッスンに使用）
+        prefs = PreferenceManager.getDefaultSharedPreferences(this)
         currentUrl = intent.getStringExtra(EXTRA_URL)
         binding.toolbarTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: ""
 
@@ -118,7 +127,6 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     }
 
     private fun setupAdBanner() {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         val showAds = prefs.getBoolean("pref_key_ads_enabled", true)
         val adView = binding.adView
         if (showAds) {
@@ -133,13 +141,39 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
                     Toast.makeText(this@DetailActivity, "広告の読み込み失敗: ${error.code}", Toast.LENGTH_SHORT).show()
                 }
             }
+            // 再開してからロード（OFF→ON直後のケースを考慮）
+            adView.resume()
             val adRequest = AdRequest.Builder().build()
             adView.loadAd(adRequest)
             setRecyclerBottomPaddingDp(130)
         } else {
             adView.isVisible = false
+            // バックグラウンド稼働を抑制
+            adView.pause()
             setRecyclerBottomPaddingDp(80)
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // 設定変更（広告ON/OFF）を戻り時にも反映
+        setupAdBanner()
+        // 設定変更の監視を開始
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+        // アクティビティが表示されるたびにスクロール位置の復元を試みる
+        // isInitialLoadフラグはリロード時の復元制御に利用するため残す
+        isInitialLoad = true
+        if (!suppressNextRestore) {
+            restoreScroll()
+        }
+    }
+
+    override fun onStop() {
+        // 設定変更の監視を停止
+        if (this::prefs.isInitialized) {
+            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        }
+        super.onStop()
     }
 
     private fun setRecyclerBottomPaddingDp(dp: Int) {
@@ -295,18 +329,7 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         }
     }
 
-    // ★ onStart() を追加・オーバーライド
-    override fun onStart() {
-        super.onStart()
-        // アクティビティが表示されるたびにスクロール位置の復元を試みる
-        // isInitialLoadフラグはリロード時の復元制御に利用するため残す
-        isInitialLoad = true
-        if (!suppressNextRestore) {
-            restoreScroll()
-        }
-        // 設定変更（広告ON/OFF）を戻り時にも反映
-        setupAdBanner()
-    }
+    
 
     // -------------------------
     // LiveData監視
