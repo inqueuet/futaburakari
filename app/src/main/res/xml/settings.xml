@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory app:title="投稿設定">
 
@@ -37,6 +38,18 @@
             app:title="@string/bg_monitor"
             app:summary="@string/bg_monitor_summary"
             app:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="その他">
+
+        <Preference
+            app:key="pref_key_privacy_policy"
+            app:title="プライバシーポリシー">
+            <intent
+                android:action="android.intent.action.VIEW"
+                android:data="https://note.com/inqueuet/n/nb86f8e3f405a" />
+        </Preference>
 
     </PreferenceCategory>
       
