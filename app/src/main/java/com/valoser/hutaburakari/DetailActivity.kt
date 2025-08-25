@@ -22,6 +22,8 @@ import androidx.lifecycle.lifecycleScope
 import java.text.Normalizer
 import androidx.preference.PreferenceManager
 import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdListener
+import com.google.android.gms.ads.LoadAdError
 
 class DetailActivity : AppCompatActivity(), SearchManagerCallback {
 
@@ -121,6 +123,16 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         val adView = binding.adView
         if (showAds) {
             adView.isVisible = true
+            // Basic diagnostics to surface load status
+            adView.adListener = object : AdListener() {
+                override fun onAdLoaded() {
+                    // Ad loaded successfully
+                }
+
+                override fun onAdFailedToLoad(error: LoadAdError) {
+                    Toast.makeText(this@DetailActivity, "広告の読み込み失敗: ${error.code}", Toast.LENGTH_SHORT).show()
+                }
+            }
             val adRequest = AdRequest.Builder().build()
             adView.loadAd(adRequest)
             setRecyclerBottomPaddingDp(130)
