@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.valoser.hutaburakari"
+    namespace = "com.valoser.futaburakari"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.valoser.hutaburakari"
+        applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

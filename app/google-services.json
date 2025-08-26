@@ -1,15 +1,15 @@
 {
   "project_info": {
     "project_number": "310129304736",
-    "project_id": "hutaburakari",
-    "storage_bucket": "hutaburakari.firebasestorage.app"
+    "project_id": "futaburakari",
+    "storage_bucket": "futaburakari.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
         "mobilesdk_app_id": "1:310129304736:android:c2c82464c4235a668015c5",
         "android_client_info": {
-          "package_name": "com.valoser.hutaburakari"
+          "package_name": "com.valoser.futaburakari"
         }
       },
       "oauth_client": [],
