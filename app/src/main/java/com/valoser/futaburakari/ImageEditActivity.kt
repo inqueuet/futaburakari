@@ -284,13 +284,13 @@ class ImageEditActivity : BaseActivity() {
                         val contentValues = ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + File.separator + "Hutaburakari")
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + File.separator + "Futaburakari")
                         }
                         val imageOutUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
                         imageOutUriForExif = imageOutUri
                         fos = imageOutUri?.let { resolver.openOutputStream(it) }
                     } else {
-                        val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES + File.separator + "Hutaburakari")
+                        val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES + File.separator + "Futaburakari")
                         if (!imagesDir.exists()) {
                             imagesDir.mkdirs()
                         }
