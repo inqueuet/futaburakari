@@ -15,7 +15,11 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
 
     private lateinit var webView: WebView
     private val pending = AtomicReference<((Result<Map<String, String>>) -> Unit)?>(null)
-    private var allowedHost: String? = null
+    private var allowedPattern: Regex? = null
+    private fun isAllowedHost(host: String?): Boolean {
+        val h = host ?: return false
+        return allowedPattern?.containsMatchIn(h) == true
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
@@ -52,7 +56,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
                     val url = request.url
                     val host = url.host
                     val scheme = url.scheme
-                    val allow = (scheme == "https" || scheme == "http") && host != null && host.equals(allowedHost, ignoreCase = true)
+                    val allow = (scheme == "https" || scheme == "http") && isAllowedHost(host)
                     return !allow // block anything not explicitly allowed
                 }
                 @Suppress("DEPRECATION")
@@ -61,7 +65,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
                         val u = android.net.Uri.parse(url)
                         val host = u.host
                         val scheme = u.scheme
-                        val allow = (scheme == "https" || scheme == "http") && host != null && host.equals(allowedHost, ignoreCase = true)
+                        val allow = (scheme == "https" || scheme == "http") && isAllowedHost(host)
                         !allow
                     } catch (_: Exception) { true }
                 }
@@ -108,7 +112,15 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
         webView.post {
             // restrict navigation to the same host as post page
             runCatching {
-                allowedHost = android.net.Uri.parse(postPageUrl).host
+                val host = android.net.Uri.parse(postPageUrl).host
+                // base domain = 最後の2ラベル（例: may.2chan.net → 2chan.net）
+                val base = host?.split('.')?.takeLast(2)?.joinToString(".")
+                if (!base.isNullOrBlank()) {
+                    // 任意のサブドメイン（多段も可）+ base ドメインを許可
+                    allowedPattern = Regex("""^(?:[A-Za-z0-9-]+\.)*${Regex.escape(base)}$""", RegexOption.IGNORE_CASE)
+                } else {
+                    allowedPattern = null
+                }
             }
             webView.loadUrl(postPageUrl)
         }
