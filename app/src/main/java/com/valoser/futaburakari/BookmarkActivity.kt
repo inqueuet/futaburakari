@@ -132,7 +132,7 @@ class BookmarkActivity : BaseActivity() {
                         Toast.makeText(this, "名前は10文字以内で入力してください", Toast.LENGTH_SHORT).show()
                     }
                     !isValidFutabaUrl(url) -> {
-                        Toast.makeText(this, "URLは2chan.netドメインでfutaba.phpを含む必要があります", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "URLは2chan.netドメインかつfutaba.phpとmode=catを含む必要があります", Toast.LENGTH_LONG).show()
                     }
                     else -> {
                         if (bookmarkToEdit == null) {
@@ -164,7 +164,8 @@ class BookmarkActivity : BaseActivity() {
             val domainOk = (host == "2chan.net") || host.endsWith(".2chan.net")
             val schemeOk = scheme == "https" || scheme == "http"
             val pathOk = pathAll.contains("futaba.php")
-            domainOk && schemeOk && pathOk
+            val modeIsCat = uri.getQueryParameter("mode")?.lowercase() == "cat"
+            domainOk && schemeOk && pathOk && modeIsCat
         } catch (_: Exception) {
             false
         }
