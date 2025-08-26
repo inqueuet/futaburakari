@@ -10,7 +10,7 @@ import android.view.MenuItem
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
@@ -26,7 +26,7 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.LoadAdError
 
-class DetailActivity : AppCompatActivity(), SearchManagerCallback {
+class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     private lateinit var binding: ActivityDetailBinding
     private lateinit var viewModel: DetailViewModel

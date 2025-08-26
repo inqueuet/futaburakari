@@ -8,7 +8,7 @@ import android.view.MenuItem
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import com.valoser.hutaburakari.databinding.ActivityReplyNativeBinding
 
 /**
@@ -16,7 +16,7 @@ import com.valoser.hutaburakari.databinding.ActivityReplyNativeBinding
  * 不可視WebViewワーカー（ReplyTokenWorkerFragment）を起動し、ViewModel の tokenProvider として渡す。
  * 設定画面で保存した削除キー（パスワード）を起動時に自動セットし、送信時に使用する。
  */
-class ReplyActivity : AppCompatActivity() {
+class ReplyActivity : BaseActivity() {
 
     companion object {
         // DetailActivity から渡されるキー（DetailActivity 側の参照に合わせる）

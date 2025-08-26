@@ -9,7 +9,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat // Added import
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
@@ -22,7 +22,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MediaViewActivity : AppCompatActivity() {
+class MediaViewActivity : BaseActivity() {
 
     private lateinit var binding: ActivityMediaViewBinding
     private var exoPlayer: ExoPlayer? = null

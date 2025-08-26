@@ -1,7 +1,9 @@
 package com.valoser.hutaburakari
 
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
+import android.text.TextUtils
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
@@ -11,15 +13,17 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.core.view.WindowCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.preference.PreferenceManager
 import coil.imageLoader
 import coil.request.ImageRequest
+import android.widget.TextView
 import com.valoser.hutaburakari.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -28,7 +32,7 @@ import java.net.URL
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 
-class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
+class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
@@ -43,6 +47,22 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
     private var isAtBottom = false
     private val autoUpdateDelayMs = 1000L // 1秒間の遅延
     private lateinit var gridLayoutManager: GridLayoutManager
+    private lateinit var prefs: SharedPreferences
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        when (key) {
+            "pref_key_grid_span" -> {
+                val newSpan = getGridSpanCount()
+                if (::gridLayoutManager.isInitialized) {
+                    gridLayoutManager.spanCount = newSpan
+                    binding.recyclerView.requestLayout()
+                }
+            }
+            "pref_key_font_scale" -> {
+                // Recreate to apply new font scale immediately
+                recreate()
+            }
+        }
+    }
 
     // 追加：より厳密な判定用のフィールド
     private var continuousScrollDistance = 0
@@ -85,6 +105,10 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         setContentView(binding.root)
 
         setSupportActionBar(binding.toolbar)
+        enableToolbarMultiline()
+
+        prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
         setupRecyclerView()
         setupAutoUpdateScroll() // 自動更新機能のセットアップ
@@ -97,6 +121,13 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
         }
 
         loadAndFetchInitialData()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::prefs.isInitialized) {
+            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        }
     }
 
     // 自動更新機能のセットアップ（改良版）
@@ -416,13 +447,33 @@ class MainActivity : AppCompatActivity(), SearchView.OnQueryTextListener {
 
     private fun setupRecyclerView() {
         imageAdapter = ImageAdapter()
-        gridLayoutManager = GridLayoutManager(this@MainActivity, 4)
+        gridLayoutManager = GridLayoutManager(this@MainActivity, getGridSpanCount())
         binding.recyclerView.apply {
             layoutManager = gridLayoutManager
             adapter = imageAdapter
             setItemViewCacheSize(50)
             setHasFixedSize(true)
         }
+    }
+
+    private fun enableToolbarMultiline() {
+        val toolbar = binding.toolbar
+        toolbar.post {
+            for (i in 0 until toolbar.childCount) {
+                val v = toolbar.getChildAt(i)
+                if (v is TextView) {
+                    v.isSingleLine = false
+                    v.maxLines = 2
+                    v.ellipsize = TextUtils.TruncateAt.END
+                }
+            }
+        }
+    }
+
+    private fun getGridSpanCount(): Int {
+        val value = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_grid_span", "4") ?: "4"
+        return value.toIntOrNull()?.coerceIn(1, 8) ?: 4
     }
 
     private fun setupClickListener() {

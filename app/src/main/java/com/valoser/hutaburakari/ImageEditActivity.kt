@@ -14,7 +14,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import androidx.exifinterface.media.ExifInterface
 import com.valoser.hutaburakari.ui.BrushOverlayView
 import com.valoser.hutaburakari.ui.MosaicOverlayView
@@ -27,7 +27,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 
-class ImageEditActivity : AppCompatActivity() {
+class ImageEditActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_IMAGE_URI = "com.valoser.hutaburakari.EXTRA_IMAGE_URI"

@@ -7,7 +7,7 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -18,7 +18,7 @@ import com.valoser.hutaburakari.databinding.DialogAddBookmarkBinding
 // MaterialToolbar の ViewBinding を使うので、直接の import は不要な場合が多い
 // import com.google.android.material.appbar.MaterialToolbar
 
-class BookmarkActivity : AppCompatActivity() {
+class BookmarkActivity : BaseActivity() {
 
     private lateinit var binding: ActivityBookmarkBinding
     private lateinit var bookmarkAdapter: BookmarkAdapter

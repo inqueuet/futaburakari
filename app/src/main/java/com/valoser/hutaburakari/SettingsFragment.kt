@@ -6,6 +6,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.ListPreference
 import coil.imageLoader
 import com.valoser.hutaburakari.cache.DetailCacheManager
 import kotlinx.coroutines.Dispatchers
@@ -73,6 +74,14 @@ class SettingsFragment : PreferenceFragmentCompat() {
                     com.valoser.hutaburakari.worker.ThreadMonitorWorker.schedule(requireContext(), entry.url)
                 }
             }
+            true
+        }
+
+        // フォントサイズ変更時は即時に画面へ反映（この画面のみ再生成）
+        val fontPref: ListPreference? = findPreference("pref_key_font_scale")
+        fontPref?.setOnPreferenceChangeListener { _, _ ->
+            // 再生成して新しいfontScaleを適用
+            requireActivity().recreate()
             true
         }
     }

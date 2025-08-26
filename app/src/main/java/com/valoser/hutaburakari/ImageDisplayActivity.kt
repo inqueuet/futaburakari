@@ -10,14 +10,14 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
+// import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import coil.load
 
-class ImageDisplayActivity : AppCompatActivity() {
+class ImageDisplayActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_IMAGE_URI = "extra_image_uri"

@@ -12,9 +12,7 @@ import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.activityViewModels
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.valoser.hutaburakari.databinding.FragmentQuotePopupBinding
-import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-
-class QuotePopupFragment : BottomSheetDialogFragment() {
+class QuotePopupFragment : BaseBottomSheetDialogFragment() {
 
     private var _binding: FragmentQuotePopupBinding? = null
     private val binding get() = _binding!!

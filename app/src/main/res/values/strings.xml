@@ -52,4 +52,33 @@
     <string name="bg_monitor">バックグラウンド監視</string>
     <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
 
+    <!-- Settings: Display options -->
+    <string-array name="pref_grid_span_entries">
+        <item>2 列</item>
+        <item>3 列</item>
+        <item>4 列</item>
+        <item>5 列</item>
+        <item>6 列</item>
+    </string-array>
+    <string-array name="pref_grid_span_values">
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+    </string-array>
+
+    <string-array name="pref_font_scale_entries">
+        <item>小</item>
+        <item>標準</item>
+        <item>大</item>
+        <item>特大</item>
+    </string-array>
+    <string-array name="pref_font_scale_values">
+        <item>0.85</item>
+        <item>1.0</item>
+        <item>1.15</item>
+        <item>1.30</item>
+    </string-array>
+
 </resources>

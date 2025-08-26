@@ -2,6 +2,26 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <PreferenceCategory app:title="表示設定">
+
+        <ListPreference
+            app:key="pref_key_grid_span"
+            app:title="グリッド列数"
+            app:entries="@array/pref_grid_span_entries"
+            app:entryValues="@array/pref_grid_span_values"
+            app:defaultValue="4"
+            app:summary="%s 列" />
+
+        <ListPreference
+            app:key="pref_key_font_scale"
+            app:title="フォントサイズ"
+            app:entries="@array/pref_font_scale_entries"
+            app:entryValues="@array/pref_font_scale_values"
+            app:defaultValue="1.0"
+            app:summary="現在: %s" />
+
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="投稿設定">
 
         <EditTextPreference
