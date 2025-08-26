@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "310129304736",
+    "project_number": "449123991881",
     "project_id": "futaburakari",
     "storage_bucket": "futaburakari.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:310129304736:android:c2c82464c4235a668015c5",
+        "mobilesdk_app_id": "1:449123991881:android:741673d05d14e5859cda98",
         "android_client_info": {
           "package_name": "com.valoser.futaburakari"
         }
@@ -15,15 +15,14 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDT0u4aOZaZpmK3OZ8MTK3EfnsO0q7xlmA"
+          "current_key": "AIzaSyBpi7bYJXzpvjgyByorZ7m2mxzsKXlWwLA"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": []
         }
-      },
-      "admob_app_id": "ca-app-pub-6403856201304924~8100902512"
+      }
     }
   ],
   "configuration_version": "1"
