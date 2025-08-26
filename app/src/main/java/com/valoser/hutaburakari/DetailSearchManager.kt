@@ -135,10 +135,25 @@ class DetailSearchManager(
         if (position >= 0 && position < callback.getDetailAdapter().itemCount) {
             // RecyclerViewの描画準備ができてからスクロールする
             binding.detailRecyclerView.post {
-                callback.getLayoutManager().scrollToPositionWithOffset(position, 20) // スクロール位置のオフセットは調整可
+                // 連続操作のブレを抑える
+                binding.detailRecyclerView.stopScroll()
+                callback.getLayoutManager().scrollToPositionWithOffset(position, 20)
             }
         }
         updateSearchResultsCount()
+    }
+
+    // レイアウト更新・画像読み込み後などに、現在のヒット位置へ再吸着させるための補助
+    fun realignToCurrentHitIfActive() {
+        if (!callback.isBindingInitialized()) return
+        if (searchResultPositions.isEmpty() || currentSearchHitIndex !in searchResultPositions.indices) return
+        val position = searchResultPositions[currentSearchHitIndex]
+        if (position < 0 || position >= callback.getDetailAdapter().itemCount) return
+
+        binding.detailRecyclerView.post {
+            binding.detailRecyclerView.stopScroll()
+            callback.getLayoutManager().scrollToPositionWithOffset(position, 20)
+        }
     }
 
     fun setupSearchNavigation() {

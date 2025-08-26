@@ -103,6 +103,13 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         detailSearchManager = DetailSearchManager(binding, this)
         detailSearchManager.setupSearchNavigation()
 
+        // bottom_container（検索ナビ + 広告）の高さ変化に追従してRecyclerViewの下パディングを更新
+        binding.bottomContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateRecyclerBottomPadding()
+            // 検索UIや広告の高さが変わったときに、ヒット項目が隠れないよう再吸着
+            detailSearchManager.realignToCurrentHitIfActive()
+        }
+
         observeViewModel()
         currentUrl?.let { viewModel.fetchDetails(it) }
 
@@ -127,30 +134,36 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
     }
 
     private fun setupAdBanner() {
-        val showAds = prefs.getBoolean("pref_key_ads_enabled", true)
+        // 既定は OFF（設定で有効化したときのみ表示）
+        val showAds = prefs.getBoolean("pref_key_ads_enabled", false)
         val adView = binding.adView
         if (showAds) {
             adView.isVisible = true
             // Basic diagnostics to surface load status
-            adView.adListener = object : AdListener() {
+            adView.setAdListener(object : AdListener() {
                 override fun onAdLoaded() {
-                    // Ad loaded successfully
+                    // Ad loaded successfully; bottom container height may change
+                    updateRecyclerBottomPadding()
                 }
 
                 override fun onAdFailedToLoad(error: LoadAdError) {
-                    Toast.makeText(this@DetailActivity, "広告の読み込み失敗: ${error.code}", Toast.LENGTH_SHORT).show()
+                    // Toast.makeText(this@DetailActivity, "広告の読み込み失敗: ${error.code}", Toast.LENGTH_SHORT).show()
                 }
-            }
+            })
             // 再開してからロード（OFF→ON直後のケースを考慮）
             adView.resume()
             val adRequest = AdRequest.Builder().build()
             adView.loadAd(adRequest)
-            setRecyclerBottomPaddingDp(130)
+            // Keep RecyclerView padding in sync with bottom container height
+            updateRecyclerBottomPadding()
         } else {
+            // 完全に非表示・停止（既に読み込んだ広告が残らないよう念のためクリア）
             adView.isVisible = false
-            // バックグラウンド稼働を抑制
+            // 一部バージョンでは非null指定のため、空リスナーで解除相当とする
+            adView.setAdListener(object : AdListener() {})
             adView.pause()
-            setRecyclerBottomPaddingDp(80)
+            // 子ビューの強制除去は再ロード不可の原因になるため行わない
+            updateRecyclerBottomPadding()
         }
     }
 
@@ -183,6 +196,14 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         rv.setPadding(rv.paddingLeft, rv.paddingTop, rv.paddingRight, px)
     }
 
+    private fun updateRecyclerBottomPadding() {
+        val rv = binding.detailRecyclerView
+        val bottom = binding.bottomContainer.height
+        if (rv.paddingBottom != bottom) {
+            rv.setPadding(rv.paddingLeft, rv.paddingTop, rv.paddingRight, bottom)
+        }
+    }
+
     // -------------------------
     // RecyclerView 設定
     // -------------------------
@@ -193,9 +214,10 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
         // 「そうだね」状態
         detailAdapter.getSodaNeState = { resNum -> viewModel.getSodaNeState(resNum) }
 
-        // 画像読み込み完了時にスクロール位置を再補正する
+        // 画像読み込み完了時にスクロール位置と検索位置を再補正する
         detailAdapter.onImageLoaded = {
             applyPendingScroll()
+            detailSearchManager.realignToCurrentHitIfActive()
         }
 
         // ユーザーが手動でスクロールを開始したら、保留中の自動スクロールをキャンセルする
@@ -361,6 +383,8 @@ class DetailActivity : AppCompatActivity(), SearchManagerCallback {
             detailAdapter.submitList(normalized) {
                 // リストの更新が完了したタイミングで、保留中のスクロールを適用する
                 applyPendingScroll()
+                // リスト更新後に検索ヒットも再吸着
+                detailSearchManager.realignToCurrentHitIfActive()
             }
 
             // （必要なら）検索ナビの表示切替
