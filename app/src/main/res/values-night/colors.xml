@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#BB86FC</color>
+    <color name="purple_700">#3700B3</color>
+    <color name="teal_200">#03DAC5</color>
+    <color name="teal_700">#018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Dark counterparts for expressive palette -->
+    <color name="my_expressive_primary">#8CF7BE</color>
+    <color name="my_expressive_onPrimary">#002111</color>
+    <color name="my_expressive_primaryContainer">#005232</color>
+    <color name="my_expressive_onPrimaryContainer">#8CF7BE</color>
+    <color name="my_expressive_secondary">#B6CCBA</color>
+    <color name="my_expressive_onSecondary">#1F3527</color>
+    <color name="my_expressive_secondaryContainer">#374B3C</color>
+    <color name="my_expressive_onSecondaryContainer">#D1E8D5</color>
+    <color name="my_expressive_tertiary">#A4CDDA</color>
+    <color name="my_expressive_onTertiary">#083543</color>
+    <color name="my_expressive_tertiaryContainer">#264B57</color>
+    <color name="my_expressive_onTertiaryContainer">#C0E9FA</color>
+    <color name="my_expressive_background">#111412</color>
+    <color name="my_expressive_onBackground">#E1E3DF</color>
+    <color name="light_gray">#222222</color>
+    <!-- Green color mode (night) -->
+    <color name="green_primary">#66D3A1</color>
+    <color name="green_primaryVariant">#338E6B</color>
+</resources>

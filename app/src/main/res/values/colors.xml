@@ -22,4 +22,7 @@
     <color name="my_expressive_background">#FBFDF8</color>
     <color name="my_expressive_onBackground">#191C1A</color>
     <color name="light_gray">#F5F5F5</color>
+    <!-- Green color mode (day) -->
+    <color name="green_primary">#004D2D</color>
+    <color name="green_primaryVariant">#00361F</color>
 </resources>

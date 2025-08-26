@@ -81,4 +81,30 @@
         <item>1.30</item>
     </string-array>
 
+    <!-- Theme mode -->
+    <string-array name="pref_theme_mode_entries">
+        <item>システムに合わせる</item>
+        <item>ライト</item>
+        <item>ダーク</item>
+    </string-array>
+    <string-array name="pref_theme_mode_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+    </string-array>
+
+    <!-- Color mode -->
+    <string-array name="pref_color_mode_entries">
+        <item>グリーン</item>
+        <item>パープル</item>
+        <item>ブルー</item>
+        <item>オレンジ</item>
+    </string-array>
+    <string-array name="pref_color_mode_values">
+        <item>green</item>
+        <item>purple</item>
+        <item>blue</item>
+        <item>orange</item>
+    </string-array>
+
 </resources>

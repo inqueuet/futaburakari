@@ -14,8 +14,10 @@
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
+            android:layout_height="wrap_content"
+            android:minHeight="?attr/actionBarSize"
             android:theme="?attr/actionBarTheme"
+            android:background="?attr/colorPrimary"
             app:contentInsetStart="0dp"
             app:popupTheme="?attr/actionBarPopupTheme">
 
@@ -45,7 +47,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:ellipsize="end"
-                    android:maxLines="1"
+                    android:maxLines="2"
                     tools:text="スレッドのタイトルがここに表示されます" />
             </LinearLayout>
 

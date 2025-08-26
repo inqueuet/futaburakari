@@ -20,6 +20,22 @@
             app:defaultValue="1.0"
             app:summary="現在: %s" />
 
+        <ListPreference
+            app:key="pref_key_theme_mode"
+            app:title="テーマモード"
+            app:entries="@array/pref_theme_mode_entries"
+            app:entryValues="@array/pref_theme_mode_values"
+            app:defaultValue="system"
+            app:summary="%s" />
+
+        <ListPreference
+            app:key="pref_key_color_mode"
+            app:title="カラーモード"
+            app:entries="@array/pref_color_mode_entries"
+            app:entryValues="@array/pref_color_mode_values"
+            app:defaultValue="green"
+            app:summary="%s" />
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="投稿設定">

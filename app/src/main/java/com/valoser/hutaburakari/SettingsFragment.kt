@@ -84,5 +84,21 @@ class SettingsFragment : PreferenceFragmentCompat() {
             requireActivity().recreate()
             true
         }
+
+        // テーマモード（ライト/ダーク/システム）変更
+        val themePref: ListPreference? = findPreference("pref_key_theme_mode")
+        themePref?.setOnPreferenceChangeListener { _, _ ->
+            // BaseActivity.onCreateで反映されるため再生成
+            requireActivity().recreate()
+            true
+        }
+
+        // カラーモード（配色）変更
+        val colorPref: ListPreference? = findPreference("pref_key_color_mode")
+        colorPref?.setOnPreferenceChangeListener { _, _ ->
+            // その場で反映するため再生成
+            requireActivity().recreate()
+            true
+        }
     }
 }
