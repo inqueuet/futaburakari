@@ -298,9 +298,9 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
      * バックグラウンドでメタデータを更新
      */
     private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
-        val promptJobs = mutableListOf<Deferred<Pair<Int, String?>>>()
+        val promptJobs = mutableListOf<Deferred<Pair<String, String?>>>()
 
-        contentList.forEachIndexed { index, content ->
+        contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
                     val deferredPrompt = viewModelScope.async(limitedIO) {
@@ -314,14 +314,14 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                                     "Metadata for ${content.imageUrl} was null (timeout or null)"
                                 )
                             }
-                            Pair(index, prompt)
+                            Pair(content.id, prompt)
                         } catch (e: Exception) {
                             Log.e(
                                 "DetailViewModel",
                                 "Exception during metadata extraction task for ${content.imageUrl}",
                                 e
                             )
-                            Pair(index, null as String?)
+                            Pair(content.id, null as String?)
                         }
                     }
                     promptJobs.add(deferredPrompt)
@@ -338,14 +338,14 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                                     "Metadata for ${content.videoUrl} was null (timeout or null)"
                                 )
                             }
-                            Pair(index, prompt)
+                            Pair(content.id, prompt)
                         } catch (e: Exception) {
                             Log.e(
                                 "DetailViewModel",
                                 "Exception during metadata extraction task for ${content.videoUrl}",
                                 e
                             )
-                            Pair(index, null as String?)
+                            Pair(content.id, null as String?)
                         }
                     }
                     promptJobs.add(deferredPrompt)
@@ -363,19 +363,19 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                     val currentContentList = _detailContent.value?.toMutableList() ?: return@launch
                     var hasUpdates = false
 
-                    allPromptResults.forEach { (relativeIndex, prompt) ->
-                        // contentList内の相対インデックスから全体のインデックスを計算
-                        val absoluteIndex = currentContentList.size - contentList.size + relativeIndex
-
-                        if (absoluteIndex >= 0 && absoluteIndex < currentContentList.size) {
-                            val itemToUpdate = currentContentList[absoluteIndex]
+                    // id ベースで安全に更新（リスト長変化に頑健）
+                    val resultMap = allPromptResults.toMap()
+                    resultMap.forEach { (id, prompt) ->
+                        val idx = currentContentList.indexOfFirst { it.id == id }
+                        if (idx >= 0) {
+                            val itemToUpdate = currentContentList[idx]
                             val updatedItem = when (itemToUpdate) {
                                 is DetailContent.Image -> itemToUpdate.copy(prompt = prompt)
                                 is DetailContent.Video -> itemToUpdate.copy(prompt = prompt)
                                 else -> itemToUpdate
                             }
                             if (updatedItem != itemToUpdate) {
-                                currentContentList[absoluteIndex] = updatedItem
+                                currentContentList[idx] = updatedItem
                                 hasUpdates = true
                             }
                         }
