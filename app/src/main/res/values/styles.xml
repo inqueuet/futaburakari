@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Unified label text for form fields. Scales with fontScale (sp). -->
+    <style name="FormLabelText" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">10sp</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+</resources>
+
