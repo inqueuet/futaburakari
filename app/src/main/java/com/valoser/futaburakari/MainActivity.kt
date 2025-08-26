@@ -68,12 +68,15 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private var continuousScrollDistance = 0
     private var lastScrollPosition = 0
     private var bounceScrollCount = 0
-    private val minScrollDistanceThreshold = 200 // 最小スクロール距離（ピクセル）
+    private val minScrollDistanceDp = 120 // 最小スクロール距離の目安（dp）
     private val minBounceCountThreshold = 3 // 最小バウンス回数
 
     private val catsetAppliedHosts = mutableSetOf<String>()
 
     private var prefetchJob: Job? = null
+    // 下端プル検出用
+    private var bottomPullAccumulatedPx: Int = 0
+    private var lastBottomPullAtMs: Long = 0L
 
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -154,6 +157,15 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
                 lastScrollPosition += dy
 
                 checkBoundaryScroll()
+
+                // 下端に到達している状態でさらに下方向(dy>0)へ引っ張った距離を蓄積
+                val atBottomNow = gridLayoutManager.findLastVisibleItemPosition() >= (imageAdapter.itemCount - 1)
+                if (atBottomNow && dy > 0) {
+                    bottomPullAccumulatedPx += kotlin.math.abs(dy)
+                    lastBottomPullAtMs = System.currentTimeMillis()
+                } else if (!atBottomNow || dy < 0) {
+                    bottomPullAccumulatedPx = 0
+                }
             }
 
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
@@ -190,7 +202,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun shouldTriggerBounceEffect(): Boolean {
         // 最小スクロール距離に達していない場合は発動しない
-        if (continuousScrollDistance < minScrollDistanceThreshold) {
+        if (continuousScrollDistance < minScrollDistanceThresholdPx()) {
             return false
         }
 
@@ -203,11 +215,17 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     }
 
     private fun handleScrollStop() {
-        // より厳密な条件で自動更新を判定
-        val shouldTriggerUpdate = shouldTriggerAutoUpdate()
-
-        if (shouldTriggerUpdate) {
-            triggerAutoUpdate()
+        // 下端プルでの明示リロードを優先
+        if (shouldTriggerBottomPullToRefresh()) {
+            binding.swipeRefreshLayout.isRefreshing = true
+            fetchDataForCurrentUrl()
+            bottomPullAccumulatedPx = 0
+        } else {
+            // より厳密な条件で自動更新を判定
+            val shouldTriggerUpdate = shouldTriggerAutoUpdate()
+            if (shouldTriggerUpdate) {
+                triggerAutoUpdate()
+            }
         }
 
         // 停止時にバウンスカウンターをリセット
@@ -220,9 +238,17 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
         // 厳密な条件をすべて満たす場合のみ更新を実行
         return isAtBoundary &&
-                continuousScrollDistance >= minScrollDistanceThreshold &&
+                continuousScrollDistance >= minScrollDistanceThresholdPx() &&
                 bounceScrollCount >= minBounceCountThreshold &&
                 !isAutoUpdateEnabled &&
+                !binding.swipeRefreshLayout.isRefreshing
+    }
+
+    private fun shouldTriggerBottomPullToRefresh(): Boolean {
+        val recent = (System.currentTimeMillis() - lastBottomPullAtMs) <= 800
+        return isAtBottom &&
+                bottomPullAccumulatedPx >= minScrollDistanceThresholdPx() &&
+                recent &&
                 !binding.swipeRefreshLayout.isRefreshing
     }
 
@@ -285,6 +311,11 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
     }
 
+    private fun minScrollDistanceThresholdPx(): Int {
+        val dm = resources.displayMetrics
+        return (minScrollDistanceDp * dm.density).toInt().coerceAtLeast(48)
+    }
+
     private fun showToastOnUiThread(message: String, duration: Int) {
         runOnUiThread {
             Toast.makeText(this, message, duration).show()
@@ -315,6 +346,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             showBookmarkSelectionDialog()
         }
     }
+
+    
 
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
         val hostKey = URL(boardBaseUrl).host
@@ -456,6 +489,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         }
     }
 
+    
+
     private fun enableToolbarMultiline() {
         val toolbar = binding.toolbar
         toolbar.post {
@@ -519,6 +554,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         }
 
         viewModel.images.observe(this) { items ->
+            // 取得完了時は確実にリフレッシュ終了
+            binding.swipeRefreshLayout.isRefreshing = false
             allItems = items
             filterImages(null)
 
@@ -568,6 +605,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         }
 
         viewModel.error.observe(this) { errorMessage ->
+            // エラー時も確実にリフレッシュ終了
+            binding.swipeRefreshLayout.isRefreshing = false
             Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
         }
     }
