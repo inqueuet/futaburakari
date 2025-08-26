@@ -19,10 +19,13 @@ object PromptFormatter {
     fun parse(raw: String?): PromptViewData? {
         if (raw.isNullOrBlank()) return null
 
-        // 1) JSON 形式なら JSON 解析ルート
+        // 1) ComfyUI JSON 形式の解析を試みる
+        parseComfyUiJson(raw)?.let { return it }
+
+        // 2) 一般的なJSON 形式なら JSON 解析ルート
         parseJson(raw)?.let { return it }
 
-        // 2) それ以外はレガシーテキスト解析ルート
+        // 3) それ以外はレガシーテキスト解析ルート
         return parseLegacyText(raw)
     }
 
@@ -75,7 +78,79 @@ object PromptFormatter {
     }
 
     // --------------------
-    // JSON 解析
+    // ComfyUI JSON 解析
+    // --------------------
+    private fun parseComfyUiJson(raw: String): PromptViewData? {
+        try {
+            val json = JSONObject(raw)
+
+            // KSamplerノードを探す (設定値の多くが含まれるため)
+            val samplerNodeId = json.keys().asSequence().find {
+                json.optJSONObject(it)?.optString("class_type")?.startsWith("KSampler") == true
+            } ?: return null // KSamplerが見つからなければComfyUI形式ではないと判断
+
+            val samplerNode = json.getJSONObject(samplerNodeId)
+            val samplerInputs = samplerNode.getJSONObject("inputs")
+
+            // Positive/NegativeプロンプトのノードIDを取得
+            val positiveNodeId = samplerInputs.optJSONArray("positive")?.optString(0)
+            val negativeNodeId = samplerInputs.optJSONArray("negative")?.optString(0)
+
+            if (positiveNodeId == null || negativeNodeId == null) return null
+
+            // プロンプトテキストを抽出
+            val positiveText = json.optJSONObject(positiveNodeId)?.optJSONObject("inputs")?.optString("text")
+            val negativeText = json.optJSONObject(negativeNodeId)?.optJSONObject("inputs")?.optString("text")
+
+            val positive = splitTags(positiveText)
+            val negative = splitTags(negativeText)
+            val settings = linkedMapOf<String, String>()
+
+            // 設定値を抽出
+            samplerInputs.optString("seed", null)?.let { settings["Seed"] = it }
+            samplerInputs.optString("steps", null)?.let { settings["Steps"] = it }
+            samplerInputs.optString("cfg", null)?.let { settings["CFG"] = it }
+            samplerInputs.optString("sampler_name", null)?.let { settings["Sampler"] = it }
+            samplerInputs.optString("scheduler", null)?.let { settings["Scheduler"] = it }
+            samplerInputs.optString("denoise", null)?.let { settings["Denoise"] = it }
+
+
+            // モデル名を探す
+            val modelNodeId = samplerInputs.optJSONArray("model")?.optString(0)
+            if (modelNodeId != null) {
+                val modelNode = json.optJSONObject(modelNodeId)
+                // LoraTagLoader -> CheckpointLoaderSimple のように辿る
+                val checkpointNodeId = modelNode?.optJSONObject("inputs")?.optJSONArray("model")?.optString(0)
+                if (checkpointNodeId != null) {
+                    json.optJSONObject(checkpointNodeId)
+                        ?.optJSONObject("inputs")
+                        ?.optString("ckpt_name", null)
+                        ?.let { settings["Model"] = it }
+                }
+            }
+
+
+            // 画像サイズを探す (EmptyLatentImage)
+            val latentNodeId = samplerInputs.optJSONArray("latent_image")?.optString(0)
+            if (latentNodeId != null) {
+                val latentInputs = json.optJSONObject(latentNodeId)?.optJSONObject("inputs")
+                if (latentInputs != null) {
+                    val w = latentInputs.optInt("width", -1)
+                    val h = latentInputs.optInt("height", -1)
+                    if (w > 0 && h > 0) settings["Size"] = "${w}x${h}"
+                }
+            }
+
+            return PromptViewData(positive, negative, settings)
+
+        } catch (_: JSONException) {
+            return null
+        }
+    }
+
+
+    // --------------------
+    // JSON 解析 (元々のコード)
     // --------------------
     private fun parseJson(raw: String): PromptViewData? {
         val json = findJsonObject(raw) ?: return null
