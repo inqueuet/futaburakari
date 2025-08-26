@@ -110,33 +110,64 @@ class BookmarkActivity : BaseActivity() {
             etBookmarkUrl.setText(it.url)
         }
 
-        AlertDialog.Builder(this)
+        val dlg = AlertDialog.Builder(this)
             .setTitle(dialogTitle)
             .setView(dialogBinding.root)
-            .setPositiveButton(if (bookmarkToEdit == null) "追加" else "保存") { dialog, _ ->
+            .setPositiveButton(if (bookmarkToEdit == null) "追加" else "保存", null)
+            .setNegativeButton("キャンセル", null)
+            .create()
+
+        dlg.setOnShowListener {
+            val positive = dlg.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setOnClickListener {
                 val name = etBookmarkName.text.toString().trim()
                 val url = etBookmarkUrl.text.toString().trim()
 
-                if (name.isNotEmpty() && url.isNotEmpty()) {
-                    if (bookmarkToEdit == null) { // Add new
-                        BookmarkManager.addBookmark(this, Bookmark(name, url))
-                        Toast.makeText(this, "ブックマークを追加しました", Toast.LENGTH_SHORT).show()
-                    } else { // Edit existing
-                        BookmarkManager.updateBookmark(this, bookmarkToEdit.url, Bookmark(name, url))
-                        // If the edited bookmark was the currently selected one, update the selection
-                        if (BookmarkManager.getSelectedBookmarkUrl(this) == bookmarkToEdit.url) {
-                            BookmarkManager.saveSelectedBookmarkUrl(this, url)
-                        }
-                        Toast.makeText(this, "ブックマークを更新しました", Toast.LENGTH_SHORT).show()
+                // 入力検証
+                when {
+                    name.isEmpty() || url.isEmpty() -> {
+                        Toast.makeText(this, "名前とURLを入力してください", Toast.LENGTH_SHORT).show()
                     }
-                    loadBookmarks() // Refresh the list
-                } else {
-                    Toast.makeText(this, "名前とURLを入力してください", Toast.LENGTH_SHORT).show()
+                    name.length > 10 -> {
+                        Toast.makeText(this, "名前は10文字以内で入力してください", Toast.LENGTH_SHORT).show()
+                    }
+                    !isValidFutabaUrl(url) -> {
+                        Toast.makeText(this, "URLは2chan.netドメインでfutaba.phpを含む必要があります", Toast.LENGTH_LONG).show()
+                    }
+                    else -> {
+                        if (bookmarkToEdit == null) {
+                            BookmarkManager.addBookmark(this, Bookmark(name, url))
+                            Toast.makeText(this, "ブックマークを追加しました", Toast.LENGTH_SHORT).show()
+                        } else {
+                            BookmarkManager.updateBookmark(this, bookmarkToEdit.url, Bookmark(name, url))
+                            if (BookmarkManager.getSelectedBookmarkUrl(this) == bookmarkToEdit.url) {
+                                BookmarkManager.saveSelectedBookmarkUrl(this, url)
+                            }
+                            Toast.makeText(this, "ブックマークを更新しました", Toast.LENGTH_SHORT).show()
+                        }
+                        loadBookmarks()
+                        dlg.dismiss()
+                    }
                 }
-                dialog.dismiss()
             }
-            .setNegativeButton("キャンセル", null)
-            .show()
+        }
+
+        dlg.show()
+    }
+
+    private fun isValidFutabaUrl(raw: String): Boolean {
+        return try {
+            val uri = android.net.Uri.parse(raw)
+            val scheme = uri.scheme?.lowercase()
+            val host = uri.host?.lowercase() ?: return false
+            val pathAll = raw.lowercase()
+            val domainOk = (host == "2chan.net") || host.endsWith(".2chan.net")
+            val schemeOk = scheme == "https" || scheme == "http"
+            val pathOk = pathAll.contains("futaba.php")
+            domainOk && schemeOk && pathOk
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun showDeleteConfirmationDialog(bookmark: Bookmark) {

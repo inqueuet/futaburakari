@@ -21,10 +21,10 @@ class ImageAdapter : ListAdapter<ImageItem, ImageAdapter.ImageViewHolder>(DiffCa
     private var originalList: List<ImageItem> = emptyList() // フィルター前のオリジナルリスト
 
     // オリジナルリストをセットし、表示を更新するメソッド
-    fun submitOriginalList(list: List<ImageItem>) {
-        originalList = list
-        submitList(list)
-    }
+    //fun submitOriginalList(list: List<ImageItem>) {
+    //    originalList = list
+    //    submitList(list)
+    //}
 
     class ImageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         private val imageView: ImageView = view.findViewById(R.id.imageView)

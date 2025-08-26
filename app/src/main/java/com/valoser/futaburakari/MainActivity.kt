@@ -39,6 +39,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private lateinit var imageAdapter: ImageAdapter
     private var currentSelectedUrl: String? = null
     private var allItems: List<ImageItem> = emptyList()
+    private var currentQuery: String? = null
 
     // 自動更新機能用のフィールド（改良版）
     private var isAutoUpdateEnabled = false
@@ -74,6 +75,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private val catsetAppliedHosts = mutableSetOf<String>()
 
     private var prefetchJob: Job? = null
+    private var autoUpdateRunnable: Runnable? = null
     // 下端プル検出用
     private var bottomPullAccumulatedPx: Int = 0
     private var lastBottomPullAtMs: Long = 0L
@@ -118,6 +120,9 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         observeViewModel()
         setupClickListener()
 
+        // スワイプインジケータを中央に配置
+        configureSwipeRefreshIndicatorPosition()
+
         // スワイプ更新のリスナーを設定
         binding.swipeRefreshLayout.setOnRefreshListener {
             fetchDataForCurrentUrl()
@@ -130,6 +135,37 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         super.onDestroy()
         if (::prefs.isInitialized) {
             prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        }
+        // 遅延実行の取り消し（画面破棄後に走らないように）
+        autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
+        autoUpdateRunnable = null
+        isAutoUpdateEnabled = false
+        showAutoUpdateIndicator(false)
+    }
+
+    private fun configureSwipeRefreshIndicatorPosition() {
+        val srl = binding.swipeRefreshLayout
+        // 初期レイアウト後に中央へ配置
+        srl.post {
+            val h = srl.height.takeIf { it > 0 } ?: return@post
+            val target = h / 2
+            try {
+                srl.setProgressViewEndTarget(true, target)
+            } catch (_: Throwable) {
+                // 一部端末でsetProgressViewEndTargetが不安定な場合はオフセット指定にフォールバック
+                val dm = resources.displayMetrics
+                val circle = (40 * dm.density).toInt() // おおよその直径
+                val start = (target - circle).coerceAtLeast(0)
+                val end = (target + circle).coerceAtMost(h)
+                try { srl.setProgressViewOffset(true, start, end) } catch (_: Throwable) {}
+            }
+        }
+        // レイアウト変化（回転等）でも再調整
+        srl.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val h = v.height
+            if (h > 0) {
+                try { srl.setProgressViewEndTarget(true, h / 2) } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -246,7 +282,11 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun shouldTriggerBottomPullToRefresh(): Boolean {
         val recent = (System.currentTimeMillis() - lastBottomPullAtMs) <= 800
+        val canScrollFurtherDown = binding.recyclerView.canScrollVertically(1)
+        val overscrollEnabled = binding.recyclerView.overScrollMode != View.OVER_SCROLL_NEVER
         return isAtBottom &&
+                !canScrollFurtherDown &&
+                overscrollEnabled &&
                 bottomPullAccumulatedPx >= minScrollDistanceThresholdPx() &&
                 recent &&
                 !binding.swipeRefreshLayout.isRefreshing
@@ -279,13 +319,21 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         // 小さなローディング表示
         showAutoUpdateIndicator(true)
 
-        // 指定時間後に更新を実行
-        binding.recyclerView.postDelayed({
+        // 指定時間後に更新を実行（取り消し可能なRunnableを保持）
+        autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
+        autoUpdateRunnable = Runnable {
             performAutoUpdate()
-        }, autoUpdateDelayMs)
+        }
+        binding.recyclerView.postDelayed(autoUpdateRunnable!!, autoUpdateDelayMs)
     }
 
     private fun performAutoUpdate() {
+        // 画面終了・破棄後に実行されないように二重ガード
+        if (isFinishing || isDestroyed) {
+            isAutoUpdateEnabled = false
+            showAutoUpdateIndicator(false)
+            return
+        }
         currentSelectedUrl?.let { url ->
             // 現在のアイテム数を記録
             val currentItemCount = imageAdapter.itemCount
@@ -429,7 +477,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     }
 
     override fun onQueryTextChange(newText: String?): Boolean {
-        filterImages(newText)
+        currentQuery = newText
+        filterImages(currentQuery)
         return true
     }
 
@@ -557,7 +606,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             // 取得完了時は確実にリフレッシュ終了
             binding.swipeRefreshLayout.isRefreshing = false
             allItems = items
-            filterImages(null)
+            // ユーザー入力中の検索クエリを維持
+            filterImages(currentQuery)
 
             // いったん既存プリフェッチを止める
             prefetchJob?.cancel()

@@ -15,6 +15,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
 
     private lateinit var webView: WebView
     private val pending = AtomicReference<((Result<Map<String, String>>) -> Unit)?>(null)
+    private var allowedHost: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
@@ -25,7 +26,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
         webView = WebView(requireContext()).apply {
             layoutParams = ViewGroup.LayoutParams(1, 1)
             settings.javaScriptEnabled = true
-            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.javaScriptCanOpenWindowsAutomatically = false
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             settings.loadsImagesAutomatically = false
@@ -33,11 +34,37 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
             // ★ 共通UAを適用
             settings.userAgentString = Ua.STRING
 
+            // Hardening: block file/content access and mixed content
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            @Suppress("DEPRECATION")
+            try { settings.allowFileAccessFromFileURLs = false } catch (_: Throwable) {}
+            @Suppress("DEPRECATION")
+            try { settings.allowUniversalAccessFromFileURLs = false } catch (_: Throwable) {}
+            try { settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW } catch (_: Throwable) {}
+
             val cm = CookieManager.getInstance()
             cm.setAcceptCookie(true)
             if (Build.VERSION.SDK_INT >= 21) cm.setAcceptThirdPartyCookies(this, true)
 
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val url = request.url
+                    val host = url.host
+                    val scheme = url.scheme
+                    val allow = (scheme == "https" || scheme == "http") && host != null && host.equals(allowedHost, ignoreCase = true)
+                    return !allow // block anything not explicitly allowed
+                }
+                @Suppress("DEPRECATION")
+                override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+                    return try {
+                        val u = android.net.Uri.parse(url)
+                        val host = u.host
+                        val scheme = u.scheme
+                        val allow = (scheme == "https" || scheme == "http") && host != null && host.equals(allowedHost, ignoreCase = true)
+                        !allow
+                    } catch (_: Exception) { true }
+                }
                 override fun onPageFinished(view: WebView, url: String) {
                     view.postDelayed({ injectAndExtract() }, 250)
                 }
@@ -79,6 +106,10 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
         }?.invoke(Result.failure(IllegalStateException("cancelled by new fetchTokens")))
 
         webView.post {
+            // restrict navigation to the same host as post page
+            runCatching {
+                allowedHost = android.net.Uri.parse(postPageUrl).host
+            }
             webView.loadUrl(postPageUrl)
         }
 

@@ -11,6 +11,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -298,102 +300,98 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
      * バックグラウンドでメタデータを更新
      */
     private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
-        val promptJobs = mutableListOf<Deferred<Pair<String, String?>>>()
+        // 段階反映: 各ジョブ完了ごとにチャンネルへ送り、一定間隔でまとめて適用
+        val updates = Channel<Pair<String, String?>>(Channel.UNLIMITED)
+        val sendJobs = mutableListOf<Deferred<Unit>>()
 
         contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
-                    val deferredPrompt = viewModelScope.async(limitedIO) {
-                        try {
-                            val prompt = withTimeoutOrNull(5000L) {
-                                MetadataExtractor.extract(getApplication(), content.imageUrl)
-                            }
-                            if (prompt == null) {
-                                Log.w(
-                                    "DetailViewModel",
-                                    "Metadata for ${content.imageUrl} was null (timeout or null)"
-                                )
-                            }
-                            Pair(content.id, prompt)
+                    val job = viewModelScope.async(limitedIO) {
+                        val prompt = try {
+                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(getApplication(), content.imageUrl) }
                         } catch (e: Exception) {
-                            Log.e(
-                                "DetailViewModel",
-                                "Exception during metadata extraction task for ${content.imageUrl}",
-                                e
-                            )
-                            Pair(content.id, null as String?)
+                            Log.e("DetailViewModel", "Metadata task error for ${content.imageUrl}", e)
+                            null
                         }
+                        if (prompt == null) {
+                            Log.w("DetailViewModel", "Metadata for ${content.imageUrl} was null (timeout or null)")
+                        }
+                        updates.send(content.id to prompt)
                     }
-                    promptJobs.add(deferredPrompt)
+                    sendJobs.add(job)
                 }
                 is DetailContent.Video -> {
-                    val deferredPrompt = viewModelScope.async(limitedIO) {
-                        try {
-                            val prompt = withTimeoutOrNull(5000L) {
-                                MetadataExtractor.extract(getApplication(), content.videoUrl)
-                            }
-                            if (prompt == null) {
-                                Log.w(
-                                    "DetailViewModel",
-                                    "Metadata for ${content.videoUrl} was null (timeout or null)"
-                                )
-                            }
-                            Pair(content.id, prompt)
+                    val job = viewModelScope.async(limitedIO) {
+                        val prompt = try {
+                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(getApplication(), content.videoUrl) }
                         } catch (e: Exception) {
-                            Log.e(
-                                "DetailViewModel",
-                                "Exception during metadata extraction task for ${content.videoUrl}",
-                                e
-                            )
-                            Pair(content.id, null as String?)
+                            Log.e("DetailViewModel", "Metadata task error for ${content.videoUrl}", e)
+                            null
                         }
+                        if (prompt == null) {
+                            Log.w("DetailViewModel", "Metadata for ${content.videoUrl} was null (timeout or null)")
+                        }
+                        updates.send(content.id to prompt)
                     }
-                    promptJobs.add(deferredPrompt)
+                    sendJobs.add(job)
                 }
                 else -> {}
             }
         }
 
-        // メタデータ取得完了後に更新
-        if (promptJobs.isNotEmpty()) {
-            viewModelScope.launch(Dispatchers.Default) {
-                try {
-                    val allPromptResults = promptJobs.awaitAll()
+        if (sendJobs.isEmpty()) return
 
-                    val currentContentList = _detailContent.value?.toMutableList() ?: return@launch
-                    var hasUpdates = false
+        // クローズ処理: 全送信ジョブ完了後にチャネルを閉じる
+        viewModelScope.launch {
+            try {
+                sendJobs.joinAll()
+            } finally {
+                updates.close()
+            }
+        }
 
-                    // id ベースで安全に更新（リスト長変化に頑健）
-                    val resultMap = allPromptResults.toMap()
-                    resultMap.forEach { (id, prompt) ->
-                        val idx = currentContentList.indexOfFirst { it.id == id }
+        // 受信・段階反映（200–300ms間隔でバッチ適用）
+        viewModelScope.launch(Dispatchers.Default) {
+            val batch = mutableMapOf<String, String?>()
+            var lastFlush = System.currentTimeMillis()
+            val flushIntervalMs = 250L
+
+            suspend fun flush(force: Boolean = false) {
+                val now = System.currentTimeMillis()
+                val due = (now - lastFlush) >= flushIntervalMs
+                if (batch.isNotEmpty() && (force || due)) {
+                    val current = _detailContent.value?.toMutableList() ?: return
+                    var changed = false
+                    batch.forEach { (id, prompt) ->
+                        val idx = current.indexOfFirst { it.id == id }
                         if (idx >= 0) {
-                            val itemToUpdate = currentContentList[idx]
-                            val updatedItem = when (itemToUpdate) {
-                                is DetailContent.Image -> itemToUpdate.copy(prompt = prompt)
-                                is DetailContent.Video -> itemToUpdate.copy(prompt = prompt)
-                                else -> itemToUpdate
+                            val it = current[idx]
+                            val upd = when (it) {
+                                is DetailContent.Image -> it.copy(prompt = prompt)
+                                is DetailContent.Video -> it.copy(prompt = prompt)
+                                else -> it
                             }
-                            if (updatedItem != itemToUpdate) {
-                                currentContentList[idx] = updatedItem
-                                hasUpdates = true
-                            }
+                            if (upd != it) { current[idx] = upd; changed = true }
                         }
                     }
-
-                    if (hasUpdates) {
-                        withContext(Dispatchers.Main) {
-                            _detailContent.postValue(currentContentList.toList())
-                        }
-
-                        withContext(Dispatchers.IO) {
-                            cacheManager.saveDetails(url, currentContentList.toList())
-                        }
+                    if (changed) {
+                        _detailContent.postValue(current.toList())
+                        withContext(Dispatchers.IO) { cacheManager.saveDetails(url, current.toList()) }
                     }
-                } catch (e: Exception) {
-                    Log.e("DetailViewModel", "Error in background prompt processing for $url", e)
+                    batch.clear()
+                    lastFlush = now
                 }
             }
+
+            // 受信ループ
+            for (pair in updates) {
+                batch[pair.first] = pair.second
+                // 必要なら定期的に反映
+                flush(force = false)
+            }
+            // 終了時の最終反映
+            flush(force = true)
         }
     }
 

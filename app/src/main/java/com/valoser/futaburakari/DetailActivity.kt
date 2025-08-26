@@ -26,6 +26,8 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.LoadAdError
 
+import com.valoser.futaburakari.worker.ThreadMonitorWorker
+
 class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     private lateinit var binding: ActivityDetailBinding
