@@ -40,6 +40,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private var currentSelectedUrl: String? = null
     private var allItems: List<ImageItem> = emptyList()
     private var currentQuery: String? = null
+    private var lastIsLoading: Boolean = false
+    private var autoIndicatorShown: Boolean = false
 
     // 自動更新機能用のフィールド（改良版）
     private var isAutoUpdateEnabled = false
@@ -125,6 +127,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
         // スワイプ更新のリスナーを設定
         binding.swipeRefreshLayout.setOnRefreshListener {
+            syncLoadingUi()
             fetchDataForCurrentUrl()
         }
 
@@ -140,7 +143,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
         autoUpdateRunnable = null
         isAutoUpdateEnabled = false
-        showAutoUpdateIndicator(false)
+        setAutoUpdateIndicator(false)
     }
 
     private fun configureSwipeRefreshIndicatorPosition() {
@@ -254,6 +257,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         // 下端プルでの明示リロードを優先
         if (shouldTriggerBottomPullToRefresh()) {
             binding.swipeRefreshLayout.isRefreshing = true
+            syncLoadingUi()
             fetchDataForCurrentUrl()
             bottomPullAccumulatedPx = 0
         } else {
@@ -317,7 +321,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         // showToastOnUiThread("更新を確認中...", Toast.LENGTH_SHORT)
 
         // 小さなローディング表示
-        showAutoUpdateIndicator(true)
+        setAutoUpdateIndicator(true)
 
         // 指定時間後に更新を実行（取り消し可能なRunnableを保持）
         autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
@@ -331,7 +335,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         // 画面終了・破棄後に実行されないように二重ガード
         if (isFinishing || isDestroyed) {
             isAutoUpdateEnabled = false
-            showAutoUpdateIndicator(false)
+            setAutoUpdateIndicator(false)
             return
         }
         currentSelectedUrl?.let { url ->
@@ -341,7 +345,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             // バックグラウンドで更新を実行
             viewModel.checkForUpdates(url, currentItemCount) { hasUpdates ->
                 runOnUiThread {
-                    showAutoUpdateIndicator(false)
+                    setAutoUpdateIndicator(false)
                     isAutoUpdateEnabled = false
 
                     if (hasUpdates) {
@@ -356,7 +360,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun showAutoUpdateIndicator(show: Boolean) {
         // カタログ用の小さなローディングインジケーターを表示/非表示
-        binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
+        setAutoUpdateIndicator(show)
     }
 
     private fun minScrollDistanceThresholdPx(): Int {
@@ -374,6 +378,17 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         currentSelectedUrl = BookmarkManager.getSelectedBookmarkUrl(this)
         binding.toolbar.subtitle = getCurrentBookmarkName()
         fetchDataForCurrentUrl()
+    }
+
+    private fun setAutoUpdateIndicator(show: Boolean) {
+        autoIndicatorShown = show
+        syncLoadingUi()
+    }
+
+    private fun syncLoadingUi() {
+        val refreshing = binding.swipeRefreshLayout.isRefreshing
+        binding.progressBar.isVisible = (lastIsLoading || autoIndicatorShown) && !refreshing
+        binding.recyclerView.isVisible = !lastIsLoading || refreshing
     }
 
     private fun fetchDataForCurrentUrl() {
@@ -429,6 +444,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         return when (item.itemId) {
             R.id.action_reload -> {
                 binding.swipeRefreshLayout.isRefreshing = true
+                syncLoadingUi()
                 fetchDataForCurrentUrl()
                 Toast.makeText(this, getString(R.string.reloading), Toast.LENGTH_SHORT).show()
                 true
@@ -595,16 +611,15 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { isLoading ->
-            if (!binding.swipeRefreshLayout.isRefreshing) {
-                binding.progressBar.isVisible = isLoading
-            }
+            lastIsLoading = isLoading
             if (!isLoading) binding.swipeRefreshLayout.isRefreshing = false
-            binding.recyclerView.isVisible = !isLoading || binding.swipeRefreshLayout.isRefreshing
+            syncLoadingUi()
         }
 
         viewModel.images.observe(this) { items ->
             // 取得完了時は確実にリフレッシュ終了
             binding.swipeRefreshLayout.isRefreshing = false
+            syncLoadingUi()
             allItems = items
             // ユーザー入力中の検索クエリを維持
             filterImages(currentQuery)
@@ -657,6 +672,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         viewModel.error.observe(this) { errorMessage ->
             // エラー時も確実にリフレッシュ終了
             binding.swipeRefreshLayout.isRefreshing = false
+            syncLoadingUi()
             Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
         }
     }
