@@ -152,27 +152,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cells = document.select("#cattable td")
 
         for (cell in cells) {
-            val linkTag = cell.selectFirst("a")
-            val imgTag = linkTag?.selectFirst("img") ?: continue
-
-            val imageUrl = imgTag.absUrl("src")
+            val linkTag = cell.selectFirst("a") ?: continue
             val detailUrl = linkTag.absUrl("href")
 
-            // この板のHTMLでは <small> が無いことも多いので空なら空でOK
+            // 1) まず通常通り <img> があればそれを使う
+            val imgTag = linkTag.selectFirst("img")
+            var imageUrl: String? = imgTag?.absUrl("src")
+
+            // 2) <img> が無い（今回のHTMLのような）場合、res/{id}.htm から id を抜いて推測構築
+            if (imageUrl.isNullOrEmpty()) {
+                val href = linkTag.attr("href") // 例: "res/178828.htm"
+                val m = Regex("""res/(\d+)\.htm""").find(href)
+                if (m != null) {
+                    val id = m.groupValues[1]
+                    // 例: https://zip.2chan.net/32/res/... -> https://zip.2chan.net/32
+                    val boardBase = detailUrl.substringBeforeLast("/res/")
+                    // Futaba の実運用でよく見かける配置を優先順で列挙（存在チェックはせず最初を使う）
+                    val candidates = listOf(
+                        "$boardBase/cat/$id.jpg",
+                        "$boardBase/cat/$id.png",
+                        "$boardBase/cat/$id.webp",
+                        "$boardBase/thumb/${id}s.jpg",
+                        "$boardBase/thumb/${id}s.png",
+                        "$boardBase/thumb/${id}s.webp"
+                    )
+                    imageUrl = candidates.firstOrNull()
+                }
+            }
+
+            // サムネイルURLが最終的に得られない場合はスキップ
+            if (imageUrl.isNullOrEmpty()) continue
+
+            // タイトル・レス数（無ければ空でOK）
             val title = cell.selectFirst("small")?.text() ?: ""
             val replies = cell.selectFirst("font")?.text() ?: ""
 
-            if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
-                parsedItems.add(
-                    ImageItem(
-                        previewUrl = imageUrl,
-                        title = title,
-                        replyCount = replies,
-                        detailUrl = detailUrl,
-                        fullImageUrl = null
-                    )
+            parsedItems.add(
+                ImageItem(
+                    previewUrl = imageUrl!!,
+                    title = title,
+                    replyCount = replies,
+                    detailUrl = detailUrl,
+                    fullImageUrl = null
                 )
-            }
+            )
         }
         return parsedItems
     }
