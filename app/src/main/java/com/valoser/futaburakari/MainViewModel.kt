@@ -26,29 +26,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
 
-    /**
-     * サムネURLからフル画像URLを推測する
-     * 例:
-     *   .../thumb/123456s.jpg → .../src/123456.jpg
-     *   .../cat/123456s.png   → .../src/123456.png
-     */
     private fun guessFullFromPreview(previewUrl: String): String? {
         return try {
             var s = previewUrl
                 .replace("/thumb/", "/src/")
                 .replace("/cat/", "/src/")
-
-            // 末尾の 's' を落として拡張子は維持
             s = s.replace(Regex("s\\.(jpg|jpeg|png|gif|webp)$", RegexOption.IGNORE_CASE), ".$1")
-
-            // 念のため絶対URLに正規化
             URL(s).toString()
         } catch (_: Exception) {
             null
         }
     }
 
-    /** HEAD リクエストで存在確認（HTMLダウンロード不要で軽い） */
     private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(url).head().build()
         runCatching {
@@ -58,19 +47,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.getOrDefault(false)
     }
 
-    /**
-     * ★高速版：
-     *  1) サムネからフルURLを推測 → HEAD で存在確認
-     *  2) 外れた分だけ detail HTML を取りに行き、/src/ の最初の画像を取得
-     *  3) 結果をマージして返す
-     */
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
-
-        // まず推測
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
-
-        // HEAD で一気に確認（並列は控えめに）
         val limitedIO = Dispatchers.IO.limitedParallelism(4)
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
@@ -83,17 +62,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.awaitAll()
         }
-
-        // まだ fullImageUrl が無いものだけ HTML を解析
         val needHtml = headChecked.filter { it.fullImageUrl.isNullOrBlank() }
         if (needHtml.isEmpty()) return headChecked
-
         val htmlFilled = withContext(limitedIO) {
             needHtml.map { item ->
                 async {
                     val full = runCatching {
                         val detailDoc = NetworkClient.fetchDocument(item.detailUrl)
-                        // 最初の1件だけを素早く取る
                         detailDoc.selectFirst("""div.thre a[href*="/src/"]""")
                             ?.absUrl("href")
                     }.getOrNull()
@@ -101,8 +76,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.awaitAll()
         }
-
-        // マージ（順序は元のまま維持）
         val filledMap = htmlFilled.associateBy { it.detailUrl }
         return headChecked.map { filledMap[it.detailUrl] ?: it }
     }
@@ -112,8 +85,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isLoading.value = true
             try {
                 val document = NetworkClient.fetchDocument(url)
-                val baseItems = parseItemsFromDocument(document) // previewUrl, detailUrl までは従来通り
-                val enriched = enrichWithFullImages(baseItems)    // ★改良版で高速に fullImageUrl 付与
+                // ★修正点: urlを渡して解析方法を切り替え
+                val baseItems = parseItemsFromDocument(document, url)
+                val enriched = enrichWithFullImages(baseItems)
                 _images.value = enriched
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
@@ -123,33 +97,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * カタログに新しい更新があるかチェックし、あれば追加する
-     * 既存の fullImageUrl はできるだけ引き継ぎ、足りない分だけ解決
-     */
     fun checkForUpdates(url: String, currentItemCount: Int, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
                 val document = NetworkClient.fetchDocument(url)
-                val newItemList = parseItemsFromDocument(document)
-
-                // 既存データの fullImageUrl を引き継ぐ
+                // ★修正点: urlを渡して解析方法を切り替え
+                val newItemList = parseItemsFromDocument(document, url)
                 val currentItems = _images.value ?: emptyList()
                 val currentMapByDetail = currentItems.associateBy { it.detailUrl }
-
                 val carried = newItemList.map { ni ->
                     val old = currentMapByDetail[ni.detailUrl]
                     ni.copy(fullImageUrl = old?.fullImageUrl)
                 }
-
-                // まだ fullImageUrl が無いものを高速ロジックで解決
                 val need = carried.filter { it.fullImageUrl.isNullOrBlank() }
                 val filled = if (need.isNotEmpty()) enrichWithFullImages(need) else emptyList()
                 val filledMap = filled.associateBy { it.detailUrl }
-
-                // マージ
                 val merged = carried.map { filledMap[it.detailUrl] ?: it }
-
                 val hasNewContent =
                     merged.size != currentItems.size || !merged.containsAll(currentItems)
 
@@ -168,24 +131,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * ドキュメントから ImageItem のリストを解析する共通メソッド
-     * （catalogのセル #cattable td を走査）
+     * ドキュメントからImageItemのリストを解析する
+     * URLに応じて適切なパーサーに処理を振り分ける
      */
-    private fun parseItemsFromDocument(document: Document): List<ImageItem> {
+    private fun parseItemsFromDocument(document: Document, url: String): List<ImageItem> {
+        return when {
+            // カテゴリー1：旧式のHTML構造
+            url.contains("cgi.2chan.net") -> parseForCgiServer(document)
+            // 特殊なページ (機能していない場合がある)
+            url.contains("/junbi/") -> emptyList()
+            // カテゴリー2（お絵かき系）および正常なページ
+            else -> parseForStandardServer(document)
+        }
+    }
+
+    /**
+     * 標準的なサーバーおよびお絵かき系サーバー用のパーサー
+     * #cattable を探し、タグの欠損に寛容なロジックで解析する
+     */
+    private fun parseForStandardServer(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
         val cells = document.select("#cattable td")
 
         for (cell in cells) {
             val linkTag = cell.selectFirst("a")
             val imgTag = linkTag?.selectFirst("img")
-            val smallTag = cell.selectFirst("small")
-            val fontTag = cell.selectFirst("font")
 
-            if (linkTag != null && imgTag != null && smallTag != null && fontTag != null) {
+            // 最低限、リンクと画像があれば処理を続行
+            if (linkTag != null && imgTag != null) {
                 val imageUrl = imgTag.absUrl("src")
                 val detailUrl = linkTag.absUrl("href")
-                val title = smallTag.text()
-                val replies = fontTag.text()
+
+                // タイトルとレス数は存在すれば取得し、なければ空文字にする
+                val title = cell.selectFirst("small")?.text() ?: ""
+                val replies = cell.selectFirst("font")?.text() ?: ""
 
                 if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
                     parsedItems.add(
@@ -197,11 +176,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             fullImageUrl = null
                         )
                     )
-                } else {
-                    Log.w(
-                        "MainViewModel",
-                        "Skipping item due to empty imageUrl or detailUrl. " +
-                                "Image src: ${imgTag.attr("src")}, Link href: ${linkTag.attr("href")}"
+                }
+            }
+        }
+        return parsedItems
+    }
+
+    /**
+     * cgi.2chan.net サーバー用のパーサー
+     * こちらは #cattable を持たないため、異なるセレクタで解析する
+     */
+    private fun parseForCgiServer(document: Document): List<ImageItem> {
+        val parsedItems = mutableListOf<ImageItem>()
+        // cgiサーバーは 'div' で囲まれた 'a' タグのリストで構成されていることが多い
+        val links = document.select("div > a[href*='/res/']")
+
+        for (linkTag in links) {
+            val imgTag = linkTag.selectFirst("img")
+            if (imgTag != null) {
+                val imageUrl = imgTag.absUrl("src")
+                val detailUrl = linkTag.absUrl("href")
+
+                // cgiサーバーでは、関連情報が <small> タグに入っていることが多い
+                val infoText = linkTag.parent()?.selectFirst("small")?.text() ?: ""
+
+                if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
+                    parsedItems.add(
+                        ImageItem(
+                            previewUrl = imageUrl,
+                            title = infoText, // cgiでは詳細な分離が難しいため、取得したテキストをそのまま入れる
+                            replyCount = "",   // レス数は別途取得が困難なため空にする
+                            detailUrl = detailUrl,
+                            fullImageUrl = null
+                        )
                     )
                 }
             }

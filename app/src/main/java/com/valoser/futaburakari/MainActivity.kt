@@ -28,9 +28,9 @@ import com.valoser.futaburakari.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.URL
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import java.net.URL
 
 class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
@@ -74,7 +74,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private val minScrollDistanceDp = 120 // 最小スクロール距離の目安（dp）
     private val minBounceCountThreshold = 3 // 最小バウンス回数
 
-    private val catsetAppliedHosts = mutableSetOf<String>()
+    // catset適用フラグを「板（例: https://zip.2chan.net/1/）」単位で保持
+    private val catsetAppliedBoards = mutableSetOf<String>()
 
     private var prefetchJob: Job? = null
     private var autoUpdateRunnable: Runnable? = null
@@ -393,33 +394,36 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun fetchDataForCurrentUrl() {
         currentSelectedUrl?.let { url ->
-            // ★★★ 変更点: 2つの非同期処理を別々に起動する ★★★
-            val boardBaseUrl = url.substringBefore("futaba.php")
-            if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
-                // 設定適用は「投げっぱなし」でOKなので、別Coroutineで実行
-                lifecycleScope.launch {
-                    applyCatalogSettings(boardBaseUrl)
+            // 1つのコルーチンにまとめることで、処理の順序を保証する
+            lifecycleScope.launch {
+                val boardBaseUrl = url.substringBefore("futaba.php")
+                if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
+                    // 最初に設定を適用し、完了するまで待つ
+                    // 設定適用が失敗しても画像取得は走るように try-catch で囲む
+                    try {
+                        applyCatalogSettings(boardBaseUrl)
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "カタログ設定の適用に失敗", e)
+                    }
                 }
-            } else {
-                // Log.e(...)
+                // 設定適用の完了後、画像取得を開始する
+                viewModel.fetchImagesFromUrl(url)
             }
-            // 画像取得も（上記の完了を待たずに）すぐに開始
-            viewModel.fetchImagesFromUrl(url)
         } ?: run {
+            // 選択中のURLがない場合は、ブックマーク選択ダイアログを表示
             showBookmarkSelectionDialog()
         }
     }
 
-    
-
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
-        val hostKey = URL(boardBaseUrl).host
-        if (catsetAppliedHosts.contains(hostKey)) return  // 以降スキップ
+        // 例: https://zip.2chan.net/1/ までをキーとする
+        val boardKey = boardBaseUrl.trimEnd('/')
+        if (catsetAppliedBoards.contains(boardKey)) return
 
         val settings = mapOf("mode" to "catset", "cx" to "20", "cy" to "10", "cl" to "10")
         try {
             NetworkClient.applySettings(boardBaseUrl, settings)
-            catsetAppliedHosts.add(hostKey)
+            catsetAppliedBoards.add(boardKey)
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(

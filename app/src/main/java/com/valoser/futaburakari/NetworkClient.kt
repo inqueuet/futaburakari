@@ -31,7 +31,7 @@ object NetworkClient {
         return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
     }
 
-    // ===== HTML GET（Shift_JIS） =====
+    // ===== HTML GET（SJIS/UTF-8 自動判定） =====
     suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -45,7 +45,7 @@ object NetworkClient {
                 throw IOException("HTTPエラー: ${resp.code} ${resp.message}")
             }
             val bytes = resp.body!!.bytes()
-            val decoded = String(bytes, Charset.forName("Shift_JIS"))
+            val decoded = EncodingUtils.decode(bytes, resp.header("Content-Type"))
             Jsoup.parse(decoded, url)
         }
     }
@@ -85,11 +85,7 @@ object NetworkClient {
             return httpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val raw = resp.body?.bytes() ?: return@use null
-                val text = try {
-                    String(raw, Charset.forName("UTF-8")).trim()
-                } catch (_: Exception) {
-                    String(raw).trim()
-                }
+                val text = EncodingUtils.decode(raw, resp.header("Content-Type")).trim()
                 text.toIntOrNull()
             }
         }
@@ -162,7 +158,7 @@ object NetworkClient {
                 val body = resp.body?.bytes() ?: return@use false
                 val okBySize = body.size == 2
                 val okByText = runCatching {
-                    String(body, Charset.forName("Shift_JIS")).trim().equals("OK", true)
+                    EncodingUtils.decode(body, resp.header("Content-Type")).trim().equals("OK", true)
                 }.getOrDefault(false)
                 okBySize || okByText
             }

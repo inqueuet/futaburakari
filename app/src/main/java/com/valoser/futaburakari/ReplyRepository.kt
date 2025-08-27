@@ -192,15 +192,14 @@ class ReplyRepository(
 
             httpClient.newCall(req).execute().use { resp ->
                 val raw = resp.body?.bytes() ?: ByteArray(0)
-                // Futaba は Shift_JIS な短文HTML or JSON を返す
-                val sjis = try { String(raw, Charset.forName("Shift_JIS")) } catch (_: Exception) { String(raw) }
-                //android.util.Log.d("ReplyRepo", "resp.head=${sjis.trim().take(200)}")
+                val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
+                //android.util.Log.d("ReplyRepo", "resp.head=${decoded.trim().take(200)}")
                 if (!resp.isSuccessful) {
                     //android.util.Log.w("ReplyRepo", "HTTP ${resp.code} ${resp.message}")
-                    throw IOException("HTTP ${resp.code} ${resp.message}\n$sjis")
+                    throw IOException("HTTP ${resp.code} ${resp.message}\n$decoded")
                 }
 
-                 val trimmed = sjis.trim()
+                 val trimmed = decoded.trim()
                 // 1) JSON なら thisno を抜いて返す（例: {"status":"ok","thisno":1345629398,...}）
                 val jsonThisNo = Regex("""\"thisno\"\s*:\s*(\d{6,})""").find(trimmed)?.groupValues?.getOrNull(1)
                 if (jsonThisNo != null) {
@@ -240,7 +239,7 @@ class ReplyRepository(
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }
                     val body = resp.body?.bytes() ?: ByteArray(0)
-                    val html = String(body, Charset.forName("Shift_JIS"))
+                    val html = EncodingUtils.decode(body, resp.header("Content-Type"))
                     val doc = Jsoup.parse(html, threadUrl)
                     val fm = doc.selectFirst("form#fm") ?: doc.selectFirst("form")
                     val hash = fm?.selectFirst("input[name=hash]")?.attr("value").orEmpty()
