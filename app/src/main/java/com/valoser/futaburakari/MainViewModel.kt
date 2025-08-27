@@ -135,14 +135,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * URLに応じて適切なパーサーに処理を振り分ける
      */
     private fun parseItemsFromDocument(document: Document, url: String): List<ImageItem> {
-        return when {
-            // カテゴリー1：旧式のHTML構造
-            url.contains("cgi.2chan.net") -> parseForCgiServer(document)
-            // 特殊なページ (機能していない場合がある)
-            url.contains("/junbi/") -> emptyList()
-            // カテゴリー2（お絵かき系）および正常なページ
-            else -> parseForStandardServer(document)
+        // 1) まず #cattable を最優先（cgi でも普通に存在する）
+        val hasCatalogTable = document.select("#cattable td").isNotEmpty()
+        if (hasCatalogTable) return parseFromCattable(document)
+
+        // 2) 一部の準備ページは空
+        if (url.contains("/junbi/")) return emptyList()
+
+        // 3) 最後の手段として旧 cgi 風のフォールバック
+        return parseCgiFallback(document)
+    }
+
+    // 追加：#cattable 用パーサ（旧 parseForStandardServer の実質改名）
+    private fun parseFromCattable(document: Document): List<ImageItem> {
+        val parsedItems = mutableListOf<ImageItem>()
+        val cells = document.select("#cattable td")
+
+        for (cell in cells) {
+            val linkTag = cell.selectFirst("a")
+            val imgTag = linkTag?.selectFirst("img") ?: continue
+
+            val imageUrl = imgTag.absUrl("src")
+            val detailUrl = linkTag.absUrl("href")
+
+            // この板のHTMLでは <small> が無いことも多いので空なら空でOK
+            val title = cell.selectFirst("small")?.text() ?: ""
+            val replies = cell.selectFirst("font")?.text() ?: ""
+
+            if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
+                parsedItems.add(
+                    ImageItem(
+                        previewUrl = imageUrl,
+                        title = title,
+                        replyCount = replies,
+                        detailUrl = detailUrl,
+                        fullImageUrl = null
+                    )
+                )
+            }
         }
+        return parsedItems
+    }
+
+    // 置き換え：cgi フォールバック（旧 parseForCgiServer を安全側に縮約）
+    private fun parseCgiFallback(document: Document): List<ImageItem> {
+        val parsedItems = mutableListOf<ImageItem>()
+        val links = document.select("a[href*='/res/']")
+
+        for (linkTag in links) {
+            val imgTag = linkTag.selectFirst("img") ?: continue
+            val imageUrl = imgTag.absUrl("src")
+            val detailUrl = linkTag.absUrl("href")
+            val infoText = linkTag.parent()?.selectFirst("small")?.text() ?: ""
+            if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
+                parsedItems.add(
+                    ImageItem(
+                        previewUrl = imageUrl,
+                        title = infoText,
+                        replyCount = "",
+                        detailUrl = detailUrl,
+                        fullImageUrl = null
+                    )
+                )
+            }
+        }
+        return parsedItems
     }
 
     /**
