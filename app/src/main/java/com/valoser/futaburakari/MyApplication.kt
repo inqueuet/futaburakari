@@ -3,13 +3,16 @@ package com.valoser.futaburakari
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.util.Log
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.decode.VideoFrameDecoder
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
 @HiltAndroidApp
-class MyApplication : Application(), Configuration.Provider {
+class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
@@ -47,4 +50,14 @@ class MyApplication : Application(), Configuration.Provider {
                 .setDefaultProcessName(packageName) // マルチプロセス想定時は有効化
                 .build()
         }
+
+    // Coil: add video frame decoding so loading a video URL
+    // into an ImageView extracts a representative frame.
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .components {
+                add(VideoFrameDecoder.Factory())
+            }
+            .build()
+    }
 }
