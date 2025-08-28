@@ -26,6 +26,7 @@ import coil.request.ImageRequest
 import android.widget.TextView
 import com.valoser.futaburakari.databinding.ActivityMainBinding
 import dagger.hilt.android.AndroidEntryPoint
+import com.google.gson.Gson
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -79,6 +80,11 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     // catset適用フラグを「板（例: https://zip.2chan.net/1/）」単位で保持
     private val catsetAppliedBoards = mutableSetOf<String>()
+    private val catsetAppliedTimestamps = mutableMapOf<String, Long>() // boardKey -> appliedAt
+    private val catsetPrefsName = "com.valoser.futaburakari.catalog"
+    private val catsetPrefsKey = "applied_boards"
+    private val catsetPrefsTsKey = "applied_boards_ts"
+    private val CATSET_TTL_MS = 3L * 24 * 60 * 60 * 1000 // 3日
 
     private var prefetchJob: Job? = null
     private var autoUpdateRunnable: Runnable? = null
@@ -121,6 +127,9 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
+        // 端末再起動後も catset 適用済みボードをスキップできるように永続化されたセットを読み込み
+        restoreAppliedBoards()
+
         setupRecyclerView()
         setupAutoUpdateScroll() // 自動更新機能のセットアップ
         observeViewModel()
@@ -131,6 +140,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
         // スワイプ更新のリスナーを設定
         binding.swipeRefreshLayout.setOnRefreshListener {
+            cancelAutoUpdate()
             syncLoadingUi()
             fetchDataForCurrentUrl()
         }
@@ -219,6 +229,9 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
                     handleScrollStop()
                     // 停止時にカウンターをリセット
                     continuousScrollDistance = 0
+                } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    // ユーザ操作開始時は保留中の自動更新を確実にキャンセル
+                    cancelAutoUpdate()
                 }
             }
         })
@@ -336,28 +349,28 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     }
 
     private fun performAutoUpdate() {
-        // 画面終了・破棄後に実行されないように二重ガード
-        if (isFinishing || isDestroyed) {
-            isAutoUpdateEnabled = false
-            setAutoUpdateIndicator(false)
-            return
-        }
-        currentSelectedUrl?.let { url ->
-            // 現在のアイテム数を記録
-            val currentItemCount = imageAdapter.itemCount
-
-            // バックグラウンドで更新を実行
-            viewModel.checkForUpdates(url, currentItemCount) { hasUpdates ->
-                runOnUiThread {
-                    setAutoUpdateIndicator(false)
-                    isAutoUpdateEnabled = false
-
-                    if (hasUpdates) {
-                        // showToastOnUiThread("新しいスレッドが追加されました", Toast.LENGTH_SHORT)
-                    } else {
-                        // showToastOnUiThread("更新はありません", Toast.LENGTH_SHORT)
+        var completed = false
+        try {
+            // 画面終了・破棄後に実行されないように二重ガード
+            if (isFinishing || isDestroyed) return
+            currentSelectedUrl?.let { url ->
+                val currentItemCount = imageAdapter.itemCount
+                viewModel.checkForUpdates(url, currentItemCount) { _ ->
+                    completed = true
+                    runOnUiThread {
+                        setAutoUpdateIndicator(false)
+                        isAutoUpdateEnabled = false
                     }
                 }
+            }
+        } catch (_: Throwable) {
+            // 例外時も確実にOFF
+            completed = true
+        } finally {
+            if (!completed) {
+                // コールバック未達などの保険
+                setAutoUpdateIndicator(false)
+                isAutoUpdateEnabled = false
             }
         }
     }
@@ -397,20 +410,25 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun fetchDataForCurrentUrl() {
         currentSelectedUrl?.let { url ->
-            // 1つのコルーチンにまとめることで、処理の順序を保証する
+            // 初期表示の遅延を避けるため、まずは即座に一覧を取得開始
+            viewModel.fetchImagesFromUrl(url)
+
+            // カタログ設定の適用は非同期で実行し、適用が「今回新規で行われた」場合のみ再取得を掛ける
             lifecycleScope.launch {
                 val boardBaseUrl = url.substringBefore("futaba.php")
                 if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
-                    // 最初に設定を適用し、完了するまで待つ
-                    // 設定適用が失敗しても画像取得は走るように try-catch で囲む
+                    val boardKey = boardBaseUrl.trimEnd('/')
+                    val wasApplied = isCatsetAppliedRecent(boardKey)
                     try {
                         applyCatalogSettings(boardBaseUrl)
+                        // 今回新規に適用された場合のみ、一覧を更新して差分を反映
+                        if (!wasApplied) {
+                            viewModel.fetchImagesFromUrl(url)
+                        }
                     } catch (e: Exception) {
                         Log.e("MainActivity", "カタログ設定の適用に失敗", e)
                     }
                 }
-                // 設定適用の完了後、画像取得を開始する
-                viewModel.fetchImagesFromUrl(url)
             }
         } ?: run {
             // 選択中のURLがない場合は、ブックマーク選択ダイアログを表示
@@ -421,12 +439,14 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
         // 例: https://zip.2chan.net/1/ までをキーとする
         val boardKey = boardBaseUrl.trimEnd('/')
-        if (catsetAppliedBoards.contains(boardKey)) return
+        if (isCatsetAppliedRecent(boardKey)) return
 
         val settings = mapOf("mode" to "catset", "cx" to "20", "cy" to "10", "cl" to "10")
         try {
             networkClient.applySettings(boardBaseUrl, settings)
             catsetAppliedBoards.add(boardKey)
+            catsetAppliedTimestamps[boardKey] = System.currentTimeMillis()
+            persistAppliedBoards()
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(
@@ -437,6 +457,51 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             }
             e.printStackTrace()
         }
+    }
+
+    private fun restoreAppliedBoards() {
+        val sp = getSharedPreferences(catsetPrefsName, MODE_PRIVATE)
+        // 旧形式（Set<String>）互換
+        val legacy = sp.getStringSet(catsetPrefsKey, null)
+
+        // 新形式（JSON: Map<String, Long>）
+        val json = sp.getString(catsetPrefsTsKey, null)
+        catsetAppliedBoards.clear()
+        catsetAppliedTimestamps.clear()
+        if (!json.isNullOrBlank()) {
+            runCatching {
+                val map: Map<String, Double> = Gson().fromJson(json, Map::class.java) as Map<String, Double>
+                val now = System.currentTimeMillis()
+                map.forEach { (k, v) ->
+                    val ts = v.toLong()
+                    // TTLを過ぎたものは復元しない（再適用対象）
+                    if (now - ts < CATSET_TTL_MS) {
+                        catsetAppliedBoards.add(k)
+                        catsetAppliedTimestamps[k] = ts
+                    }
+                }
+            }
+        } else if (legacy != null) {
+            // 旧保存分はTTL起点が無いので「今」を時刻として復元
+            val now = System.currentTimeMillis()
+            catsetAppliedBoards.addAll(legacy)
+            legacy.forEach { catsetAppliedTimestamps[it] = now }
+            persistAppliedBoards()
+        }
+    }
+
+    private fun persistAppliedBoards() {
+        val sp = getSharedPreferences(catsetPrefsName, MODE_PRIVATE)
+        // 旧形式も一応更新（後方互換）
+        sp.edit().putStringSet(catsetPrefsKey, catsetAppliedBoards).apply()
+        // 新形式としてJSON保存
+        val json = Gson().toJson(catsetAppliedTimestamps)
+        sp.edit().putString(catsetPrefsTsKey, json).apply()
+    }
+
+    private fun isCatsetAppliedRecent(boardKey: String): Boolean {
+        val ts = catsetAppliedTimestamps[boardKey] ?: return false
+        return (System.currentTimeMillis() - ts) < CATSET_TTL_MS
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -450,6 +515,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_reload -> {
+                cancelAutoUpdate()
                 binding.swipeRefreshLayout.isRefreshing = true
                 syncLoadingUi()
                 fetchDataForCurrentUrl()
@@ -628,6 +694,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             // 取得完了時は確実にリフレッシュ終了
             binding.swipeRefreshLayout.isRefreshing = false
             syncLoadingUi()
+            setAutoUpdateIndicator(false)
             allItems = items
             // ユーザー入力中の検索クエリを維持
             filterImages(currentQuery)
@@ -681,8 +748,16 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             // エラー時も確実にリフレッシュ終了
             binding.swipeRefreshLayout.isRefreshing = false
             syncLoadingUi()
+            setAutoUpdateIndicator(false)
             Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun cancelAutoUpdate() {
+        autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
+        autoUpdateRunnable = null
+        isAutoUpdateEnabled = false
+        setAutoUpdateIndicator(false)
     }
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
