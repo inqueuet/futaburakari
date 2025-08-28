@@ -76,10 +76,32 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
     fun updateSodane(resNum: String, count: Int) {
         sodaneOverrides[resNum] = count
-        val idx = currentList.indexOfFirst { content ->
-            content is DetailContent.Text && extractResNo(content.htmlContent) == resNum
+        val idx = findPositionByResNum(resNum)
+        if (idx >= 0) notifyItemChanged(idx, "SODANE_CHANGED") else notifyDataSetChanged()
+    }
+
+    // 楽観的更新: タップ直後にローカルで +1 して即時反映
+    fun bumpSodaneOptimistic(resNum: String) {
+        val next = (sodaneOverrides[resNum] ?: 0) + 1
+        sodaneOverrides[resNum] = next
+        val idx = findPositionByResNum(resNum)
+        if (idx >= 0) notifyItemChanged(idx, "SODANE_CHANGED") else notifyDataSetChanged()
+    }
+
+    private fun findPositionByResNum(resNum: String): Int {
+        val list = currentList
+        for (i in list.indices) {
+            val c = list[i]
+            if (c is DetailContent.Text) {
+                val html = c.htmlContent
+                val byHtml = extractResNo(html)
+                if (byHtml == resNum) return i
+                // フォールバック：プレーンテキストから判定
+                val plain = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT).toString()
+                if (plain.contains("No.$resNum")) return i
+            }
         }
-        if (idx >= 0) notifyItemChanged(idx, "SODANE_CHANGED")
+        return -1
     }
 
     private fun extractResNo(html: String): String? {
@@ -170,6 +192,21 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         }
     }
 
+    override fun onBindViewHolder(
+        holder: RecyclerView.ViewHolder,
+        position: Int,
+        payloads: MutableList<Any>
+    ) {
+        if (payloads.any { it == "SODANE_CHANGED" }) {
+            val item = getItem(position)
+            if (item is DetailContent.Text && holder is TextViewHolder) {
+                holder.bind(item, currentSearchQuery)
+                return
+            }
+        }
+        super.onBindViewHolder(holder, position, payloads)
+    }
+
     // ---------- ViewHolders ----------
 
     class TextViewHolder(
@@ -187,11 +224,16 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         private val textView: TextView = view.findViewById(R.id.detailTextView)
 
         fun bind(item: DetailContent.Text, searchQuery: String?) {
-            val mainResNum = adapter.extractResNo(item.htmlContent)
             val htmlWithZwsp = insertZwspForPadding(item.htmlContent)
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
             val spannableBuilder = SpannableStringBuilder(textFromHtmlWithZwsp)
             val contentString = spannableBuilder.toString()
+            // No. が html に無いケースに備え、プレーンテキストからも取得を試みる
+            val mainResNum = adapter.extractResNo(item.htmlContent)
+                ?: run {
+                    val m = resNumPatternForClickableSpan.matcher(contentString)
+                    if (m.find()) m.group(1) else null
+                }
 
             // --- No.xxx クリック（返信/削除メニュー）の設定 ---
             run {
@@ -341,12 +383,46 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                     val matchedText = contentString.substring(matchStart, matchEnd)
                     val tokenRegex = Regex("(?:[+＋]|そうだねx\\d+)")
                     val tokenMatch = tokenRegex.find(matchedText) ?: continue
-                    val tokenAbsStart = matchStart + tokenMatch.range.first
-                    val tokenAbsEnd   = matchStart + tokenMatch.range.last + 1
+                    var tokenAbsStart = matchStart + tokenMatch.range.first
+                    var tokenAbsEnd   = matchStart + tokenMatch.range.last + 1
 
                     if (tokenAbsStart >= 0 && tokenAbsEnd <= spannableBuilder.length) {
+                        // 楽観的更新やサーバ返り値がある場合は、+ を そうだねxN に置き換える
+                        val override = adapter.sodaneOverrides[resNum]
+                        if (override != null && override >= 0) {
+                            val replacement = "そうだねx$override"
+                            spannableBuilder.replace(tokenAbsStart, tokenAbsEnd, replacement)
+                            // 置換により長さが変わるため、終端を再計算
+                            tokenAbsEnd = tokenAbsStart + replacement.length
+                        }
+
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
+                                // 1) 楽観的にローカル更新（TextViewの現在テキストを書き換え）
+                                val tv = widget as TextView
+                                val sp = SpannableStringBuilder(tv.text)
+                                val start = sp.getSpanStart(this)
+                                val end = sp.getSpanEnd(this)
+                                val next = (adapter.sodaneOverrides[resNum] ?: 0) + 1
+                                adapter.sodaneOverrides[resNum] = next
+                                val replacement = "そうだねx$next"
+                                val newEnd = if (start >= 0 && end >= 0 && end <= sp.length) {
+                                    sp.replace(start, end, replacement)
+                                    start + replacement.length
+                                } else {
+                                    // 位置が特定できない場合は末尾に追記
+                                    sp.append(" $replacement"); sp.length
+                                }
+                                // 既存のクリックを除去して再付与
+                                val exist = sp.getSpans(0, sp.length, ClickableSpan::class.java)
+                                exist.forEach { sp.removeSpan(it) }
+                                sp.setSpan(this, (newEnd - replacement.length), newEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                                tv.text = sp
+
+                                // 2) 通知（保険で再バインド）
+                                adapter.notifyDataSetChanged()
+
+                                // 3) ネット送信
                                 onSodaNeClickListener?.invoke(resNum)
                             }
                             override fun updateDrawState(ds: TextPaint) {
@@ -359,11 +435,11 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             }
 
             // そうだね（安全な後付け表示）
-            // HTMLは改変せず、No.xxx の行末に " そうだねx{count}" を付与しクリック可能にする
+            // HTMLは改変せず、No.xxx の行末に " そうだねx{count}" もしくは " そうだね" を付与しクリック可能にする
             run {
                 val resNum = mainResNum
                 val count = resNum?.let { adapter.sodaneOverrides[it] }
-                if (resNum != null && count != null && count >= 0) {
+                if (resNum != null) {
                     val noMatch = Regex("""No\.$resNum""").find(contentString)
                     val insertPos = if (noMatch != null) {
                         val start = noMatch.range.first
@@ -378,17 +454,41 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val end = insertPos
                         contentString.substring(start, end)
                     } else ""
-                    val alreadyHas = lineText.contains(Regex("そうだねx\\d+"))
+                    // 既にトークン（+ / ＋ / そうだねxN / そうだね）が見えているなら追加しない
+                    val alreadyHas = lineText.contains(Regex("(?:[+＋]|そうだねx\\d+|そうだね)(?![\\w])"))
                     if (!alreadyHas) {
                         val prefix = if (insertPos > 0 && spannableBuilder[insertPos - 1].isWhitespace()) "" else " "
-                        val suffix = "${prefix}そうだねx${count}"
+                        val suffixCore = if (count != null && count >= 0) "そうだねx${count}" else "そうだね"
+                        val suffix = "${prefix}${suffixCore}"
                         val start = insertPos
                         spannableBuilder.insert(start, suffix)
                         val end = start + suffix.length
-                        val clickableStart = end - ("そうだねx$count").length
+                        val clickableStart = end - suffixCore.length
                         if (clickableStart >= 0 && end <= spannableBuilder.length) {
                             val span = object : ClickableSpan() {
-                                override fun onClick(widget: View) { onSodaNeClickListener?.invoke(resNum) }
+                                override fun onClick(widget: View) {
+                                    val tv = widget as TextView
+                                    val sp = SpannableStringBuilder(tv.text)
+                                    val start = sp.getSpanStart(this)
+                                    val endPos = sp.getSpanEnd(this)
+                                    val next = (adapter.sodaneOverrides[resNum] ?: 0) + 1
+                                    adapter.sodaneOverrides[resNum] = next
+                                    val replacement = "そうだねx$next"
+                                    val newEnd = if (start >= 0 && endPos >= 0 && endPos <= sp.length) {
+                                        sp.replace(start, endPos, replacement)
+                                        start + replacement.length
+                                    } else {
+                                        sp.append(" $replacement"); sp.length
+                                    }
+                                    val exist = sp.getSpans(0, sp.length, ClickableSpan::class.java)
+                                    exist.forEach { sp.removeSpan(it) }
+                                    sp.setSpan(this, (newEnd - replacement.length), newEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                                    tv.text = sp
+
+                                    adapter.notifyDataSetChanged()
+
+                                    onSodaNeClickListener?.invoke(resNum)
+                                }
                                 override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
                             }
                             spannableBuilder.setSpan(span, clickableStart, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -424,26 +524,32 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 }
             }
 
-            // URLSpan を外部ブラウザ起動に差し替え
+            // URLSpan を外部ブラウザ起動に差し替え（javascript: は無視して除去）
             run {
                 val urlSpans = spannableBuilder.getSpans(0, spannableBuilder.length, URLSpan::class.java)
                 for (old in urlSpans) {
                     val s = spannableBuilder.getSpanStart(old)
                     val e = spannableBuilder.getSpanEnd(old)
                     spannableBuilder.removeSpan(old)
-                    val span = object : ClickableSpan() {
-                        override fun onClick(widget: View) {
-                            try {
-                                val ctx = widget.context
-                                val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(old.url))
-                                ctx.startActivity(i)
-                            } catch (ex: Exception) {
-                                Log.e("DetailAdapter", "Failed to open url: ${old.url}", ex)
+                    val url = old.url ?: ""
+                    if (url.startsWith("javascript:", ignoreCase = true)) {
+                        // そうだねなどの JS アンカーはURLSpanを再付与しない（独自処理に委ねる）
+                        continue
+                    } else {
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) {
+                                try {
+                                    val ctx = widget.context
+                                    val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    ctx.startActivity(i)
+                                } catch (ex: Exception) {
+                                    Log.e("DetailAdapter", "Failed to open url: $url", ex)
+                                }
                             }
                         }
-                    }
-                    if (s >= 0 && e <= spannableBuilder.length) {
-                        spannableBuilder.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (s >= 0 && e <= spannableBuilder.length) {
+                            spannableBuilder.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                     }
                 }
             }

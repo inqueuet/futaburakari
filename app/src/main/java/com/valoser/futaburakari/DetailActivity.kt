@@ -20,6 +20,9 @@ import com.valoser.futaburakari.databinding.ActivityDetailBinding
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
+import kotlinx.coroutines.launch
 import java.text.Normalizer
 import androidx.preference.PreferenceManager
 import com.google.android.gms.ads.AdRequest
@@ -246,8 +249,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             QuotePopupFragment.showForId(supportFragmentManager, id)
         }
 
-        // 「そうだね」
+        // 「そうだね」: 楽観的にUIを+1してから送信
         detailAdapter.onSodaNeClickListener = { resNum ->
+            detailAdapter.bumpSodaneOptimistic(resNum)
             viewModel.postSodaNe(resNum)
         }
 
@@ -426,9 +430,11 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         })
 
         // ★ 追加: 「そうだね」更新を購読して Adapter に反映
-        lifecycleScope.launchWhenStarted {
-            viewModel.sodaneUpdate.collect { (resNum, count) ->
-                detailAdapter.updateSodane(resNum, count)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.sodaneUpdate.collect { (resNum, count) ->
+                    detailAdapter.updateSodane(resNum, count)
+                }
             }
         }
 
@@ -484,7 +490,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     private fun restoreScroll() {
-        if (!::scrollStore.isInitialized) return
+        if (!::scrollStore.isInitialized) {
+            return
+        }
         currentUrl?.let { url ->
             val key = UrlNormalizer.threadKey(url)     // ★ ここで正規化
             val (pos, off) = scrollStore.getScrollState(key)

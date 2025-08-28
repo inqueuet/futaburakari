@@ -411,8 +411,13 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val count = networkClient.postSodaNe(resNum, url)
-                if (count != null) _sodaneUpdate.tryEmit(resNum to count)
-                else _error.value = "「そうだね」の投稿に失敗しました。"
+                if (count != null) {
+                    // 成功: 次回以降押下を抑止
+                    sodaNeStates[resNum] = true
+                    _sodaneUpdate.tryEmit(resNum to count)
+                } else {
+                    _error.value = "「そうだね」の投稿に失敗しました。"
+                }
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error in postSodaNe: ${e.message}", e)
                 _error.value = "「そうだね」の投稿中にエラーが発生しました: ${e.message}"
