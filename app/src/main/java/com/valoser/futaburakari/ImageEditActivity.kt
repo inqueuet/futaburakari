@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.content.pm.PackageManager
+import android.annotation.SuppressLint
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -36,6 +37,7 @@ class ImageEditActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_IMAGE_URI = "com.valoser.futaburakari.EXTRA_IMAGE_URI"
+        private const val REQUEST_WRITE_EXTERNAL_STORAGE = 1001
     }
 
     private val viewModel: ImageEditViewModel by viewModels()
@@ -268,6 +270,7 @@ class ImageEditActivity : BaseActivity() {
         buttonLock.text = if (isLocked) "解除" else "固定"
     }
 
+    @SuppressLint("MissingPermission")
     private fun saveImageToGallery() {
         // On API < 29, ensure WRITE_EXTERNAL_STORAGE is granted before saving
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -315,6 +318,7 @@ class ImageEditActivity : BaseActivity() {
                         imageOutUriForExif = imageOutUri
                         fos = imageOutUri?.let { resolver.openOutputStream(it) }
                     } else {
+                        @Suppress("DEPRECATION")
                         val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES + File.separator + "Futaburakari")
                         if (!imagesDir.exists()) {
                             imagesDir.mkdirs()
@@ -382,7 +386,4 @@ class ImageEditActivity : BaseActivity() {
         super.onDestroy()
     }
 
-    companion object {
-        private const val REQUEST_WRITE_EXTERNAL_STORAGE = 1001
-    }
 }
