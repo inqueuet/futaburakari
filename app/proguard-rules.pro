@@ -20,12 +20,11 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# PersistentCookieJarの内部データクラスSerializableCookieを難読化から除外する
-# これにより、GsonがJSONとの間で正しくシリアライズ/デシリアライズできるようになる
 -keep class com.valoser.futaburakari.PersistentCookieJar$SerializableCookie { *; }
 -keep class com.valoser.futaburakari.Bookmark { *; }
 -keep class com.valoser.futaburakari.cache.CachedDetails { *; }
 -keep class com.valoser.futaburakari.DetailContent { *; }
 -keep class com.valoser.futaburakari.DetailContent$* { *; }
--keep class com.valoser.futaburakari.FutabaResponse { *; }
 -keep class com.valoser.futaburakari.HistoryEntry { *; }
+-keep class okhttp3.internal.publicsuffix.PublicSuffixDatabase { *; }
+-keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
