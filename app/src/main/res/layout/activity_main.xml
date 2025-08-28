@@ -18,6 +18,7 @@
             android:minHeight="?attr/actionBarSize"
             android:background="?attr/colorPrimary"
             app:titleTextColor="?attr/colorOnPrimary"
+            android:padding="1dp"
             app:titleCentered="false" />
 
     </com.google.android.material.appbar.AppBarLayout>

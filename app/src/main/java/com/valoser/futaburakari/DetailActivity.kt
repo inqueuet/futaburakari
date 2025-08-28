@@ -629,17 +629,23 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     // BottomSheet に DetailAdapter で並べる（遷移は無効化）
     private fun showContentListBottomSheet(items: List<DetailContent>) {
         val dialog = BottomSheetDialog(this)
+        val popupAdapter = DetailAdapter().apply {
+            onQuoteClickListener = null
+            onIdClickListener = null
+            onSodaNeClickListener = null
+            onResNumClickListener = null
+            onThreadEndTimeClickListener = null
+            getSodaNeState = { false }
+            submitList(items)
+        }
+
         val recycler = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@DetailActivity)
-            adapter = DetailAdapter().apply {
-                onQuoteClickListener = null
-                onIdClickListener = null
-                onSodaNeClickListener = null
-                onResNumClickListener = null
-                onThreadEndTimeClickListener = null
-                getSodaNeState = { false }
-                submitList(items)
-            }
+            adapter = popupAdapter
+            // Draw dividers only at end of a block (same as other popups)
+            addItemDecoration(
+                BlockDividerDecoration(popupAdapter, context, paddingStartDp = 0, paddingEndDp = 0)
+            )
         }
         dialog.setContentView(recycler)
         dialog.show()
