@@ -28,6 +28,10 @@
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="@string/admob_app_id" />
+        <!-- Disable WorkManager's default initializer since we provide Configuration.Provider -->
+        <meta-data
+            android:name="androidx.work.WorkManagerInitializer"
+            android:value="disable" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
