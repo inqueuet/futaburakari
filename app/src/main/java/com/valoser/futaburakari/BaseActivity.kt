@@ -42,10 +42,10 @@ open class BaseActivity : AppCompatActivity() {
 
         val colorMode = prefs.getString("pref_key_color_mode", "green")
         when (colorMode) {
-            "purple" -> setTheme(R.style.Theme_MyApplication_Purple)
-            "blue" -> setTheme(R.style.Theme_MyApplication_Blue)
-            "orange" -> setTheme(R.style.Theme_MyApplication_Orange)
-            else -> setTheme(R.style.Theme_MyApplication_Green)
+            "purple" -> setTheme(R.style.Theme_Futaburakari_Purple)
+            "blue" -> setTheme(R.style.Theme_Futaburakari_Blue)
+            "orange" -> setTheme(R.style.Theme_Futaburakari_Orange)
+            else -> setTheme(R.style.Theme_Futaburakari_Green)
         }
 
         lastAppliedThemeMode = themeMode

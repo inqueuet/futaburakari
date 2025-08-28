@@ -2,6 +2,7 @@ package com.valoser.futaburakari
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -24,6 +25,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 object MetadataExtractor {
+    private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定 ======
     private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を2に制限
@@ -88,7 +90,7 @@ object MetadataExtractor {
         return connectionSemaphore.withPermit {
             val connectionCount = activeConnectionCount.incrementAndGet()
             try {
-                println("アクティブ接続数: $connectionCount") // デバッグ用
+                Log.d(TAG, "activeConnections=$connectionCount")
                 httpGetRange(urlStr, start, length, networkClient)
             } finally {
                 activeConnectionCount.decrementAndGet()
@@ -103,7 +105,7 @@ object MetadataExtractor {
         return connectionSemaphore.withPermit {
             val connectionCount = activeConnectionCount.incrementAndGet()
             try {
-                println("アクティブ接続数: $connectionCount") // デバッグ用
+                Log.d(TAG, "activeConnections=$connectionCount")
                 httpHead(urlStr, networkClient)
             } finally {
                 activeConnectionCount.decrementAndGet()

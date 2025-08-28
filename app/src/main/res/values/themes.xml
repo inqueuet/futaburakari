@@ -3,7 +3,7 @@
         古いテーマ定義は削除しました。
         こちらの正しいテーマをアプリのデフォルトとして使います。
     -->
-    <style name="Theme.MyApplication" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.Futaburakari" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <!--
             ブランドの基本色。
             この中でテーマの各属性をカスタマイズできます。
@@ -19,9 +19,9 @@
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
     </style>
 
-    <style name="Theme.MyApplication.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+    <style name="Theme.Futaburakari.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
 
-    <style name="Theme.MyApplication.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+    <style name="Theme.Futaburakari.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
 
     <style name="Toolbar.TitleText" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
         <item name="android:textColor">?attr/colorOnPrimary</item>

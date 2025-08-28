@@ -8,7 +8,7 @@
     </style>
 
     <!-- Color overlays (can be applied on top of base theme) -->
-    <style name="ThemeOverlay.MyApplication.Color.Green" parent="ThemeOverlay.MaterialComponents">
+    <style name="ThemeOverlay.Futaburakari.Color.Green" parent="ThemeOverlay.MaterialComponents">
         <item name="colorPrimary">@color/green_primary</item>
         <item name="colorPrimaryVariant">@color/green_primaryVariant</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -17,7 +17,7 @@
         <item name="colorOnSecondary">@color/black</item>
     </style>
 
-    <style name="ThemeOverlay.MyApplication.Color.Purple" parent="ThemeOverlay.MaterialComponents">
+    <style name="ThemeOverlay.Futaburakari.Color.Purple" parent="ThemeOverlay.MaterialComponents">
         <item name="colorPrimary">@color/purple_500</item>
         <item name="colorPrimaryVariant">@color/purple_700</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -26,7 +26,7 @@
         <item name="colorOnSecondary">@color/black</item>
     </style>
 
-    <style name="ThemeOverlay.MyApplication.Color.Blue" parent="ThemeOverlay.MaterialComponents">
+    <style name="ThemeOverlay.Futaburakari.Color.Blue" parent="ThemeOverlay.MaterialComponents">
         <item name="colorPrimary">#1565C0</item>
         <item name="colorPrimaryVariant">#0D47A1</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -35,7 +35,7 @@
         <item name="colorOnSecondary">@color/black</item>
     </style>
 
-    <style name="ThemeOverlay.MyApplication.Color.Orange" parent="ThemeOverlay.MaterialComponents">
+    <style name="ThemeOverlay.Futaburakari.Color.Orange" parent="ThemeOverlay.MaterialComponents">
         <item name="colorPrimary">#EF6C00</item>
         <item name="colorPrimaryVariant">#E65100</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -45,7 +45,7 @@
     </style>
 
     <!-- Full themes per color to allow setTheme(...) switching -->
-    <style name="Theme.MyApplication.Green" parent="Theme.MyApplication">
+    <style name="Theme.Futaburakari.Green" parent="Theme.Futaburakari">
         <item name="colorPrimary">@color/green_primary</item>
         <item name="colorPrimaryVariant">@color/green_primaryVariant</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -53,7 +53,7 @@
         <item name="colorSecondaryVariant">@color/teal_700</item>
         <item name="colorOnSecondary">@color/black</item>
     </style>
-    <style name="Theme.MyApplication.Purple" parent="Theme.MyApplication">
+    <style name="Theme.Futaburakari.Purple" parent="Theme.Futaburakari">
         <item name="colorPrimary">@color/purple_500</item>
         <item name="colorPrimaryVariant">@color/purple_700</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -61,7 +61,7 @@
         <item name="colorSecondaryVariant">@color/teal_700</item>
         <item name="colorOnSecondary">@color/black</item>
     </style>
-    <style name="Theme.MyApplication.Blue" parent="Theme.MyApplication">
+    <style name="Theme.Futaburakari.Blue" parent="Theme.Futaburakari">
         <item name="colorPrimary">#1565C0</item>
         <item name="colorPrimaryVariant">#0D47A1</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -69,7 +69,7 @@
         <item name="colorSecondaryVariant">#00796B</item>
         <item name="colorOnSecondary">@color/black</item>
     </style>
-    <style name="Theme.MyApplication.Orange" parent="Theme.MyApplication">
+    <style name="Theme.Futaburakari.Orange" parent="Theme.Futaburakari">
         <item name="colorPrimary">#EF6C00</item>
         <item name="colorPrimaryVariant">#E65100</item>
         <item name="colorOnPrimary">@color/white</item>

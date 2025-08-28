@@ -16,7 +16,7 @@ open class BaseFragment : Fragment() {
         val scale = prefs.getString("pref_key_font_scale", "1.0")?.toFloatOrNull() ?: 1.0f
         val cfg = Configuration(base.resources.configuration).apply { fontScale = scale }
         val configCtx: Context = base.createConfigurationContext(cfg)
-        val themedCtx = ContextThemeWrapper(configCtx, R.style.Theme_MyApplication)
+        val themedCtx = ContextThemeWrapper(configCtx, R.style.Theme_Futaburakari)
         return original.cloneInContext(themedCtx)
     }
 }

@@ -54,8 +54,17 @@ object MediaSaver {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/MyApplication/$subfolder")
+                        // Save under brand folder to align with ImageEditActivity
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    } else {
+                        // Pre-Q: ensure the target brand folder path via DATA
+                        @Suppress("DEPRECATION")
+                        val base = Environment.getExternalStoragePublicDirectory(relativeBaseDir)
+                        val brandDir = java.io.File(base, "Futaburakari")
+                        if (!brandDir.exists()) brandDir.mkdirs()
+                        val outFile = java.io.File(brandDir, fileName)
+                        put(MediaStore.MediaColumns.DATA, outFile.absolutePath)
                     }
                 }
 
