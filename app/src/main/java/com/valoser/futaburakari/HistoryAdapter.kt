@@ -32,7 +32,31 @@ class HistoryAdapter(
         val item = getItem(position)
         holder.binding.titleTextView.text = item.title
         holder.binding.urlTextView.text = item.url
-        holder.binding.timeTextView.text = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(item.lastViewedAt))
+        val df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+        val timeText = if (item.isArchived && item.archivedAt > 0L) {
+            val t = df.format(Date(item.archivedAt))
+            "アーカイブ: $t"
+        } else if (item.unreadCount > 0 && item.lastUpdatedAt > 0L) {
+            // 未読ありは更新時刻を優先表示
+            val t = df.format(Date(item.lastUpdatedAt))
+            "更新: $t  •  未読 ${item.unreadCount}"
+        } else {
+            val t = df.format(Date(item.lastViewedAt))
+            "閲覧: $t"
+        }
+        holder.binding.timeTextView.text = timeText
+
+        // 未読バッジ
+        val badge = holder.binding.unreadBadge
+        if (item.unreadCount > 0) {
+            badge.visibility = android.view.View.VISIBLE
+            badge.text = if (item.unreadCount > 99) "99+" else item.unreadCount.toString()
+        } else {
+            badge.visibility = android.view.View.GONE
+        }
+
+        // アーカイブバッジ
+        holder.binding.archiveBadge.visibility = if (item.isArchived) android.view.View.VISIBLE else android.view.View.GONE
         // サムネイル
         val iv = holder.binding.thumbnailImageView
         if (item.thumbnailUrl.isNullOrBlank()) {

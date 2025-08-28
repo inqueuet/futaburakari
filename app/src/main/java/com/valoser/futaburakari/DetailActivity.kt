@@ -311,6 +311,13 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
         // ★ 追加：無限スクロール（底から1件手前で発火）
         binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                super.onScrollStateChanged(recyclerView, newState)
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    markViewedByCurrentScroll()
+                }
+            }
+
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 if (dy <= 0) return
                 if (isRequestingMore) return
@@ -364,6 +371,15 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
             // ★ ここで ThreadEndTime を最後の1件に絞る
             val normalized = normalizeThreadEndTime(list)
+
+            // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
+            runCatching {
+                val latestReplyNo = normalized.count { it is DetailContent.Text }
+                val threadUrl = currentUrl
+                if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
+                    HistoryManager.applyFetchResult(this, threadUrl, latestReplyNo)
+                }
+            }
 
             // 履歴のサムネイル更新（最初のメディアを採用）
             runCatching {
@@ -434,6 +450,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         if (::binding.isInitialized) {
             binding.adView.pause()
         }
+        // 最終的な既読反映（現在の可視範囲から）
+        runCatching { markViewedByCurrentScroll() }
         saveScroll()
     }
 
@@ -649,6 +667,60 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         }
         dialog.setContentView(recycler)
         dialog.show()
+    }
+
+    // 現在のスクロール位置から「見えた最大の投稿序数」を算出して既読更新
+    private fun markViewedByCurrentScroll() {
+        val url = currentUrl ?: return
+        val list = viewModel.detailContent.value ?: return
+        if (list.isEmpty()) return
+
+        val maxOrdinal = computeMaxVisiblePostOrdinal(list)
+        if (maxOrdinal <= 0) return
+        // 既読の巻き戻しはしないため、履歴の現状値と比較して進んだときだけ保存
+        val current = HistoryManager.getAll(this).firstOrNull { it.url == url }
+        val curViewed = current?.lastViewedReplyNo ?: 0
+        if (maxOrdinal > curViewed) {
+            HistoryManager.markViewed(this, url, maxOrdinal)
+        }
+    }
+
+    // 画面に50%以上見えているアイテムから、その所属する投稿（Text単位）の序数を計算し、その最大値を返す
+    private fun computeMaxVisiblePostOrdinal(items: List<DetailContent>): Int {
+        val first = layoutManager.findFirstVisibleItemPosition()
+        val last = layoutManager.findLastVisibleItemPosition()
+        if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) return 0
+        var maxOrdinal = 0
+        for (pos in first..last) {
+            val v = layoutManager.findViewByPosition(pos) ?: continue
+            val visible = android.graphics.Rect()
+            val isVisible = v.getLocalVisibleRect(visible)
+            if (!isVisible) continue
+            val ratio = visible.height().toFloat() / (v.height.takeIf { it > 0 } ?: 1)
+            if (ratio < 0.5f) continue
+            val ordinal = postOrdinalForAdapterPosition(items, pos)
+            if (ordinal > maxOrdinal) maxOrdinal = ordinal
+        }
+        // 一番下まで到達している場合の補正（見切れている末尾を既読にしやすく）
+        val contentLastIndex = findLastContentAdapterIndex()
+        if (last >= contentLastIndex) {
+            val lastOrdinal = postOrdinalForAdapterPosition(items, contentLastIndex)
+            if (lastOrdinal > maxOrdinal) maxOrdinal = lastOrdinal
+        }
+        return maxOrdinal
+    }
+
+    // 与えられたアダプタ位置が属する投稿（Text単位）の序数（1始まり）を返す
+    private fun postOrdinalForAdapterPosition(items: List<DetailContent>, pos: Int): Int {
+        if (pos < 0 || pos >= items.size) return 0
+        var ordinal = 0
+        var i = 0
+        while (i <= pos && i < items.size) {
+            if (items[i] is DetailContent.Text) ordinal++
+            i++
+        }
+        // もし pos が Text 以外（画像/動画）の場合でも、直前の Text にぶら下げた投稿としてカウントされる
+        return ordinal
     }
 
     // 「No.xxx」「ファイル名」「本文一部」いずれかで対象を検索

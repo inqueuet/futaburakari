@@ -54,6 +54,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val doc: Document = networkClient.fetchDocument(url)
             val exists = doc.selectFirst("div.thre") != null
             if (!exists) {
+                // HTMLが取得できたがスレDOMが無い → dat落ちとみなして停止
+                HistoryManager.markArchived(applicationContext, url)
                 cancelUnique(url)
                 return Result.success()
             }
@@ -67,13 +69,28 @@ class ThreadMonitorWorker @AssistedInject constructor(
             // 3) キャッシュへ保存（置き換え保存）
             DetailCacheManager(applicationContext).saveDetails(url, archived)
 
+            // 4) 既知の最終レス番号（Textの件数）を履歴へ反映（未読数更新のため）
+            val latestReplyNo = parsed.count { it is com.valoser.futaburakari.DetailContent.Text }
+            HistoryManager.applyFetchResult(applicationContext, url, latestReplyNo)
+
             // 次回スケジュール
             schedule(applicationContext, url)
             Result.success()
-        } catch (e: Exception) {
-            // 404等は消滅とみなす
-            cancelUnique(url)
-            Result.success()
+        } catch (e: java.io.IOException) {
+            // fetchDocumentは非200でIOExceptionを投げる
+            val msg = e.message ?: ""
+            if (msg.contains("HTTPエラー: 404")) {
+                // dat落ち（404）とみなし停止
+                HistoryManager.markArchived(applicationContext, url)
+                cancelUnique(url)
+                Result.success()
+            } else {
+                // 一時的な失敗は再試行（WorkManagerのバックオフに委任）
+                Result.retry()
+            }
+        } catch (_: Exception) {
+            // 想定外のエラーは再試行に委ねる
+            Result.retry()
         }
     }
 
