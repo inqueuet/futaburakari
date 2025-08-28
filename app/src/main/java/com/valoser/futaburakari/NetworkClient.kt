@@ -17,7 +17,15 @@ import java.nio.charset.Charset
 
 object NetworkClient {
 
-    private val httpClient: OkHttpClient = NetworkModule.okHttpClient
+    private lateinit var httpClient: OkHttpClient
+
+    fun init(client: OkHttpClient) {
+        httpClient = client
+    }
+
+    private fun ensureInitialized() {
+        check(::httpClient.isInitialized) { "NetworkClient is not initialized. Call NetworkClient.init() in Application." }
+    }
 
     // ===== Cookie ユーティリティ =====
     private fun parseCookieString(s: String?): Map<String, String> =
@@ -33,6 +41,7 @@ object NetworkClient {
 
     // ===== HTML GET（SJIS/UTF-8 自動判定） =====
     suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
+        ensureInitialized()
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", Ua.STRING)
@@ -50,8 +59,83 @@ object NetworkClient {
         }
     }
 
+    suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
+        ensureInitialized()
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", Ua.STRING)
+            .build()
+        return@withContext try {
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                resp.body?.bytes()
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun headContentLength(url: String): Long? = withContext(Dispatchers.IO) {
+        ensureInitialized()
+        val req = Request.Builder()
+            .url(url)
+            .head()
+            .header("User-Agent", Ua.STRING)
+            .build()
+        return@withContext try {
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                resp.header("Content-Length")?.toLongOrNull()
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun fetchRange(url: String, start: Long, length: Long): ByteArray? = withContext(Dispatchers.IO) {
+        ensureInitialized()
+        val end = if (length > 0) start + length - 1 else null
+        val rangeValue = if (end != null) "bytes=$start-$end" else "bytes=$start-"
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .header("Range", rangeValue)
+            .header("User-Agent", Ua.STRING)
+            .build()
+        return@withContext try {
+            httpClient.newCall(req).execute().use { resp ->
+                val code = resp.code
+                val body = resp.body ?: return@use null
+                val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
+                val bytes = body.byteStream().use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(16 * 1024)
+                    var remaining = maxToRead
+                    while (remaining > 0) {
+                        val read = input.read(buffer, 0, buffer.size.coerceAtMost(remaining.toInt()))
+                        if (read <= 0) break
+                        out.write(buffer, 0, read)
+                        remaining -= read
+                    }
+                    out.toByteArray()
+                }
+                if (code == 200 && start > 0) {
+                    // Server may have ignored range; slice manually if possible
+                    if (start >= bytes.size) return@use null
+                    val from = start.toInt()
+                    val to = if (length > 0) (from + length.toInt()).coerceAtMost(bytes.size) else bytes.size
+                    return@use bytes.copyOfRange(from, to)
+                }
+                return@use bytes
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // ===== そうだね =====
     suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
+        ensureInitialized()
         val refUrl = referer.toHttpUrl()
         val board = refUrl.pathSegments.firstOrNull() ?: return@withContext null
         val origin = "${refUrl.scheme}://${refUrl.host}"
@@ -100,6 +184,7 @@ object NetworkClient {
 
     // ===== カタログ設定 =====
     suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
+        ensureInitialized()
         withContext(Dispatchers.IO) {
             val settingsUrl = "${boardBaseUrl}futaba.php?mode=catset"
             val formBody = FormBody.Builder().apply {
@@ -127,6 +212,7 @@ object NetworkClient {
         resNum: String,
         pwd: String
     ): Boolean = withContext(Dispatchers.IO) {
+        ensureInitialized()
         try {
             val form = FormBody.Builder()
                 .add(resNum, "delete")

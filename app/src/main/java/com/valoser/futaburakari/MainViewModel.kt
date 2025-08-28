@@ -1,21 +1,27 @@
 package com.valoser.futaburakari
 
-import android.app.Application
 import android.util.Log
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.nodes.Document
 import java.net.URL
+import javax.inject.Inject
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+@HiltViewModel
+class MainViewModel @Inject constructor(
+    private val okHttpClient: OkHttpClient,
+    private val networkClient: NetworkClient,
+) : ViewModel() {
 
     private val _images = MutableLiveData<List<ImageItem>>()
     val images: LiveData<List<ImageItem>> = _images
@@ -41,7 +47,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(url).head().build()
         runCatching {
-            NetworkModule.okHttpClient.newCall(req).execute().use { resp ->
+            okHttpClient.newCall(req).execute().use { resp ->
                 resp.isSuccessful
             }
         }.getOrDefault(false)
@@ -68,7 +74,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             needHtml.map { item ->
                 async {
                     val full = runCatching {
-                        val detailDoc = NetworkClient.fetchDocument(item.detailUrl)
+                        val detailDoc = networkClient.fetchDocument(item.detailUrl)
                         detailDoc.selectFirst("""div.thre a[href*="/src/"]""")
                             ?.absUrl("href")
                     }.getOrNull()
@@ -84,7 +90,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val document = NetworkClient.fetchDocument(url)
+                val document = networkClient.fetchDocument(url)
                 // ★修正点: urlを渡して解析方法を切り替え
                 val baseItems = parseItemsFromDocument(document, url)
                 val enriched = enrichWithFullImages(baseItems)
@@ -100,7 +106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun checkForUpdates(url: String, currentItemCount: Int, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
-                val document = NetworkClient.fetchDocument(url)
+                val document = networkClient.fetchDocument(url)
                 // ★修正点: urlを渡して解析方法を切り替え
                 val newItemList = parseItemsFromDocument(document, url)
                 val currentItems = _images.value ?: emptyList()

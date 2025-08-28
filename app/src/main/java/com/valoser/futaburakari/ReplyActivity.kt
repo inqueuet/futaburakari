@@ -10,12 +10,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 // import androidx.appcompat.app.AppCompatActivity
 import com.valoser.futaburakari.databinding.ActivityReplyNativeBinding
+import dagger.hilt.android.AndroidEntryPoint
 
 /**
  * 完全ネイティブUIの返信画面。
  * 不可視WebViewワーカー（ReplyTokenWorkerFragment）を起動し、ViewModel の tokenProvider として渡す。
  * 設定画面で保存した削除キー（パスワード）を起動時に自動セットし、送信時に使用する。
  */
+@AndroidEntryPoint
 class ReplyActivity : BaseActivity() {
 
     companion object {

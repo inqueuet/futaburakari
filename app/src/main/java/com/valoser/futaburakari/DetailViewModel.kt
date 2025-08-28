@@ -1,12 +1,14 @@
 package com.valoser.futaburakari
 
-import android.app.Application
+import android.content.Context
 import android.util.Log
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.valoser.futaburakari.cache.DetailCacheManager
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -22,8 +24,13 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import javax.inject.Inject
 
-class DetailViewModel(application: Application) : AndroidViewModel(application) {
+@HiltViewModel
+class DetailViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
+    private val networkClient: NetworkClient,
+) : ViewModel() {
 
     private val _detailContent = MutableLiveData<List<DetailContent>>()
     val detailContent: LiveData<List<DetailContent>> = _detailContent
@@ -41,7 +48,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
     // 代わりに、レス番号で受ける関数を用意（UIから resNo だけ渡す）
     fun onClickSodane(resNo: String, referer: String) {
         viewModelScope.launch {
-            val count = NetworkClient.postSodaNe(resNo, referer) // Int? を返す想定
+            val count = networkClient.postSodaNe(resNo, referer) // Int? を返す想定
             if (count != null) {
                 _sodaneUpdate.tryEmit(resNo to count)
             } else {
@@ -50,7 +57,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private val cacheManager = DetailCacheManager(application)
+    private val cacheManager = DetailCacheManager(appContext)
     private var currentUrl: String? = null
 
     // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
@@ -85,7 +92,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val document = withContext(Dispatchers.IO) {
-                    NetworkClient.fetchDocument(url).apply {
+                    networkClient.fetchDocument(url).apply {
                         // (D) HTMLシリアライズのオーバーヘッドを抑制
                         outputSettings().prettyPrint(false)
                     }
@@ -116,7 +123,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 // 現在のHTMLを取得
                 val document = withContext(Dispatchers.IO) {
-                    NetworkClient.fetchDocument(url)
+                    networkClient.fetchDocument(url)
                 }
 
                 // 新しいコンテンツをパース
@@ -309,7 +316,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 is DetailContent.Image -> {
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
-                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(getApplication(), content.imageUrl) }
+                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.imageUrl) }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata task error for ${content.imageUrl}", e)
                             null
@@ -324,7 +331,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
                 is DetailContent.Video -> {
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
-                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(getApplication(), content.videoUrl) }
+                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.videoUrl) }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata task error for ${content.videoUrl}", e)
                             null

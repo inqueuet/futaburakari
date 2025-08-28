@@ -20,8 +20,12 @@ import java.util.zip.CRC32
  * ・「環境変数がありません」等 JS 必須のエラー → トークン再送へ
  * ・全体 10 秒で打ち切り
  */
-class ReplyViewModel(
-    private val repository: ReplyRepository = ReplyRepository()
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+
+@HiltViewModel
+class ReplyViewModel @Inject constructor(
+    private val repository: ReplyRepository
 ) : ViewModel() {
 
     var tokenProvider: TokenProvider? = null

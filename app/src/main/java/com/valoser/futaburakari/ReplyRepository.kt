@@ -22,8 +22,10 @@ import java.nio.charset.Charset
  * Futaba への投稿を担当するリポジトリ。
  * 既定の必須フィールドに加えて、JS依存で得た hidden/token を extra で上書き注入できるようにしている。
  */
-class ReplyRepository(
-    private val httpClient: OkHttpClient = NetworkModule.okHttpClient,
+import javax.inject.Inject
+
+class ReplyRepository @Inject constructor(
+    private val httpClient: OkHttpClient,
 ) {
 
     /**
@@ -234,7 +236,7 @@ class ReplyRepository(
         withContext(Dispatchers.IO) {
             runCatching {
                 val req = Request.Builder().url(threadUrl).get().build()
-                NetworkModule.okHttpClient.newCall(req).execute().use { resp ->
+                httpClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }

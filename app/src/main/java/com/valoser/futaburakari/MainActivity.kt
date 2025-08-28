@@ -25,6 +25,7 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import android.widget.TextView
 import com.valoser.futaburakari.databinding.ActivityMainBinding
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import java.net.URL
 
+@AndroidEntryPoint
 class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private lateinit var binding: ActivityMainBinding

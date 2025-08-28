@@ -12,8 +12,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 // import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import androidx.activity.viewModels
 import androidx.lifecycle.Observer
-import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.valoser.futaburakari.databinding.ActivityDetailBinding
@@ -27,11 +27,13 @@ import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.LoadAdError
 
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     private lateinit var binding: ActivityDetailBinding
-    private lateinit var viewModel: DetailViewModel
+    private val viewModel: DetailViewModel by viewModels()
     private lateinit var detailAdapter: DetailAdapter
     private lateinit var layoutManager: LinearLayoutManager
     private lateinit var detailSearchManager: DetailSearchManager
@@ -81,10 +83,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
-        viewModel = ViewModelProvider(
-            this,
-            ViewModelProvider.AndroidViewModelFactory.getInstance(application)
-        ).get(DetailViewModel::class.java)
+        // Hilt により viewModel は注入済み（by viewModels()）
         // SharedPreferences 準備（設定変更のリッスンに使用）
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         currentUrl = intent.getStringExtra(EXTRA_URL)

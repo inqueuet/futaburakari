@@ -13,8 +13,7 @@ import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
+ 
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
@@ -201,64 +200,15 @@ object MetadataExtractor {
 
     private data class HeadInfo(val contentLength: Long?, val acceptRanges: Boolean)
 
-    private fun httpHead(urlStr: String): HeadInfo? {
-        var conn: HttpURLConnection? = null
+    private suspend fun httpHead(urlStr: String): HeadInfo? {
         return try {
-            val url = URL(urlStr)
-            conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "HEAD"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                instanceFollowRedirects = true
-                connect()
-            }
-            val lenHeader = conn.getHeaderField("Content-Length")
-            val len = lenHeader?.toLongOrNull()
-            val accepts = conn.getHeaderField("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
-            HeadInfo(len, accepts)
-        } catch (_: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
+            val len = NetworkClient.headContentLength(urlStr)
+            HeadInfo(len, true)
+        } catch (_: Exception) { null }
     }
 
-    private fun httpGetRange(urlStr: String, start: Long, length: Long): ByteArray? {
-        var conn: HttpURLConnection? = null
-        return try {
-            val end = if (length <= 0) null else start + length - 1
-            val url = URL(urlStr)
-            conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                if (end != null) {
-                    setRequestProperty("Range", "bytes=$start-$end")
-                } else {
-                    setRequestProperty("Range", "bytes=$start-")
-                }
-                instanceFollowRedirects = false
-                connect()
-            }
-
-            val code = conn.responseCode
-            val stream = when {
-                code in 200..299 -> conn.inputStream
-                else -> return null
-            }
-
-            stream.use { input ->
-                if (code == HttpURLConnection.HTTP_OK && start > 0) {
-                    skipFully(input, start)
-                }
-                val maxToRead = if (length > 0) min(length.toInt(), GLOBAL_MAX_BYTES) else GLOBAL_MAX_BYTES
-                input.readBytes(limit = maxToRead)
-            }
-        } catch (_: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
+    private suspend fun httpGetRange(urlStr: String, start: Long, length: Long): ByteArray? {
+        return try { NetworkClient.fetchRange(urlStr, start, length) } catch (_: Exception) { null }
     }
 
     // ====== 既存の処理ロジック（変更なし） ======
@@ -329,6 +279,8 @@ object MetadataExtractor {
             null
         }
     }
+
+    
 
     private fun decodeXpString(raw: String): String? {
         val bytes = raw.toByteArray(StandardCharsets.ISO_8859_1)

@@ -3,6 +3,8 @@ package com.valoser.futaburakari
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import android.os.Handler
+import android.os.Looper
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import okhttp3.Cookie
@@ -44,36 +46,42 @@ object PersistentCookieJar : CookieJar {
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         ensureInitialized()
         val requestHost = url.host
-        Log.d("PersistentCookieJar", "saveFromResponse for url: ${url.host}, received ${cookies.size} cookies.")
+        val now = System.currentTimeMillis()
 
         cookies.forEach { cookie ->
-            val cookieDomain = cookie.domain
-            val effectiveDomain = normalizeDomain(cookieDomain.ifEmpty { requestHost })
+            val hostOnly = cookie.hostOnly
+            val baseDomain = if (hostOnly) requestHost else cookie.domain
+            val effectiveDomain = normalizeDomain(baseDomain.ifEmpty { requestHost })
 
             val storedCookiesForDomain = cookieStore.getOrPut(effectiveDomain) { mutableListOf() }
             storedCookiesForDomain.removeAll { it.name == cookie.name && it.path == cookie.path }
 
-            if (cookie.expiresAt > System.currentTimeMillis() || cookie.persistent) {
-                storedCookiesForDomain.add(SerializableCookie.fromOkHttpCookie(cookie))
-                Log.d("PersistentCookieJar", "Saved cookie: ${cookie.name}=${cookie.value}; domain=$effectiveDomain; path=${cookie.path}; expiresAt=${cookie.expiresAt}")
+            if (cookie.persistent) {
+                if (cookie.expiresAt > now) {
+                    storedCookiesForDomain.add(SerializableCookie.fromOkHttpCookie(cookie))
+                } else {
+                    // expired persistent cookie: do not add
+                }
             } else {
-                Log.d("PersistentCookieJar", "Not saving expired/session cookie: ${cookie.name} for domain $effectiveDomain")
+                // session cookie: keep in memory only
+                storedCookiesForDomain.add(SerializableCookie.fromOkHttpCookie(cookie))
             }
         }
         saveCookiesToPrefs()
 
-        // WebViewへのCookie同期 (オプション)
+        // WebViewへのCookie同期 (UIスレッドで実行)
         try {
-            val webViewCookieManager = android.webkit.CookieManager.getInstance()
-            cookies.forEach { cookie ->
-                val cookieString = cookie.toString()
-                webViewCookieManager.setCookie(url.toString(), cookieString)
+            val cm = android.webkit.CookieManager.getInstance()
+            val cookieStrings = cookies.map { it.toString() }
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    cookieStrings.forEach { cs -> cm.setCookie(url.toString(), cs) }
+                    cm.flush()
+                } catch (e: Exception) {
+                    Log.e("PersistentCookieJar", "Error synchronizing cookies to WebView", e)
+                }
             }
-            webViewCookieManager.flush()
-            Log.d("PersistentCookieJar", "Synchronized ${cookies.size} cookies to WebView.")
-        } catch (e: Exception) {
-            Log.e("PersistentCookieJar", "Error synchronizing cookies to WebView", e)
-        }
+        } catch (_: Exception) { /* ignore */ }
     }
 
     @Synchronized
@@ -81,35 +89,33 @@ object PersistentCookieJar : CookieJar {
         ensureInitialized()
         val requestHost = url.host
         val matchingCookies = mutableListOf<Cookie>()
-        val currentTime = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
 
-        Log.d("PersistentCookieJar", "loadForRequest for url: ${url.host}")
+        var removedAnyPersistent = false
 
         cookieStore.forEach { (cookieDomain, storedCookiesList) ->
-            if (domainMatches(cookieDomain, requestHost)) {
-                val iterator = storedCookiesList.iterator()
-                while (iterator.hasNext()) {
-                    val serializableCookie = iterator.next()
-                    if (serializableCookie.expiresAt <= currentTime && !serializableCookie.persistent) {
-                        iterator.remove()
-                        Log.d("PersistentCookieJar", "Removed expired cookie from store: ${serializableCookie.name} from domain $cookieDomain")
-                    } else if (pathMatches(serializableCookie.path, url.encodedPath)) {
-                        if (serializableCookie.secure && !url.isHttps) {
-                            // secure cookie on non-secure request, skip
-                        } else {
-                            matchingCookies.add(serializableCookie.toOkHttpCookie())
-                        }
+            val iterator = storedCookiesList.iterator()
+            while (iterator.hasNext()) {
+                val sc = iterator.next()
+                // Remove expired persistent cookies
+                if (sc.persistent && sc.expiresAt <= now) {
+                    iterator.remove()
+                    removedAnyPersistent = true
+                    continue
+                }
+                // Domain and path checks per cookie
+                if (domainMatches(sc.domain, sc.hostOnly, requestHost) && pathMatches(sc.path, url.encodedPath)) {
+                    if (sc.secure && !url.isHttps) {
+                        // skip secure cookie over http
+                    } else {
+                        matchingCookies.add(sc.toOkHttpCookie())
                     }
                 }
             }
         }
-        // If any cookies were removed due to expiration, save the updated store
-        // This check could be more sophisticated (e.g., a dirty flag)
-        if (matchingCookies.size != cookieStore.values.flatten().size) {
-             saveCookiesToPrefs()
+        if (removedAnyPersistent) {
+            saveCookiesToPrefs()
         }
-
-        Log.d("PersistentCookieJar", "Loading ${matchingCookies.size} cookies for $requestHost: ${matchingCookies.map { it.name + "=" + it.value }}")
         return matchingCookies
     }
 
@@ -127,7 +133,8 @@ object PersistentCookieJar : CookieJar {
         val domainsToRemove = mutableListOf<String>()
         val normalizedHost = normalizeDomain(host)
         cookieStore.keys.forEach { domain ->
-            if (domainMatches(domain, normalizedHost)) {
+            val d = normalizeDomain(domain)
+            if (normalizedHost == d || normalizedHost.endsWith(".$d")) {
                 domainsToRemove.add(domain)
             }
         }
@@ -145,26 +152,23 @@ object PersistentCookieJar : CookieJar {
 
     private fun saveCookiesToPrefs() {
         val editor = sharedPreferences.edit()
-        // First, clear any old domains from prefs that are no longer in cookieStore
+        // remove keys which are no longer present or have no persistent cookies
         val currentPrefKeys = sharedPreferences.all.keys.filter { it.startsWith(COOKIES_KEY_PREFIX) }
-        val storeDomainsForPrefs = cookieStore.keys.map { COOKIES_KEY_PREFIX + it }
+        val domainsWithPersistent = cookieStore.filterValues { list -> list.any { it.persistent } }.keys
+        val storeDomainsForPrefs = domainsWithPersistent.map { COOKIES_KEY_PREFIX + it }
         currentPrefKeys.forEach { prefKey ->
             if (prefKey !in storeDomainsForPrefs) {
                 editor.remove(prefKey)
             }
         }
 
-        cookieStore.forEach { (domain, cookiesList) ->
-            if (cookiesList.isNotEmpty()) {
-                val jsonCookies = gson.toJson(cookiesList)
-                editor.putString(COOKIES_KEY_PREFIX + domain, jsonCookies)
-            } else {
-                // If a domain's list becomes empty, remove it from prefs
-                editor.remove(COOKIES_KEY_PREFIX + domain)
-            }
+        // write only persistent cookies
+        domainsWithPersistent.forEach { domain ->
+            val persistentOnly = cookieStore[domain]?.filter { it.persistent } ?: emptyList()
+            val jsonCookies = gson.toJson(persistentOnly)
+            editor.putString(COOKIES_KEY_PREFIX + domain, jsonCookies)
         }
         editor.apply()
-        Log.d("PersistentCookieJar", "Saved all cookie domains to SharedPreferences: ${cookieStore.keys.filter { cookieStore[it]?.isNotEmpty() == true }}")
     }
 
     private fun loadCookiesFromPrefs() {
@@ -176,14 +180,14 @@ object PersistentCookieJar : CookieJar {
                     val typeToken = object : TypeToken<MutableList<SerializableCookie>>() {}.type
                     val cookiesList: MutableList<SerializableCookie>? = gson.fromJson(value, typeToken)
                     if (cookiesList != null) {
-                        val validCookies = cookiesList.filter {
-                            it.expiresAt > System.currentTimeMillis() || it.persistent
-                        }.toMutableList()
+                        val now = System.currentTimeMillis()
+                        // prefs should contain only persistent cookies; filter any expired ones just in case
+                        val validCookies = cookiesList.filter { it.persistent && it.expiresAt > now }.toMutableList()
                         if (validCookies.isNotEmpty()) {
                             cookieStore[domain] = validCookies
-                            Log.d("PersistentCookieJar", "Loaded ${validCookies.size}/${cookiesList.size} cookies for domain $domain from Prefs.")
                         } else if (cookiesList.isNotEmpty()){
-                             Log.d("PersistentCookieJar", "All ${cookiesList.size} cookies for domain $domain from Prefs were expired.")
+                            // all expired; remove key
+                            sharedPreferences.edit().remove(key).apply()
                         }
                     }
                 } catch (e: Exception) {
@@ -192,19 +196,13 @@ object PersistentCookieJar : CookieJar {
                 }
             }
         }
-         Log.d("PersistentCookieJar", "Finished loading from Prefs. Cookie store domains: ${cookieStore.keys}")
     }
 
-    private fun domainMatches(cookieDomain: String, requestHost: String): Boolean {
-        val normalizedCookieDomain = normalizeDomain(cookieDomain)
-        val normalizedRequestHost = normalizeDomain(requestHost)
-
-        if (normalizedCookieDomain == normalizedRequestHost) {
-            return true
-        }
-        // Handles cases like cookieDomain=".example.com" and requestHost="www.example.com"
-        // Also cookieDomain="example.com" (hostOnly=true implicitly) should not match "www.example.com" unless it's an exact match handled above
-        return normalizedRequestHost.endsWith(".$normalizedCookieDomain") || (normalizedCookieDomain.startsWith(".") && normalizedRequestHost.endsWith(normalizedCookieDomain))
+    private fun domainMatches(cookieDomain: String, hostOnly: Boolean, requestHost: String): Boolean {
+        val cd = normalizeDomain(cookieDomain)
+        val rh = normalizeDomain(requestHost)
+        if (hostOnly) return cd == rh
+        return rh == cd || rh.endsWith(".$cd")
     }
     
     private fun normalizeDomain(domain: String): String {
@@ -223,7 +221,8 @@ object PersistentCookieJar : CookieJar {
         val path: String,
         val secure: Boolean,
         val httpOnly: Boolean,
-        val persistent: Boolean
+        val persistent: Boolean,
+        val hostOnly: Boolean
     ) {
         fun toOkHttpCookie(): Cookie {
             val builder = Cookie.Builder()
@@ -234,10 +233,8 @@ object PersistentCookieJar : CookieJar {
 
             if (httpOnly) builder.httpOnly()
             if (secure) builder.secure()
-            
-            // OkHttp's domain setter handles hostOnly logic based on whether the domain starts with "."
-            // However, our `domain` field should already be correctly set (e.g. "example.com" or ".example.com")
-            builder.domain(this.domain)
+            // Restore hostOnly vs domain cookie
+            if (hostOnly) builder.hostOnlyDomain(this.domain) else builder.domain(this.domain)
 
             return builder.build()
         }
@@ -248,11 +245,12 @@ object PersistentCookieJar : CookieJar {
                     name = cookie.name,
                     value = cookie.value,
                     expiresAt = cookie.expiresAt,
-                    domain = cookie.domain, 
+                    domain = cookie.domain,
                     path = cookie.path,
                     secure = cookie.secure,
                     httpOnly = cookie.httpOnly,
-                    persistent = cookie.persistent
+                    persistent = cookie.persistent,
+                    hostOnly = cookie.hostOnly
                 )
             }
         }

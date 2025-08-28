@@ -1,6 +1,7 @@
 package com.valoser.futaburakari.worker
 
 import android.content.Context
+import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -11,6 +12,8 @@ import androidx.work.workDataOf
 import com.valoser.futaburakari.HistoryManager
 import com.valoser.futaburakari.NetworkClient
 import com.valoser.futaburakari.UrlNormalizer
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.concurrent.TimeUnit
@@ -21,7 +24,12 @@ import com.valoser.futaburakari.cache.DetailCacheManager
 import okhttp3.Request
 import java.io.File
 
-class ThreadMonitorWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
+@HiltWorker
+class ThreadMonitorWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted params: WorkerParameters,
+    private val networkClient: NetworkClient,
+) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         val url = inputData.getString(KEY_URL) ?: return Result.success()
@@ -43,7 +51,7 @@ class ThreadMonitorWorker(appContext: Context, params: WorkerParameters) : Corou
         }
 
         return try {
-            val doc: Document = NetworkClient.fetchDocument(url)
+            val doc: Document = networkClient.fetchDocument(url)
             val exists = doc.selectFirst("div.thre") != null
             if (!exists) {
                 cancelUnique(url)
@@ -182,7 +190,7 @@ class ThreadMonitorWorker(appContext: Context, params: WorkerParameters) : Corou
         return result
     }
 
-    private fun archiveMedia(context: Context, threadUrl: String, list: List<DetailContent>): List<DetailContent> {
+    private suspend fun archiveMedia(context: Context, threadUrl: String, list: List<DetailContent>): List<DetailContent> {
         val cache = DetailCacheManager(context)
         val dir = cache.getArchiveDirForUrl(threadUrl)
         fun fileFor(url: String): File {
@@ -190,18 +198,14 @@ class ThreadMonitorWorker(appContext: Context, params: WorkerParameters) : Corou
             val name = url.sha256() + if (ext.isNotBlank()) ".${ext.lowercase()}" else ""
             return File(dir, name)
         }
-        fun ensureDownloaded(remoteUrl: String): String? {
+        suspend fun ensureDownloaded(remoteUrl: String): String? {
             val f = fileFor(remoteUrl)
             if (f.exists() && f.length() > 0) return f.toURI().toString()
             return try {
-                val req = Request.Builder().url(remoteUrl).header("User-Agent", com.valoser.futaburakari.Ua.STRING).build()
-                val resp = com.valoser.futaburakari.NetworkModule.okHttpClient.newCall(req).execute()
-                resp.use { r ->
-                    if (!r.isSuccessful) return null
-                    val body = r.body ?: return null
-                    f.outputStream().use { out -> body.byteStream().copyTo(out) }
-                    f.toURI().toString()
-                }
+                val bytes = networkClient.fetchBytes(remoteUrl)
+                if (bytes == null) return null
+                f.outputStream().use { out -> out.write(bytes) }
+                f.toURI().toString()
             } catch (_: Exception) {
                 null
             }

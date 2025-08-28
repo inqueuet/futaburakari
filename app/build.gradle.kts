@@ -69,9 +69,8 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("com.google.android.material:material:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.1.0")
-    implementation("com.squareup.okhttp3:okhttp-urlconnection:5.1.0")
     implementation("com.google.code.gson:gson:2.13.1")
-    implementation("org.jsoup:jsoup:1.21.1")
+    // implementation("org.jsoup:jsoup:1.21.1")
     // implementation("com.google.code.gson:gson-extras:2.10.1") // この行を削除しました
 
     // Media3 (ExoPlayer) のライブラリを追加
@@ -81,7 +80,6 @@ dependencies {
 
     implementation("com.google.dagger:hilt-android:2.56.2")
     ksp("com.google.dagger:hilt-compiler:2.56.2")
-    implementation("com.github.franmontiel:PersistentCookieJar:v1.0.1")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
     implementation("androidx.activity:activity-ktx:1.9.0")
@@ -99,6 +97,9 @@ dependencies {
 
     // WorkManager for background monitoring
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    // Hilt WorkManager integration
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

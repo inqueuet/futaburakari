@@ -9,8 +9,7 @@ import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.Uri
-import java.net.HttpURLConnection
-import java.net.URL
+ 
 
 object MediaSaver {
 
@@ -76,17 +75,13 @@ object MediaSaver {
                         }
                         src.use { input -> input.copyTo(outputStream) }
                     } else {
-                        val connection = URL(url).openConnection() as HttpURLConnection
-                        connection.connect()
-                        if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                            connection.inputStream.use { inputStream ->
-                                inputStream.copyTo(outputStream)
-                            }
-                        } else {
+                        val bytes = NetworkClient.fetchBytes(url)
+                        if (bytes == null) {
                             showToast(context, "ファイルのダウンロードに失敗しました。")
-                            resolver.delete(uri, null, null) // 失敗した場合はエントリーを削除
+                            resolver.delete(uri, null, null)
                             return@withContext
                         }
+                        outputStream.write(bytes)
                     }
                 }
 

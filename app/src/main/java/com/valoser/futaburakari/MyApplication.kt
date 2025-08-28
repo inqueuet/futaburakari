@@ -11,17 +11,34 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import dagger.hilt.android.HiltAndroidApp
 import com.google.android.gms.ads.MobileAds
+import okhttp3.OkHttpClient
+import javax.inject.Inject
+import androidx.work.Configuration
+import androidx.hilt.work.HiltWorkerFactory
 
 @HiltAndroidApp
-class MyApplication : Application(), ImageLoaderFactory {
+class MyApplication : Application(), ImageLoaderFactory, Configuration.Provider {
+
+    @Inject
+    lateinit var okHttpClient: OkHttpClient
+
+    @Inject
+    lateinit var workerFactory: HiltWorkerFactory
 
     override fun onCreate() {
         super.onCreate()
         // ▼▼▼ 修正: PersistentCookieJarを初期化するコードをここに追加 ▼▼▼
         PersistentCookieJar.init(applicationContext)
+        // Hilt提供のOkHttpClientをNetworkClientにも注入して統一
+        NetworkClient.init(okHttpClient)
         // Initialize Google Mobile Ads SDK
         MobileAds.initialize(this)
     }
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
@@ -36,7 +53,7 @@ class MyApplication : Application(), ImageLoaderFactory {
                 }
                 add(VideoFrameDecoder.Factory())
             }
-            .okHttpClient { NetworkModule.okHttpClient }
+            .okHttpClient { okHttpClient }
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)
