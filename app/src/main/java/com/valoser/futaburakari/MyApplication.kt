@@ -27,10 +27,8 @@ class MyApplication : Application(), ImageLoaderFactory, Configuration.Provider 
 
     override fun onCreate() {
         super.onCreate()
-        // ▼▼▼ 修正: PersistentCookieJarを初期化するコードをここに追加 ▼▼▼
+        // CookieJar をアプリ起動時に初期化（OkHttp提供前に安全化）
         PersistentCookieJar.init(applicationContext)
-        // Hilt提供のOkHttpClientをNetworkClientにも注入して統一
-        NetworkClient.init(okHttpClient)
         // Initialize Google Mobile Ads SDK
         MobileAds.initialize(this)
     }

@@ -13,19 +13,10 @@ import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
-import java.nio.charset.Charset
 
-object NetworkClient {
-
-    private lateinit var httpClient: OkHttpClient
-
-    fun init(client: OkHttpClient) {
-        httpClient = client
-    }
-
-    private fun ensureInitialized() {
-        check(::httpClient.isInitialized) { "NetworkClient is not initialized. Call NetworkClient.init() in Application." }
-    }
+class NetworkClient(
+    private val httpClient: OkHttpClient,
+) {
 
     // ===== Cookie ユーティリティ =====
     private fun parseCookieString(s: String?): Map<String, String> =
@@ -41,7 +32,6 @@ object NetworkClient {
 
     // ===== HTML GET（SJIS/UTF-8 自動判定） =====
     suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
-        ensureInitialized()
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", Ua.STRING)
@@ -60,7 +50,6 @@ object NetworkClient {
     }
 
     suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
-        ensureInitialized()
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", Ua.STRING)
@@ -76,7 +65,6 @@ object NetworkClient {
     }
 
     suspend fun headContentLength(url: String): Long? = withContext(Dispatchers.IO) {
-        ensureInitialized()
         val req = Request.Builder()
             .url(url)
             .head()
@@ -93,7 +81,6 @@ object NetworkClient {
     }
 
     suspend fun fetchRange(url: String, start: Long, length: Long): ByteArray? = withContext(Dispatchers.IO) {
-        ensureInitialized()
         val end = if (length > 0) start + length - 1 else null
         val rangeValue = if (end != null) "bytes=$start-$end" else "bytes=$start-"
         val req = Request.Builder()
@@ -135,7 +122,6 @@ object NetworkClient {
 
     // ===== そうだね =====
     suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
-        ensureInitialized()
         val refUrl = referer.toHttpUrl()
         val board = refUrl.pathSegments.firstOrNull() ?: return@withContext null
         val origin = "${refUrl.scheme}://${refUrl.host}"
@@ -184,7 +170,6 @@ object NetworkClient {
 
     // ===== カタログ設定 =====
     suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
-        ensureInitialized()
         withContext(Dispatchers.IO) {
             val settingsUrl = "${boardBaseUrl}futaba.php?mode=catset"
             val formBody = FormBody.Builder().apply {
@@ -212,7 +197,6 @@ object NetworkClient {
         resNum: String,
         pwd: String
     ): Boolean = withContext(Dispatchers.IO) {
-        ensureInitialized()
         try {
             val form = FormBody.Builder()
                 .add(resNum, "delete")

@@ -1,6 +1,7 @@
 package com.valoser.futaburakari
 
 import android.content.ContentValues
+import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -15,6 +16,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.viewModels
 // import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.valoser.futaburakari.ui.BrushOverlayView
 import com.valoser.futaburakari.ui.MosaicOverlayView
@@ -23,9 +26,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.content.pm.PackageManager
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import dagger.hilt.android.EntryPointAccessors
 
 class ImageEditActivity : BaseActivity() {
 
@@ -55,6 +60,10 @@ class ImageEditActivity : BaseActivity() {
     private var currentMosaicAlpha = 255
 
     private var imageUri: Uri? = null
+
+    private val networkClient: NetworkClient by lazy {
+        EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -260,6 +269,22 @@ class ImageEditActivity : BaseActivity() {
     }
 
     private fun saveImageToGallery() {
+        // On API < 29, ensure WRITE_EXTERNAL_STORAGE is granted before saving
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    REQUEST_WRITE_EXTERNAL_STORAGE
+                )
+                return
+            }
+        }
+
         val finalBitmap = viewModel.editingEngine?.composeFinal() ?: return
         val fileName = "Edited_${System.currentTimeMillis()}.jpg"
         var fos: OutputStream? = null
@@ -270,7 +295,7 @@ class ImageEditActivity : BaseActivity() {
             var prompt: String? = null
             if (imageUri != null) {
                 prompt = try {
-                    MetadataExtractor.extract(this@ImageEditActivity, imageUri.toString())
+                    MetadataExtractor.extract(this@ImageEditActivity, imageUri.toString(), networkClient)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     null
@@ -333,6 +358,21 @@ class ImageEditActivity : BaseActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_WRITE_EXTERNAL_STORAGE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                saveImageToGallery()
+            } else {
+                Toast.makeText(this, getString(R.string.save_failed) + ": 権限がありません", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean("lock_state", isLocked)
@@ -340,5 +380,9 @@ class ImageEditActivity : BaseActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+    }
+
+    companion object {
+        private const val REQUEST_WRITE_EXTERNAL_STORAGE = 1001
     }
 }

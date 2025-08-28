@@ -3,6 +3,7 @@ package com.valoser.futaburakari
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import android.widget.Toast
@@ -13,23 +14,27 @@ import android.net.Uri
 
 object MediaSaver {
 
-    suspend fun saveImage(context: Context, imageUrl: String) {
+    suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
         saveMedia(
             context = context,
             url = imageUrl,
             subfolder = "Images",
-            mimeType = getMimeType(imageUrl),
-            mediaContentUri = MediaStore.Images.Media.getContentUri("external_primary")
+            mimeType = getMimeTypeOrDefault(imageUrl, "image/jpeg"),
+            mediaContentUri = imagesContentUri(),
+            relativeBaseDir = Environment.DIRECTORY_PICTURES,
+            networkClient = networkClient
         )
     }
 
-    suspend fun saveVideo(context: Context, videoUrl: String) {
+    suspend fun saveVideo(context: Context, videoUrl: String, networkClient: NetworkClient) {
         saveMedia(
             context = context,
             url = videoUrl,
             subfolder = "Videos",
-            mimeType = getMimeType(videoUrl),
-            mediaContentUri = MediaStore.Video.Media.getContentUri("external_primary")
+            mimeType = getMimeTypeOrDefault(videoUrl, "video/mp4"),
+            mediaContentUri = videosContentUri(),
+            relativeBaseDir = Environment.DIRECTORY_MOVIES,
+            networkClient = networkClient
         )
     }
 
@@ -38,7 +43,9 @@ object MediaSaver {
         url: String,
         subfolder: String,
         mimeType: String?,
-        mediaContentUri: android.net.Uri
+        mediaContentUri: android.net.Uri,
+        relativeBaseDir: String,
+        networkClient: NetworkClient
     ) {
         withContext(Dispatchers.IO) {
             try {
@@ -47,7 +54,7 @@ object MediaSaver {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/MyApplication/$subfolder")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/MyApplication/$subfolder")
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
                 }
@@ -75,7 +82,7 @@ object MediaSaver {
                         }
                         src.use { input -> input.copyTo(outputStream) }
                     } else {
-                        val bytes = NetworkClient.fetchBytes(url)
+                        val bytes = networkClient.fetchBytes(url)
                         if (bytes == null) {
                             showToast(context, "ファイルのダウンロードに失敗しました。")
                             resolver.delete(uri, null, null)
@@ -100,9 +107,26 @@ object MediaSaver {
         }
     }
 
-    private fun getMimeType(url: String): String? {
+    private fun getMimeTypeOrDefault(url: String, defaultMime: String): String {
         val extension = MimeTypeMap.getFileExtensionFromUrl(url)
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+        val guessed = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+        return guessed ?: defaultMime
+    }
+
+    private fun imagesContentUri(): Uri {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+    }
+
+    private fun videosContentUri(): Uri {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
     }
 
     private suspend fun showToast(context: Context, message: String) {

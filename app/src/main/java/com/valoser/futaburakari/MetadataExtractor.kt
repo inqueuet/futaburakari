@@ -44,7 +44,7 @@ object MetadataExtractor {
     private val GSON = Gson()
 
     // ====== Public API ======
-    suspend fun extract(context: Context, uriOrUrl: String): String? = withContext(Dispatchers.IO) {
+    suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
             if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
                 context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
@@ -58,19 +58,19 @@ object MetadataExtractor {
             val ext = uriOrUrl.substringAfterLast('.', "").lowercase()
             return@withContext when (ext) {
                 "jpg", "jpeg", "webp" -> {
-                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong())
+                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
                     if (head != null) {
                         extractFromExif(head)
                     } else null
                 }
                 "png" -> {
-                    extractPngPromptStreamingWithLimit(uriOrUrl)
+                    extractPngPromptStreamingWithLimit(uriOrUrl, networkClient)
                 }
                 "mp4", "webm", "mov", "m4v" -> {
-                    extractMp4PromptStreamingWithLimit(uriOrUrl)
+                    extractMp4PromptStreamingWithLimit(uriOrUrl, networkClient)
                 }
                 else -> {
-                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong()) ?: return@withContext null
+                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient) ?: return@withContext null
                     extractBySniff(head, uriOrUrl)
                 }
             }
@@ -84,12 +84,12 @@ object MetadataExtractor {
     /**
      * 同時接続数を制限してRange GETを実行
      */
-    private suspend fun httpGetRangeWithLimit(urlStr: String, start: Long, length: Long): ByteArray? {
+    private suspend fun httpGetRangeWithLimit(urlStr: String, start: Long, length: Long, networkClient: NetworkClient): ByteArray? {
         return connectionSemaphore.withPermit {
             val connectionCount = activeConnectionCount.incrementAndGet()
             try {
                 println("アクティブ接続数: $connectionCount") // デバッグ用
-                httpGetRange(urlStr, start, length)
+                httpGetRange(urlStr, start, length, networkClient)
             } finally {
                 activeConnectionCount.decrementAndGet()
             }
@@ -99,30 +99,30 @@ object MetadataExtractor {
     /**
      * 同時接続数を制限してHEADリクエストを実行
      */
-    private suspend fun httpHeadWithLimit(urlStr: String): HeadInfo? {
+    private suspend fun httpHeadWithLimit(urlStr: String, networkClient: NetworkClient): HeadInfo? {
         return connectionSemaphore.withPermit {
             val connectionCount = activeConnectionCount.incrementAndGet()
             try {
                 println("アクティブ接続数: $connectionCount") // デバッグ用
-                httpHead(urlStr)
+                httpHead(urlStr, networkClient)
             } finally {
                 activeConnectionCount.decrementAndGet()
             }
         }
     }
 
-    private suspend fun httpHeadContentLengthWithLimit(urlStr: String): Long? {
-        val info = httpHeadWithLimit(urlStr)
+    private suspend fun httpHeadContentLengthWithLimit(urlStr: String, networkClient: NetworkClient): Long? {
+        val info = httpHeadWithLimit(urlStr, networkClient)
         return info?.contentLength
     }
 
     // ====== PNG: 同時接続数制限付きストリーミング処理 ======
-    private suspend fun extractPngPromptStreamingWithLimit(fileUrl: String): String? {
+    private suspend fun extractPngPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
         var windowSize = PNG_WINDOW_BYTES
         var totalFetched = 0
         val buf = ByteArrayOutputStream()
 
-        val first = httpGetRangeWithLimit(fileUrl, 0, windowSize.toLong()) ?: return null
+        val first = httpGetRangeWithLimit(fileUrl, 0, windowSize.toLong(), networkClient) ?: return null
         buf.write(first)
         totalFetched += first.size
 
@@ -135,7 +135,7 @@ object MetadataExtractor {
             windowSize = min(PNG_WINDOW_BYTES, GLOBAL_MAX_BYTES - totalFetched)
             if (windowSize <= 0) break
 
-            val more = httpGetRangeWithLimit(fileUrl, offset, windowSize.toLong()) ?: break
+            val more = httpGetRangeWithLimit(fileUrl, offset, windowSize.toLong(), networkClient) ?: break
             buf.write(more)
             totalFetched += more.size
             bytes = buf.toByteArray()
@@ -147,15 +147,15 @@ object MetadataExtractor {
     }
 
     // ====== MP4: 同時接続数制限付きストリーミング処理 ======
-    private suspend fun extractMp4PromptStreamingWithLimit(fileUrl: String): String? {
+    private suspend fun extractMp4PromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
         // 最初にHEADとheadを並行取得ではなく、順次実行に変更
-        val size = httpHeadContentLengthWithLimit(fileUrl)
-        val head = httpGetRangeWithLimit(fileUrl, 0, MP4_HEAD_BYTES.toLong())
+        val size = httpHeadContentLengthWithLimit(fileUrl, networkClient)
+        val head = httpGetRangeWithLimit(fileUrl, 0, MP4_HEAD_BYTES.toLong(), networkClient)
 
         val tail = if (size != null && size > MP4_TAIL_BYTES) {
-            httpGetRangeWithLimit(fileUrl, size - MP4_TAIL_BYTES, MP4_TAIL_BYTES.toLong())
+            httpGetRangeWithLimit(fileUrl, size - MP4_TAIL_BYTES, MP4_TAIL_BYTES.toLong(), networkClient)
         } else {
-            httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES, MP4_TAIL_BYTES).toLong())
+            httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES, MP4_TAIL_BYTES).toLong(), networkClient)
         }
 
         var merged = concatNonNull(head, tail)
@@ -170,9 +170,9 @@ object MetadataExtractor {
             val more = if (size != null) {
                 val start = max(0L, size - MP4_TAIL_BYTES - extra)
                 val len = min(extra, GLOBAL_MAX_BYTES - total)
-                httpGetRangeWithLimit(fileUrl, start, len.toLong())
+                httpGetRangeWithLimit(fileUrl, start, len.toLong(), networkClient)
             } else {
-                httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES - total, extra).toLong())
+                httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES - total, extra).toLong(), networkClient)
             } ?: break
 
             merged = if (merged == null) more else merged + more
@@ -200,15 +200,15 @@ object MetadataExtractor {
 
     private data class HeadInfo(val contentLength: Long?, val acceptRanges: Boolean)
 
-    private suspend fun httpHead(urlStr: String): HeadInfo? {
+    private suspend fun httpHead(urlStr: String, networkClient: NetworkClient): HeadInfo? {
         return try {
-            val len = NetworkClient.headContentLength(urlStr)
+            val len = networkClient.headContentLength(urlStr)
             HeadInfo(len, true)
         } catch (_: Exception) { null }
     }
 
-    private suspend fun httpGetRange(urlStr: String, start: Long, length: Long): ByteArray? {
-        return try { NetworkClient.fetchRange(urlStr, start, length) } catch (_: Exception) { null }
+    private suspend fun httpGetRange(urlStr: String, start: Long, length: Long, networkClient: NetworkClient): ByteArray? {
+        return try { networkClient.fetchRange(urlStr, start, length) } catch (_: Exception) { null }
     }
 
     // ====== 既存の処理ロジック（変更なし） ======

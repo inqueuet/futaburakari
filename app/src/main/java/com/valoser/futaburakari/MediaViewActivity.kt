@@ -3,6 +3,7 @@ package com.valoser.futaburakari
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.Manifest
 import android.net.Uri
 import android.os.Bundle
 import android.view.Menu
@@ -15,8 +16,13 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
+import android.content.pm.PackageManager
+import android.os.Build
 import coil.load
 import com.valoser.futaburakari.databinding.ActivityMediaViewBinding // ViewBindingを生成後にインポート
+import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,6 +37,10 @@ class MediaViewActivity : BaseActivity() {
     private var currentUrl: String? = null
     private var currentText: String? = null // プロンプトやテキスト用
     private var currentPrompt: String? = null // 念のためプロンプトも保持
+
+    private val networkClient: NetworkClient by lazy {
+        EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
+    }
 
     companion object {
         const val EXTRA_TYPE = "EXTRA_TYPE"
@@ -197,17 +207,45 @@ class MediaViewActivity : BaseActivity() {
     }
 
     private fun saveImage() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    2001
+                )
+                return
+            }
+        }
         currentUrl?.let { url ->
             lifecycleScope.launch {
-                MediaSaver.saveImage(this@MediaViewActivity, url)
+                MediaSaver.saveImage(this@MediaViewActivity, url, networkClient)
             }
         } ?: Toast.makeText(this, "画像URLがありません", Toast.LENGTH_SHORT).show()
     }
 
     private fun saveVideo() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    2001
+                )
+                return
+            }
+        }
         currentUrl?.let { url ->
             lifecycleScope.launch {
-                MediaSaver.saveVideo(this@MediaViewActivity, url)
+                MediaSaver.saveVideo(this@MediaViewActivity, url, networkClient)
             }
         } ?: Toast.makeText(this, "動画URLがありません", Toast.LENGTH_SHORT).show()
     }

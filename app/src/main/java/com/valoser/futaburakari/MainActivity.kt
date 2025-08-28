@@ -26,6 +26,7 @@ import coil.request.ImageRequest
 import android.widget.TextView
 import com.valoser.futaburakari.databinding.ActivityMainBinding
 import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -96,7 +97,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             if (uri != null) {
                 lifecycleScope.launch {
                     Log.d("MainActivity", "Selected image URI: $uri")
-                    val promptInfo = MetadataExtractor.extract(this@MainActivity, uri.toString())
+                    val promptInfo = MetadataExtractor.extract(this@MainActivity, uri.toString(), networkClient)
                     Log.d("MainActivity", "Extracted prompt info: $promptInfo")
 
                     val intent = Intent(this@MainActivity, ImageDisplayActivity::class.java).apply {
@@ -424,7 +425,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
         val settings = mapOf("mode" to "catset", "cx" to "20", "cy" to "10", "cl" to "10")
         try {
-            NetworkClient.applySettings(boardBaseUrl, settings)
+            networkClient.applySettings(boardBaseUrl, settings)
             catsetAppliedBoards.add(boardKey)
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
@@ -681,5 +682,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             syncLoadingUi()
             Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
         }
+    }
+    private val networkClient: NetworkClient by lazy {
+        EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
 }

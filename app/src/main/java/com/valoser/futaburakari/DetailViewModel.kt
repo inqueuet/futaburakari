@@ -45,17 +45,9 @@ class DetailViewModel @Inject constructor(
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
     val sodaneUpdate = _sodaneUpdate.asSharedFlow()
 
-    // 代わりに、レス番号で受ける関数を用意（UIから resNo だけ渡す）
-    fun onClickSodane(resNo: String, referer: String) {
-        viewModelScope.launch {
-            val count = networkClient.postSodaNe(resNo, referer) // Int? を返す想定
-            if (count != null) {
-                _sodaneUpdate.tryEmit(resNo to count)
-            } else {
-                _error.postValue("「そうだね」の送信に失敗しました。")
-            }
-        }
-    }
+    // 「そうだね」送信（UIからはレス番号のみ渡す）
+    // 参照（Referer）は現在のスレURL（currentUrl）を使用して NetworkClient に委譲
+    // 成功時はサーバ返り値のカウントを通知して UI に反映
 
     private val cacheManager = DetailCacheManager(appContext)
     private var currentUrl: String? = null
@@ -316,7 +308,7 @@ class DetailViewModel @Inject constructor(
                 is DetailContent.Image -> {
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
-                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.imageUrl) }
+                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.imageUrl, networkClient) }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata task error for ${content.imageUrl}", e)
                             null
@@ -331,7 +323,7 @@ class DetailViewModel @Inject constructor(
                 is DetailContent.Video -> {
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
-                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.videoUrl) }
+                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.videoUrl, networkClient) }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata task error for ${content.videoUrl}", e)
                             null
@@ -402,7 +394,6 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    // ファイル下部の既存 postSodaNe(resNum: String) を「Int? 前提」に書き換え
     fun postSodaNe(resNum: String) {
         val url = currentUrl
         if (url == null) {
@@ -411,12 +402,9 @@ class DetailViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                val count = NetworkClient.postSodaNe(resNum, url) // ← Int? を受ける
-                if (count != null) {
-                    _sodaneUpdate.tryEmit(resNum to count)        // ← _sodaneUpdate に統一
-                } else {
-                    _error.value = "「そうだね」の投稿に失敗しました。"
-                }
+                val count = networkClient.postSodaNe(resNum, url)
+                if (count != null) _sodaneUpdate.tryEmit(resNum to count)
+                else _error.value = "「そうだね」の投稿に失敗しました。"
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error in postSodaNe: ${e.message}", e)
                 _error.value = "「そうだね」の投稿中にエラーが発生しました: ${e.message}"
@@ -441,10 +429,10 @@ class DetailViewModel @Inject constructor(
                 _isLoading.postValue(true)
 
                 // 念のため直前にスレGETしてCookieを埋める（posttime等）
-                withContext(Dispatchers.IO) { NetworkClient.fetchDocument(referer) }
+                withContext(Dispatchers.IO) { networkClient.fetchDocument(referer) }
 
                 val ok = withContext(Dispatchers.IO) {
-                    NetworkClient.deletePost(
+                    networkClient.deletePost(
                         postUrl = postUrl,
                         referer = referer,
                         resNum = resNum,
