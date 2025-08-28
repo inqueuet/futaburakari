@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.core.app.ActivityCompat
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 
 /**
@@ -15,10 +15,22 @@ import androidx.core.content.ContextCompat
  */
 class MediaPermissionActivity : ComponentActivity() {
 
+    private lateinit var requested: Array<String>
+
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            val permissions = requested
+            val grantResults = IntArray(permissions.size) { idx ->
+                if (result[permissions[idx]] == true) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+            }
+            setResultOk(permissions, grantResults)
+            finish()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val requested = intent.getStringArrayExtra(EXTRA_PERMISSIONS)
+        requested = intent.getStringArrayExtra(EXTRA_PERMISSIONS)
             ?: PermissionHelper.requiredMediaPermissions()
 
         val toRequest = requested.filter { perm ->
@@ -26,24 +38,13 @@ class MediaPermissionActivity : ComponentActivity() {
         }
 
         if (toRequest.isEmpty()) {
-            setResultOk(requested, intArrayOf())
+            // All granted already
+            setResultOk(requested, IntArray(requested.size) { PackageManager.PERMISSION_GRANTED })
             finish()
             return
         }
 
-        ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), REQ_CODE)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_CODE) {
-            setResultOk(permissions, grantResults)
-            finish()
-        }
+        permissionLauncher.launch(toRequest.toTypedArray())
     }
 
     private fun setResultOk(permissions: Array<out String>, grantResults: IntArray) {
