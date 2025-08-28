@@ -26,6 +26,11 @@
 -keep class com.valoser.futaburakari.DetailContent { *; }
 -keep class com.valoser.futaburakari.DetailContent$* { *; }
 -keep class com.valoser.futaburakari.HistoryEntry { *; }
--keep class okhttp3.internal.publicsuffix.PublicSuffixDatabase { *; }
--keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
 -keep class ** extends androidx.work.ListenableWorker
+
+# OkHttp関連を全て保持（サイズは大きくなるが確実）
+-keep class okhttp3.** { *; }
+-dontwarn okhttp3.**
+
+# Kotlin関連
+-dontwarn kotlin.**

@@ -1,6 +1,7 @@
 package com.valoser.futaburakari
 
 import android.content.Context
+import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -25,20 +26,37 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(cookieJar: CookieJar): OkHttpClient =
-        OkHttpClient.Builder()
-            .cookieJar(cookieJar)
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor { chain ->
-                val originalRequest = chain.request()
-                val requestWithUserAgent = originalRequest.newBuilder()
-                    .header("User-Agent", Ua.STRING)
+    fun provideOkHttpClient(cookieJar: CookieJar): OkHttpClient {
+        return try {
+            OkHttpClient.Builder()
+                .cookieJar(cookieJar)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .addInterceptor { chain ->
+                    val originalRequest = chain.request()
+                    val requestWithUserAgent = originalRequest.newBuilder()
+                        .header("User-Agent", Ua.STRING)
+                        .build()
+                    chain.proceed(requestWithUserAgent)
+                }
+                .build()
+        } catch (e: Exception) {
+            Log.e("NetworkModule", "Failed to create OkHttpClient with full configuration", e)
+            // フォールバック：最小設定のクライアント
+            try {
+                OkHttpClient.Builder()
+                    .cookieJar(cookieJar)
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
                     .build()
-                chain.proceed(requestWithUserAgent)
+            } catch (fallbackException: Exception) {
+                Log.e("NetworkModule", "Fallback OkHttpClient creation also failed", fallbackException)
+                // 最後の手段：デフォルトクライアント
+                OkHttpClient()
             }
-            .build()
+        }
+    }
 
     @Provides
     @Singleton
