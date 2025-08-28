@@ -58,6 +58,22 @@ class DetailViewModel @Inject constructor(
     // (F) メタデータ抽出の並列数を制限
     private val limitedIO = Dispatchers.IO.limitedParallelism(2)
 
+    // HTMLから「No.x」と「そうだねxN」を拾って、UIに反映
+    private fun syncSodaneCounts(list: List<DetailContent>) {
+        val resRe = Regex("No\\.(\\d+)")
+        val countRe = Regex("そうだねx(\\d+)")
+        list.forEach { c ->
+            if (c is DetailContent.Text) {
+                val html = c.htmlContent
+                val resNum = resRe.find(html)?.groupValues?.getOrNull(1)
+                val count = countRe.find(html)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                if (!resNum.isNullOrBlank() && count != null) {
+                    _sodaneUpdate.tryEmit(resNum to count)
+                }
+            }
+        }
+    }
+
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
         viewModelScope.launch {
@@ -95,6 +111,9 @@ class DetailViewModel @Inject constructor(
                 // 全ての解析が完了してから一度だけ通知
                 _detailContent.postValue(progressivelyLoadedContent)
                 _isLoading.value = false
+
+                // 初期ロード時点の「そうだね」カウントを反映（サーバ表示がある場合）
+                syncSodaneCounts(progressivelyLoadedContent)
 
                 // バックグラウンドでメタデータを取得し、完了後に再度更新
                 updateMetadataInBackground(progressivelyLoadedContent, url)
@@ -421,6 +440,19 @@ class DetailViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error in postSodaNe: ${e.message}", e)
                 _error.value = "「そうだね」の投稿中にエラーが発生しました: ${e.message}"
+            }
+        }
+    }
+
+    // サーバの最新HTMLから「そうだねxN」を拾ってUIへ反映（一覧は置き換えない）
+    fun refreshSodaneCountsOnly(url: String) {
+        viewModelScope.launch {
+            try {
+                val document = withContext(Dispatchers.IO) { networkClient.fetchDocument(url) }
+                val list = parseContentFromDocument(document, url)
+                syncSodaneCounts(list)
+            } catch (e: Exception) {
+                Log.w("DetailViewModel", "refreshSodaneCountsOnly failed: ${e.message}")
             }
         }
     }

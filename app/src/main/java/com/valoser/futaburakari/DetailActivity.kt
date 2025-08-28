@@ -115,7 +115,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         }
 
         observeViewModel()
-        currentUrl?.let { viewModel.fetchDetails(it) }
+        currentUrl?.let { viewModel.fetchDetails(it, forceRefresh = true) }
 
         // 端末戻る：検索展開中は閉じる
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -467,6 +467,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         if (::binding.isInitialized) {
             binding.adView.resume()
         }
+        // サーバ側のそうだね最新値だけを軽量同期
+        currentUrl?.let { viewModel.refreshSodaneCountsOnly(it) }
     }
 
     override fun onDestroy() {
