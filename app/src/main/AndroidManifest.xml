@@ -28,17 +28,7 @@
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="@string/admob_app_id" />
-        <!-- Disable only WorkManager auto-init via Jetpack Startup, keep others -->
-        <provider
-            android:name="androidx.startup.InitializationProvider"
-            android:authorities="${applicationId}.androidx-startup"
-            android:exported="false"
-            tools:node="merge">
-            <meta-data
-                android:name="androidx.work.WorkManagerInitializer"
-                android:value="androidx.startup"
-                tools:node="remove" />
-        </provider>
+        <!-- WorkManager uses Configuration.Provider in MyApplication for setup -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

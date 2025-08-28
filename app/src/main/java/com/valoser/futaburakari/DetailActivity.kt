@@ -705,19 +705,31 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     private fun confirmAndDelete(resNum: String) {
+        val pwd = AppPreferences.getPwd(this) ?: ""
+        val threadUrl = currentUrl ?: return
+        val boardBase = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
+        val postUrl = boardBase + "futaba.php?guid=on"
+
+        // 削除方法を選択するダイアログ
         AlertDialog.Builder(this)
-            .setMessage("No.$resNum を削除しますか？")
-            .setPositiveButton("削除") { _, _ ->
-                val pwd = AppPreferences.getPwd(this) ?: ""
-                val threadUrl = currentUrl ?: return@setPositiveButton
-                val threadId = threadUrl.substringAfterLast("/").substringBefore(".htm")
-                val boardBase = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
-                val postUrl = boardBase + "futaba.php?guid=on"
+            .setTitle("No.$resNum の削除")
+            .setMessage("削除方法を選択してください")
+            .setPositiveButton("画像のみ削除") { _, _ ->
                 viewModel.deletePost(
                     postUrl = postUrl,
                     referer = threadUrl,
                     resNum = resNum,
-                    pwd = pwd
+                    pwd = pwd,
+                    onlyImage = true,
+                )
+            }
+            .setNeutralButton("レスごと削除") { _, _ ->
+                viewModel.deletePost(
+                    postUrl = postUrl,
+                    referer = threadUrl,
+                    resNum = resNum,
+                    pwd = pwd,
+                    onlyImage = false,
                 )
             }
             .setNegativeButton("キャンセル", null)

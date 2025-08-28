@@ -195,16 +195,20 @@ class NetworkClient(
         postUrl: String,
         referer: String,
         resNum: String,
-        pwd: String
+        pwd: String,
+        onlyImage: Boolean = false,
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val form = FormBody.Builder()
+            val formBuilder = FormBody.Builder()
                 .add(resNum, "delete")
                 .add("responsemode", "ajax")
                 .add("pwd", pwd)
-                .add("onlyimgdel", "")
                 .add("mode", "usrdel")
-                .build()
+            if (onlyImage) {
+                // Futaba仕様: 画像のみ削除にフラグを付与
+                formBuilder.add("onlyimgdel", "on")
+            }
+            val form = formBuilder.build()
 
             val ref = referer.toHttpUrl()
             val origin = "${ref.scheme}://${ref.host}"

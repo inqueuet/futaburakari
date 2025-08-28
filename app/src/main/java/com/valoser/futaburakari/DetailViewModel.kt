@@ -431,7 +431,7 @@ class DetailViewModel @Inject constructor(
     }
 
     // 削除
-    fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String) {
+    fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String, onlyImage: Boolean) {
         viewModelScope.launch {
             try {
                 _isLoading.postValue(true)
@@ -444,7 +444,8 @@ class DetailViewModel @Inject constructor(
                         postUrl = postUrl,
                         referer = referer,
                         resNum = resNum,
-                        pwd = pwd
+                        pwd = pwd,
+                        onlyImage = onlyImage,
                     )
                 }
 
