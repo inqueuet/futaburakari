@@ -50,7 +50,7 @@ class HistoryAdapter(
         val badge = holder.binding.unreadBadge
         if (item.unreadCount > 0) {
             badge.visibility = android.view.View.VISIBLE
-            badge.text = if (item.unreadCount > 99) "99+" else item.unreadCount.toString()
+            badge.text = if (item.unreadCount > 999) "999+" else item.unreadCount.toString()
         } else {
             badge.visibility = android.view.View.GONE
         }
