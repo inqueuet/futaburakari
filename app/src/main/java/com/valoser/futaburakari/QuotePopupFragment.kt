@@ -67,7 +67,8 @@ class QuotePopupFragment : BaseBottomSheetDialogFragment() {
         binding.popupRecyclerView.layoutManager = LinearLayoutManager(requireContext())
         binding.popupRecyclerView.adapter = detailAdapter
 
-        binding.popupRecyclerView.setHasFixedSize(true)
+        // 可変高さアイテムに対応するため固定サイズを無効化
+        binding.popupRecyclerView.setHasFixedSize(false)
         binding.popupRecyclerView.itemAnimator = null
         binding.popupRecyclerView.setItemViewCacheSize(100)
 

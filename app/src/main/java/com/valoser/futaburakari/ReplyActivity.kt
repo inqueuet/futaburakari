@@ -130,7 +130,7 @@ class ReplyActivity : BaseActivity() {
 
             viewModel.submit(
                 context = this,
-                boardUrl = "$boardUrl?guid=on", // 送信先（boardの futaba.php に guid=on を付与）
+                boardUrl = boardUrl, // guid 等の付与はリポジトリ側で一元管理
                 resto = threadId,
                 name = name,
                 email = email,

@@ -31,8 +31,15 @@ class ScrollPositionStore(context: Context) {
      * @return アイテムの位置とオフセットのペア。保存された値がなければ (0, 0) を返す。
      */
     fun getScrollState(url: String): Pair<Int, Int> {
-        val position = prefs.getInt(KEY_PREFIX_POSITION + url, 0)
-        val offset = prefs.getInt(KEY_PREFIX_OFFSET + url, 0)
-        return Pair(position, offset)
+        var position = prefs.getInt(KEY_PREFIX_POSITION + url, Int.MIN_VALUE)
+        var offset = prefs.getInt(KEY_PREFIX_OFFSET + url, Int.MIN_VALUE)
+        if (position == Int.MIN_VALUE || offset == Int.MIN_VALUE) {
+            // 旧キー（ドメイン無し）へのフォールバック
+            val legacy = try { UrlNormalizer.legacyThreadKey(url) } catch (_: Exception) { url }
+            position = prefs.getInt(KEY_PREFIX_POSITION + legacy, 0)
+            offset = prefs.getInt(KEY_PREFIX_OFFSET + legacy, 0)
+        }
+        if (position == Int.MIN_VALUE || offset == Int.MIN_VALUE) return 0 to 0
+        return position to offset
     }
 }

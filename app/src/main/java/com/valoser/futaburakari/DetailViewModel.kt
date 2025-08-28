@@ -191,7 +191,11 @@ class DetailViewModel @Inject constructor(
                 // OPの場合、子要素の返信テーブルを除外したクローンを作成
                 val textSourceElement = block.clone().apply {
                     select("table").remove()       // 返信テーブルを除去
-                    select("img").remove()         // ← 小さい四角の原因なので削除
+                    // <img> は一律削除せず、ALT等のテキストに置換して意味を残す
+                    select("img").forEach { img ->
+                        val alt = img.attr("alt").ifBlank { "img" }
+                        img.replaceWith(org.jsoup.nodes.TextNode("[$alt]"))
+                    }
                     // <a href="..."> は残すのでそのまま
                 }
 
@@ -206,7 +210,11 @@ class DetailViewModel @Inject constructor(
                 val rtd = block.selectFirst(".rtd")
                 if (rtd != null) {
                     val textBlock = rtd.clone().apply {
-                        select("img").remove()     // ← 同じく <img> を除去
+                        // <img> は一律削除せず、ALT等のテキストに置換して意味を残す
+                        select("img").forEach { img ->
+                            val alt = img.attr("alt").ifBlank { "img" }
+                            img.replaceWith(org.jsoup.nodes.TextNode("[$alt]"))
+                        }
                     }
                     html = textBlock.html()
                 } else {

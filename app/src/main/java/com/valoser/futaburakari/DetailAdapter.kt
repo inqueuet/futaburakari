@@ -87,48 +87,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
         return if (m.find()) m.group(1) else null
     }
 
-    private fun injectSodaneCount(html: String, resNum: String?): String {
-        if (resNum == null) return html
-        val count = sodaneOverrides[resNum] ?: return html
-
-        // 1) No.{resNum} の位置を探す
-        val noMatch = Regex("""No\.$resNum""").find(html) ?: return html
-        val start = noMatch.range.first
-
-        // 2) 「同じ行」の終端（次の <br> まで）を見つける
-        val after = html.substring(start)
-        val brMatch = Regex("""(?i)<br\s*/?>""").find(after)
-        val endOffset = brMatch?.range?.first ?: after.length
-
-        // セグメント = "No.{resNum} ...（次の改行まで）"
-        val segment = after.substring(0, endOffset)
-
-        // 3) セグメント内の
-        //    - <a ...>(+ / ＋ / そうだねxN)</a>
-        //    - (+ / ＋ / そうだねxN)
-        //    を “何個でも”まとめて除去（空白や&nbsp;やZWSP込み）
-        var cleaned = segment
-        val toks = listOf(
-            // <a>で包まれているパターン
-            Regex("""(?:\s|&nbsp;|\u200B)*(?:<a\b[^>]*>\s*)?(?:[+＋]|そうだねx\d+)(?:\s*</a>)?""")
-        )
-        // 収束するまで繰り返し畳み替え（複数散在の想定）
-        repeat(10) {
-            var changed = false
-            for (rx in toks) {
-                val next = rx.replace(cleaned, "")
-                if (next != cleaned) { cleaned = next; changed = true }
-            }
-            if (!changed) return@repeat
-        }
-
-        // 4) 末尾の不要空白を整理し、統一表記を追加
-        cleaned = cleaned.replace(Regex("""\s+"""), " ").trimEnd()
-        val newSegment = "$cleaned そうだねx$count"
-
-        // 5) 元HTMLのセグメントを差し替え
-        return html.substring(0, start) + newSegment + after.substring(endOffset)
-    }
+    // injectSodaneCount は廃止（HTML改変を避けるため）
 
     fun setSearchQuery(query: String?) {
         currentSearchQuery = query
@@ -229,8 +188,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
         fun bind(item: DetailContent.Text, searchQuery: String?) {
             val mainResNum = adapter.extractResNo(item.htmlContent)
-            val htmlAppliedSodane = adapter.injectSodaneCount(item.htmlContent, mainResNum)
-            val htmlWithZwsp = insertZwspForPadding(htmlAppliedSodane)
+            val htmlWithZwsp = insertZwspForPadding(item.htmlContent)
             val textFromHtmlWithZwsp = Html.fromHtml(htmlWithZwsp, Html.FROM_HTML_MODE_COMPACT)
             val spannableBuilder = SpannableStringBuilder(textFromHtmlWithZwsp)
             val contentString = spannableBuilder.toString()
@@ -396,6 +354,45 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             }
                         }
                         spannableBuilder.setSpan(span, tokenAbsStart, tokenAbsEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            }
+
+            // そうだね（安全な後付け表示）
+            // HTMLは改変せず、No.xxx の行末に " そうだねx{count}" を付与しクリック可能にする
+            run {
+                val resNum = mainResNum
+                val count = resNum?.let { adapter.sodaneOverrides[it] }
+                if (resNum != null && count != null && count >= 0) {
+                    val noMatch = Regex("""No\.$resNum""").find(contentString)
+                    val insertPos = if (noMatch != null) {
+                        val start = noMatch.range.first
+                        val after = contentString.substring(start)
+                        val brIdx = after.indexOf('\n')
+                        if (brIdx >= 0) start + brIdx else spannableBuilder.length
+                    } else {
+                        spannableBuilder.length
+                    }
+                    val lineText = if (noMatch != null) {
+                        val start = noMatch.range.first
+                        val end = insertPos
+                        contentString.substring(start, end)
+                    } else ""
+                    val alreadyHas = lineText.contains(Regex("そうだねx\\d+"))
+                    if (!alreadyHas) {
+                        val prefix = if (insertPos > 0 && spannableBuilder[insertPos - 1].isWhitespace()) "" else " "
+                        val suffix = "${prefix}そうだねx${count}"
+                        val start = insertPos
+                        spannableBuilder.insert(start, suffix)
+                        val end = start + suffix.length
+                        val clickableStart = end - ("そうだねx$count").length
+                        if (clickableStart >= 0 && end <= spannableBuilder.length) {
+                            val span = object : ClickableSpan() {
+                                override fun onClick(widget: View) { onSodaNeClickListener?.invoke(resNum) }
+                                override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
+                            }
+                            spannableBuilder.setSpan(span, clickableStart, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
                     }
                 }
             }

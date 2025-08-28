@@ -7,6 +7,7 @@ object AppPreferences {
     private const val PREFS_NAME = "futaba_prefs"
     private const val KEY_PTHC = "pthc"
     private const val KEY_PWD = "pwd"
+    private const val KEY_APPEND_GUID = "append_guid_on"
 
     private fun getPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -26,6 +27,14 @@ object AppPreferences {
 
     fun savePwd(context: Context, pwd: String) {
         getPreferences(context).edit().putString(KEY_PWD, pwd).apply()
+    }
+
+    fun getAppendGuidOn(context: Context): Boolean {
+        return getPreferences(context).getBoolean(KEY_APPEND_GUID, true)
+    }
+
+    fun setAppendGuidOn(context: Context, enabled: Boolean) {
+        getPreferences(context).edit().putBoolean(KEY_APPEND_GUID, enabled).apply()
     }
 
     /**

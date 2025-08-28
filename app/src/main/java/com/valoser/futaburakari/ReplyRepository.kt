@@ -181,7 +181,7 @@ class ReplyRepository @Inject constructor(
 
             // リクエスト
             val rb = Request.Builder()
-                .url(boardUrl)                    // 例: .../futaba.php?guid=on
+                .url(ensureBoardPostUrl(boardUrl, context)) // 例: .../futaba.php[?guid=on]
                 .header("Referer", threadPageUrl) // ブラウザ成功例と同じく res/*.htm
                 .header("Origin", origin)         // ✅ 正しい Origin（パスなし）
                 .header("User-Agent", Ua.STRING)
@@ -289,5 +289,19 @@ class ReplyRepository @Inject constructor(
         val path = uri.lastPathSegment ?: "upload.bin"
         val idx = path.lastIndexOf('/')
         return if (idx >= 0 && idx + 1 < path.length) path.substring(idx + 1) else path
+    }
+}
+
+private fun ensureBoardPostUrl(boardUrl: String, context: Context): String {
+    return try {
+        val url = boardUrl.toHttpUrl()
+        if (!url.encodedPath.endsWith("/futaba.php")) return boardUrl // 期待外はそのまま
+        // 既にguid指定があるなら尊重
+        if (url.queryParameter("guid") != null) return boardUrl
+
+        val appendGuid = AppPreferences.getAppendGuidOn(context)
+        if (appendGuid) url.newBuilder().addQueryParameter("guid", "on").build().toString() else boardUrl
+    } catch (_: Exception) {
+        boardUrl
     }
 }

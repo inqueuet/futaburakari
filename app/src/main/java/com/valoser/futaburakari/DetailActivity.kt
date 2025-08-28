@@ -297,7 +297,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         binding.detailRecyclerView.apply {
             adapter = detailAdapter
             layoutManager = this@DetailActivity.layoutManager
-            setHasFixedSize(true)
+            // 動的に高さが変わるアイテムがあるため固定サイズは無効化
+            setHasFixedSize(false)
             itemAnimator = null
             setItemViewCacheSize(150)
 

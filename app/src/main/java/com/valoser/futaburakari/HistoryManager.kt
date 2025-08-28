@@ -30,9 +30,18 @@ object HistoryManager {
 
     fun addOrUpdate(context: Context, url: String, title: String, thumbnailUrl: String? = null) {
         val key = UrlNormalizer.threadKey(url)
+        val legacyKey = UrlNormalizer.legacyThreadKey(url)
         val list = load(context)
         val now = System.currentTimeMillis()
-        val idx = list.indexOfFirst { it.key == key }
+        var idx = list.indexOfFirst { it.key == key }
+        if (idx < 0 && legacyKey != key) {
+            // 旧キーでの既存項目をマイグレーション（キー差し替え）
+            idx = list.indexOfFirst { it.key == legacyKey }
+            if (idx >= 0) {
+                val e = list[idx]
+                list[idx] = e.copy(key = key, url = url, title = title, lastViewedAt = now, thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl)
+            }
+        }
         if (idx >= 0) {
             val e = list[idx]
             list[idx] = e.copy(title = title, lastViewedAt = now, thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl)
@@ -58,8 +67,17 @@ object HistoryManager {
 
     fun updateThumbnail(context: Context, url: String, thumbnailUrl: String) {
         val key = UrlNormalizer.threadKey(url)
+        val legacyKey = UrlNormalizer.legacyThreadKey(url)
         val list = load(context)
-        val idx = list.indexOfFirst { it.key == key }
+        var idx = list.indexOfFirst { it.key == key }
+        if (idx < 0 && legacyKey != key) {
+            idx = list.indexOfFirst { it.key == legacyKey }
+            if (idx >= 0) {
+                // 旧キーであれば最新キーへ差し替える
+                val e = list[idx]
+                list[idx] = e.copy(key = key)
+            }
+        }
         if (idx >= 0) {
             val e = list[idx]
             if (e.thumbnailUrl != thumbnailUrl) {

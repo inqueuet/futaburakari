@@ -557,7 +557,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             layoutManager = gridLayoutManager
             adapter = imageAdapter
             setItemViewCacheSize(50)
-            setHasFixedSize(true)
+            // 高さが変わるカードや画像があるため固定サイズは無効化
+            setHasFixedSize(false)
         }
     }
 

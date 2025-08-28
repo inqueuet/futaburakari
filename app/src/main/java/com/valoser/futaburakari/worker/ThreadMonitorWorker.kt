@@ -78,8 +78,9 @@ class ThreadMonitorWorker @AssistedInject constructor(
     }
 
     private fun cancelUnique(url: String) {
-        val unique = uniqueName(url)
-        WorkManager.getInstance(applicationContext).cancelUniqueWork(unique)
+        val wm = WorkManager.getInstance(applicationContext)
+        wm.cancelUniqueWork(uniqueName(url))
+        wm.cancelUniqueWork(uniqueNameLegacy(url))
     }
 
     companion object {
@@ -88,6 +89,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
         const val KEY_BG_ENABLED = "pref_key_bg_monitor_enabled"
 
         private fun uniqueName(url: String): String = "monitor-" + UrlNormalizer.threadKey(url)
+        private fun uniqueNameLegacy(url: String): String = "monitor-" + UrlNormalizer.legacyThreadKey(url)
         private fun uniqueNameFromKey(key: String): String = "monitor-" + key
 
         fun schedule(context: Context, url: String) {
@@ -118,7 +120,9 @@ class ThreadMonitorWorker @AssistedInject constructor(
         }
 
         fun cancelByUrl(context: Context, url: String) {
-            WorkManager.getInstance(context).cancelUniqueWork(uniqueName(url))
+            val wm = WorkManager.getInstance(context)
+            wm.cancelUniqueWork(uniqueName(url))
+            wm.cancelUniqueWork(uniqueNameLegacy(url))
         }
 
         fun cancelByKey(context: Context, key: String) {

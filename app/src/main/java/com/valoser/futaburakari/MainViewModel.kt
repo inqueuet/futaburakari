@@ -93,7 +93,8 @@ class MainViewModel @Inject constructor(
                 val document = networkClient.fetchDocument(url)
                 // ★修正点: urlを渡して解析方法を切り替え
                 val baseItems = parseItemsFromDocument(document, url)
-                val enriched = enrichWithFullImages(baseItems)
+                val previewSafe = validatePreviewUrls(baseItems)
+                val enriched = enrichWithFullImages(previewSafe)
                 _images.value = enriched
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
@@ -116,9 +117,11 @@ class MainViewModel @Inject constructor(
                     ni.copy(fullImageUrl = old?.fullImageUrl)
                 }
                 val need = carried.filter { it.fullImageUrl.isNullOrBlank() }
-                val filled = if (need.isNotEmpty()) enrichWithFullImages(need) else emptyList()
+                val previewSafe = validatePreviewUrls(carried)
+                val needFull = previewSafe.filter { it.fullImageUrl.isNullOrBlank() }
+                val filled = if (needFull.isNotEmpty()) enrichWithFullImages(needFull) else emptyList()
                 val filledMap = filled.associateBy { it.detailUrl }
-                val merged = carried.map { filledMap[it.detailUrl] ?: it }
+                val merged = previewSafe.map { filledMap[it.detailUrl] ?: it }
                 val hasNewContent =
                     merged.size != currentItems.size || !merged.containsAll(currentItems)
 
@@ -165,7 +168,7 @@ class MainViewModel @Inject constructor(
             val imgTag = linkTag.selectFirst("img")
             var imageUrl: String? = imgTag?.absUrl("src")
 
-            // 2) <img> が無い（今回のHTMLのような）場合、res/{id}.htm から id を抜いて推測構築
+            // 2) <img> が無い（今回のHTMLのような）場合、res/{id}.htm から id を抜いて推測構築（候補列挙は行うが選定は後段の検証に委譲）
             if (imageUrl.isNullOrEmpty()) {
                 val href = linkTag.attr("href") // 例: "res/178828.htm"
                 val m = Regex("""res/(\d+)\.htm""").find(href)
@@ -173,16 +176,8 @@ class MainViewModel @Inject constructor(
                     val id = m.groupValues[1]
                     // 例: https://zip.2chan.net/32/res/... -> https://zip.2chan.net/32
                     val boardBase = detailUrl.substringBeforeLast("/res/")
-                    // Futaba の実運用でよく見かける配置を優先順で列挙（存在チェックはせず最初を使う）
-                    val candidates = listOf(
-                        "$boardBase/cat/$id.jpg",
-                        "$boardBase/cat/$id.png",
-                        "$boardBase/cat/$id.webp",
-                        "$boardBase/thumb/${id}s.jpg",
-                        "$boardBase/thumb/${id}s.png",
-                        "$boardBase/thumb/${id}s.webp"
-                    )
-                    imageUrl = candidates.firstOrNull()
+                    // 一旦 jpg を既定とする（後段で HEAD により検証して適正化）
+                    imageUrl = "$boardBase/cat/$id.jpg"
                 }
             }
 
@@ -204,6 +199,38 @@ class MainViewModel @Inject constructor(
             )
         }
         return parsedItems
+    }
+
+    private fun buildCatalogThumbCandidates(detailUrl: String): List<String> {
+        val m = Regex("""/res/(\d+)\.htm""").find(detailUrl) ?: return emptyList()
+        val id = m.groupValues[1]
+        val boardBase = detailUrl.substringBeforeLast("/res/")
+        return listOf(
+            "$boardBase/cat/$id.jpg",
+            "$boardBase/cat/$id.png",
+            "$boardBase/cat/$id.webp",
+            "$boardBase/thumb/${id}s.jpg",
+            "$boardBase/thumb/${id}s.png",
+            "$boardBase/thumb/${id}s.webp"
+        )
+    }
+
+    private suspend fun validatePreviewUrls(items: List<ImageItem>): List<ImageItem> {
+        if (items.isEmpty()) return items
+        val limited = Dispatchers.IO.limitedParallelism(4)
+        return withContext(limited) {
+            items.map { item ->
+                async {
+                    val current = item.previewUrl
+                    // まず現行URLが有効ならそのまま
+                    if (current.isNotBlank() && headExists(current)) return@async item
+                    // 候補を順番にHEAD確認
+                    val candidates = buildCatalogThumbCandidates(item.detailUrl)
+                    val chosen = candidates.firstOrNull { runCatching { headExists(it) }.getOrDefault(false) }
+                    if (chosen != null && chosen != current) item.copy(previewUrl = chosen) else item
+                }
+            }.awaitAll()
+        }
     }
 
     // 置き換え：cgi フォールバック（旧 parseForCgiServer を安全側に縮約）
