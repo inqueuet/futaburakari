@@ -23,6 +23,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.Normalizer
 import androidx.preference.PreferenceManager
 import com.google.android.gms.ads.AdRequest
@@ -51,6 +52,15 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private var isInitialLoad = true // ★クラスのプロパティとして初期化
 
     private var isFastScrolling = false // 追加
+
+    // メインスレッドハンドラ / 既読更新デバウンス
+    private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+    private var markViewedRunnable: Runnable? = null
+    private var markViewedJob: kotlinx.coroutines.Job? = null
+
+    // 本文検索のためのプレーンテキストキャッシュ（Text.id -> plainText）
+    private var plainTextCache: Map<String, String> = emptyMap()
+    private var buildPlainCacheJob: kotlinx.coroutines.Job? = null
 
     companion object {
         const val EXTRA_URL = "extra_url"
@@ -406,6 +416,19 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 detailSearchManager.realignToCurrentHitIfActive()
             }
 
+            // プレーンテキストキャッシュをバックグラウンドで構築
+            buildPlainCacheJob?.cancel()
+            buildPlainCacheJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                val cache = normalized.asSequence()
+                    .filterIsInstance<DetailContent.Text>()
+                    .associate { t ->
+                        val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT)
+                            .toString()
+                        t.id to plain
+                    }
+                withContext(kotlinx.coroutines.Dispatchers.Main) { plainTextCache = cache }
+            }
+
             // （必要なら）検索ナビの表示切替
             binding.searchNavigationControls.isVisible = detailSearchManager.isSearchActive()
 
@@ -676,18 +699,27 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     // 現在のスクロール位置から「見えた最大の投稿序数」を算出して既読更新
     private fun markViewedByCurrentScroll() {
-        val url = currentUrl ?: return
-        val list = viewModel.detailContent.value ?: return
-        if (list.isEmpty()) return
-
-        val maxOrdinal = computeMaxVisiblePostOrdinal(list)
-        if (maxOrdinal <= 0) return
-        // 既読の巻き戻しはしないため、履歴の現状値と比較して進んだときだけ保存
-        val current = HistoryManager.getAll(this).firstOrNull { it.url == url }
-        val curViewed = current?.lastViewedReplyNo ?: 0
-        if (maxOrdinal > curViewed) {
-            HistoryManager.markViewed(this, url, maxOrdinal)
+        // デバウンス（300ms）してバックグラウンドで実行
+        markViewedRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            markViewedJob?.cancel()
+            markViewedJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                val url = currentUrl ?: return@launch
+                val list = viewModel.detailContent.value ?: return@launch
+                if (list.isEmpty()) return@launch
+                val maxOrdinal = computeMaxVisiblePostOrdinal(list)
+                if (maxOrdinal <= 0) return@launch
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val current = HistoryManager.getAll(this@DetailActivity).firstOrNull { it.url == url }
+                    val curViewed = current?.lastViewedReplyNo ?: 0
+                    if (maxOrdinal > curViewed) {
+                        HistoryManager.markViewed(this@DetailActivity, url, maxOrdinal)
+                    }
+                }
+            }
         }
+        markViewedRunnable = r
+        mainHandler.postDelayed(r, 300L)
     }
 
     // 画面に50%以上見えているアイテムから、その所属する投稿（Text単位）の序数を計算し、その最大値を返す
@@ -733,8 +765,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // 1) No.\d+
         Regex("""No\.(\d+)""").find(searchText)?.groupValues?.getOrNull(1)?.let { num ->
             val hit = all.firstOrNull {
-                it is DetailContent.Text &&
-                        Html.fromHtml(it.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains("No.$num")
+                it is DetailContent.Text && (plainTextCache[it.id]?.contains("No.$num") == true)
             }
             if (hit != null) return hit
         }
@@ -751,12 +782,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // 3) 本文 部分一致（空白圧縮・大文字小文字無視）
         val needle = searchText.trim().replace(Regex("\\s+"), " ")
         return all.firstOrNull {
-            it is DetailContent.Text &&
-                    Html.fromHtml(it.htmlContent, Html.FROM_HTML_MODE_COMPACT)
-                        .toString()
-                        .trim()
-                        .replace(Regex("\\s+"), " ")
-                        .contains(needle, ignoreCase = true)
+            it is DetailContent.Text && (plainTextCache[it.id]
+                ?.trim()
+                ?.replace(Regex("\\s+"), " ")
+                ?.contains(needle, ignoreCase = true) == true)
         }
     }
 
@@ -863,64 +892,52 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     // 追加：No の参照（引用）を一覧表示
     private fun showResReferencesPopup(resNum: String) {
         val all = viewModel.detailContent.value ?: return
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val hitIndexes = all.withIndex().filter { (_, c) ->
+                c is DetailContent.Text && matchesResRefCached(c, resNum)
+            }.map { it.index }
 
-        // 引用判定用のパターン：
-        // 新: 本文どこでもヒットOK（誤検知を抑えるための境界条件つき）
-        val patterns = listOf(
-            // 「No. 1234」, 「No.1234」など
-            Regex("""\bNo\.?\s*$resNum\b""", RegexOption.IGNORE_CASE),
-            // 「>>1234」
-            Regex("""\B>>\s*$resNum\b""", RegexOption.IGNORE_CASE),
-            // 予防的に“裸の数字”でも一致させる（前後が数字でないことを保証）
-            // 例: 1234 が 12345 に誤マッチしない
-            Regex("""(?<!\d)$resNum(?!\d)""")
-        )
-
-        // 「確認」ポップアップ用の検索ロジック（既存のヒット抽出箇所）を置き換え
-        val hitIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text && matchesResRef(c.htmlContent, resNum)
-        }.map { it.index }
-
-        if (hitIndexes.isEmpty()) {
-            Toast.makeText(this, "No.$resNum の引用は見つかりませんでした", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // Text 本体＋直後の Image/Video を同梱（グループ化）
-        val groups = mutableListOf<List<DetailContent>>()
-        for (i in hitIndexes) {
-            val group = mutableListOf<DetailContent>()
-            group += all[i]
-            var j = i + 1
-            while (j < all.size) {
-                when (val c = all[j]) {
-                    is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
-                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+            if (hitIndexes.isEmpty()) {
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    Toast.makeText(this@DetailActivity, "No.$resNum の引用は見つかりませんでした", Toast.LENGTH_SHORT).show()
                 }
+                return@launch
             }
-            groups += group
-        }
 
-        // 同一 Text を先頭に持つグループの重複排除
-        val distinctGroups = groups.distinctBy { it.firstOrNull()?.id }
-
-        // レス番号順に整序（見やすさ向上）。グループ単位で並べ、各グループ内の順序は保持
-        val ordered = distinctGroups
-            .sortedWith(compareBy<List<DetailContent>> { grp ->
-                val head = grp.firstOrNull()
-                when (head) {
-                    null -> Int.MAX_VALUE
-                    else -> extractResNo(head) ?: Int.MAX_VALUE
+            val groups = mutableListOf<List<DetailContent>>()
+            for (i in hitIndexes) {
+                val group = mutableListOf<DetailContent>()
+                group += all[i]
+                var j = i + 1
+                while (j < all.size) {
+                    when (val c = all[j]) {
+                        is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
+                        is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+                    }
                 }
-            })
-            .flatten()
+                groups += group
+            }
 
-        showContentListBottomSheet(ordered)
+            val distinctGroups = groups.distinctBy { it.firstOrNull()?.id }
+
+            // レス番号順に整序
+            val ordered = distinctGroups
+                .sortedWith(compareBy<List<DetailContent>> { grp ->
+                    val head = grp.firstOrNull()
+                    when (head) {
+                        null -> Int.MAX_VALUE
+                        else -> extractResNo(head) ?: Int.MAX_VALUE
+                    }
+                })
+                .flatten()
+
+            withContext(kotlinx.coroutines.Dispatchers.Main) { showContentListBottomSheet(ordered) }
+        }
     }
 
     // 追加: 共通のマッチ関数
-    private fun matchesResRef(html: String, resNum: String): Boolean {
-        val plain = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT).toString()
+    private fun matchesResRefCached(text: DetailContent.Text, resNum: String): Boolean {
+        val plain = plainTextCache[text.id] ?: Html.fromHtml(text.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
 
         // 見た目の差異を吸収（ZWSP, 全角, 記号類）
         val norm = Normalizer.normalize(
@@ -956,7 +973,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             Regex("""data-res\s*=\s*["']\s*$esc\s*["']""", RegexOption.IGNORE_CASE),
             Regex("""&gt;+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE) // &gt;&gt;No.1234
         )
-        return htmlPatterns.any { it.containsMatchIn(html) }
+        return htmlPatterns.any { it.containsMatchIn(text.htmlContent) }
     }
 
 }
