@@ -51,6 +51,7 @@
     <string name="no_history">履歴がありません</string>
     <string name="bg_monitor">バックグラウンド監視</string>
     <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
+    <string name="settings_inquiry">お問合せ</string>
 
     <!-- Settings: Display options -->
     <string-array name="pref_grid_span_entries">

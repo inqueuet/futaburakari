@@ -95,6 +95,14 @@
                 android:data="https://note.com/inqueuet/n/nb86f8e3f405a" />
         </Preference>
 
+        <Preference
+            app:key="pref_key_inquiry"
+            app:title="@string/settings_inquiry">
+            <intent
+                android:action="android.intent.action.SENDTO"
+                android:data="mailto:admin@inqueuet.com" />
+        </Preference>
+
     </PreferenceCategory>
       
 </PreferenceScreen>
