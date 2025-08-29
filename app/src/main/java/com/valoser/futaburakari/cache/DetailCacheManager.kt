@@ -77,15 +77,9 @@ class DetailCacheManager(private val context: Context) {
             val cachedData: CachedDetails = gson.fromJson(jsonString, object : TypeToken<CachedDetails>() {}.type)
             Log.d("DetailCacheManager", "Successfully parsed JSON for $url")
 
-            val oneDayInMillis = TimeUnit.DAYS.toMillis(1)
-            if (System.currentTimeMillis() - cachedData.timestamp > oneDayInMillis) {
-                Log.d("DetailCacheManager", "Cache expired for $url. Deleting.")
-                cacheFile.delete()
-                null
-            } else {
-                Log.d("DetailCacheManager", "Cache hit and valid for $url. Returning ${cachedData.details.size} items.")
-                cachedData.details
-            }
+            // 期限切れによる削除は行わない（アーカイブ閲覧を優先）
+            Log.d("DetailCacheManager", "Cache hit for $url. Returning ${cachedData.details.size} items.")
+            cachedData.details
         } catch (e: Exception) {
             Log.e("DetailCacheManager", "Error loading or parsing cache for $url. Deleting cache file.", e)
             cacheFile.delete()
@@ -113,6 +107,43 @@ class DetailCacheManager(private val context: Context) {
             if (!dir.deleteRecursively()) {
                 Log.w("DetailCacheManager", "Failed to delete archive dir: ${dir.absolutePath}")
             }
+        }
+    }
+
+    fun totalBytes(): Long {
+        fun dirSize(d: File): Long {
+            if (!d.exists()) return 0L
+            return d.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+        }
+        return dirSize(cacheDir) + dirSize(archiveRoot)
+    }
+
+    /**
+     * limitBytes を超えている場合、履歴の古い順に各スレのアーカイブ/キャッシュを削除して
+     * 全体サイズが (limitBytes * 0.9) を下回るまで間引く。
+     * ユーザが未読のスレは最後に回す（未読0を優先的に削除）。
+     */
+    fun enforceLimit(limitBytes: Long, history: List<com.valoser.futaburakari.HistoryEntry>, onEntryCleaned: (com.valoser.futaburakari.HistoryEntry) -> Unit = {}) {
+        if (limitBytes <= 0) return
+        var total = totalBytes()
+        if (total <= limitBytes) return
+
+        // 削減目標: 少し余裕を持たせる
+        val target = (limitBytes * 0.9).toLong()
+
+        val ordered = history.sortedWith(
+            compareBy<com.valoser.futaburakari.HistoryEntry> { it.unreadCount > 0 } // 未読0が先
+                .thenBy { if (it.lastViewedAt > 0) it.lastViewedAt else Long.MAX_VALUE }
+                .thenBy { if (it.lastUpdatedAt > 0) it.lastUpdatedAt else Long.MAX_VALUE }
+        )
+
+        for (e in ordered) {
+            // スレごとに媒体と詳細キャッシュを削除
+            clearArchiveForUrl(e.url)
+            invalidateCache(e.url)
+            onEntryCleaned(e)
+            total = totalBytes()
+            if (total <= target) break
         }
     }
 

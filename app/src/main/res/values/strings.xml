@@ -107,4 +107,20 @@
         <item>orange</item>
     </string-array>
 
+    <!-- Auto cleanup limit -->
+    <string-array name="pref_auto_cleanup_entries">
+        <item>無効</item>
+        <item>1 GB</item>
+        <item>5 GB</item>
+        <item>10 GB</item>
+        <item>20 GB</item>
+    </string-array>
+    <string-array name="pref_auto_cleanup_values">
+        <item>0</item>
+        <item>1024</item>
+        <item>5120</item>
+        <item>10240</item>
+        <item>20480</item>
+    </string-array>
+
 </resources>

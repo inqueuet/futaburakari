@@ -96,9 +96,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         currentUrl?.let { url ->
             val title = binding.toolbarTitle.text?.toString().orEmpty().ifBlank { url }
             HistoryManager.addOrUpdate(this, url, title)
-
-            // バックグラウンド監視が有効ならスケジュール
-            com.valoser.futaburakari.worker.ThreadMonitorWorker.schedule(this, url)
         }
 
         setupRecyclerView()
@@ -115,7 +112,20 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         }
 
         observeViewModel()
-        currentUrl?.let { viewModel.fetchDetails(it, forceRefresh = true) }
+        currentUrl?.let { url ->
+            val key = UrlNormalizer.threadKey(url)
+            val isArchived = runCatching { HistoryManager.getAll(this) }
+                .getOrDefault(emptyList())
+                .any { it.key == key && it.isArchived }
+
+            // アーカイブ済みはキャッシュのみ、未アーカイブはネットワークで最新取得
+            viewModel.fetchDetails(url, forceRefresh = !isArchived)
+
+            // 監視は未アーカイブのみスケジュール
+            if (!isArchived) {
+                com.valoser.futaburakari.worker.ThreadMonitorWorker.schedule(this, url)
+            }
+        }
 
         // 端末戻る：検索展開中は閉じる
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {

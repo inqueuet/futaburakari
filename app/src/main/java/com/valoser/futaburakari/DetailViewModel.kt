@@ -119,8 +119,15 @@ class DetailViewModel @Inject constructor(
                 updateMetadataInBackground(progressivelyLoadedContent, url)
 
             } catch (e: Exception) {
-                _error.value = "詳細の取得に失敗しました: ${e.message}"
+                // ネットワーク失敗時はキャッシュへフォールバック（アーカイブ閲覧時など）
                 Log.e("DetailViewModel", "Error fetching details for $url", e)
+                val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
+                if (cached != null) {
+                    _detailContent.postValue(cached)
+                    _error.value = null
+                } else {
+                    _error.value = "詳細の取得に失敗しました: ${e.message}"
+                }
                 _isLoading.value = false
             }
         }

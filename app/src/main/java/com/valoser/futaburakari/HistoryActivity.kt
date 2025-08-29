@@ -120,6 +120,20 @@ class HistoryActivity : BaseActivity() {
 
     private fun refresh() {
         val base = HistoryManager.getAll(this)
+
+        // 自動クリーンアップ（設定値に基づき媒体と詳細キャッシュを間引き）
+        runCatching {
+            val p = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+            val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
+            if (mb > 0) {
+                val limitBytes = mb * 1024L * 1024L
+                val cm = com.valoser.futaburakari.cache.DetailCacheManager(this)
+                cm.enforceLimit(limitBytes, base) { entry ->
+                    // サムネイルは無効化（存在しないローカルURIを避ける）
+                    HistoryManager.clearThumbnail(this, entry.url)
+                }
+            }
+        }
         val filtered = if (showUnreadOnly) base.filter { it.unreadCount > 0 } else base
         val list = when (sortMode) {
             SortMode.MIXED -> filtered.sortedWith(compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount > 0 }

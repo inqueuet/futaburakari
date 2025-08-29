@@ -3,12 +3,16 @@ package com.valoser.futaburakari
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.util.Log
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
-import androidx.hilt.work.HiltWorkerFactory
-import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -16,6 +20,8 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
@@ -27,8 +33,8 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
     }
 
     private fun initializeOkHttpSafely() {
-        // メインスレッドをブロックしないようにバックグラウンドで実行
-        Thread {
+        // アプリケーションスコープのコルーチンで非同期に実行
+        applicationScope.launch {
             try {
                 // ダミーのOkHttpClientを作成して初期化を促進
                 val dummyClient = okhttp3.OkHttpClient.Builder().build()
@@ -38,7 +44,7 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
                 // エラーをログに記録するが、アプリのクラッシュは避ける
                 Log.w("MyApplication", "OkHttp initialization warning (non-critical)", e)
             }
-        }.start()
+        }
     }
 
     override val workManagerConfiguration: Configuration

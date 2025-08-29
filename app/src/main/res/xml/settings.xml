@@ -56,6 +56,14 @@
             app:title="キャッシュを削除"
             app:summary="画像とスレッド内容のキャッシュをすべて削除します。" />
 
+        <ListPreference
+            app:key="pref_key_auto_cleanup_limit_mb"
+            app:title="自動クリーンアップ上限"
+            app:entries="@array/pref_auto_cleanup_entries"
+            app:entryValues="@array/pref_auto_cleanup_values"
+            app:defaultValue="0"
+            app:summary="%s" />
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="広告表示">

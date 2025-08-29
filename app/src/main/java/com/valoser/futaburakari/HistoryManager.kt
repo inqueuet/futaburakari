@@ -114,6 +114,20 @@ object HistoryManager {
         }
     }
 
+    // サムネイルをクリア（自動クリーンアップで媒体削除したときなど）
+    fun clearThumbnail(context: Context, url: String) {
+        val key = UrlNormalizer.threadKey(url)
+        val list = load(context)
+        val idx = list.indexOfFirst { it.key == key }
+        if (idx >= 0) {
+            val e = list[idx]
+            if (e.thumbnailUrl != null) {
+                list[idx] = e.copy(thumbnailUrl = null)
+                save(context, list)
+            }
+        }
+    }
+
     // 取得結果の反映（バックグラウンド更新などから呼び出し）
     fun applyFetchResult(context: Context, url: String, latestReplyNo: Int) {
         val key = UrlNormalizer.threadKey(url)
