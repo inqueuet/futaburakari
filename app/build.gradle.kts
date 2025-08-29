@@ -78,12 +78,16 @@ dependencies {
     implementation(libs.androidx.recyclerview)
     implementation(libs.google.material)
     implementation(libs.okhttp)
+    implementation(platform(libs.okhttp.bom))
     implementation(libs.gson)
 
     // Media3 (ExoPlayer)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.exifinterface)
+
+    // AndroidX Startup
+    implementation(libs.androidx.startup.runtime)
 
     // Hilt
     implementation(libs.hilt.android)

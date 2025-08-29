@@ -36,7 +36,11 @@
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
-            tools:node="remove" />
+            tools:node="merge">
+            <meta-data
+                android:name="com.valoser.futaburakari.init.OkHttpPublicSuffixInitializer"
+                android:value="androidx.startup" />
+        </provider>
         <activity
             android:name=".MainActivity"
             android:exported="true"
