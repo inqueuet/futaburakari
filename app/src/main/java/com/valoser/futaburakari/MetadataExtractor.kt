@@ -33,14 +33,14 @@ object MetadataExtractor {
     private val activeConnectionCount = AtomicInteger(0)
 
     // ====== 既存の設定値 ======
-    private const val CONNECT_TIMEOUT_MS = 15_000
-    private const val READ_TIMEOUT_MS = 15_000
+    private const val CONNECT_TIMEOUT_MS = 5_000
+    private const val READ_TIMEOUT_MS = 5_000
 
-    private const val FIRST_EXIF_BYTES = 256 * 1024
-    private const val PNG_WINDOW_BYTES = 256 * 1024
-    private const val MP4_HEAD_BYTES  = 128 * 1024
-    private const val MP4_TAIL_BYTES  = 512 * 1024
-    private const val GLOBAL_MAX_BYTES = 2 * 1024 * 1024
+    private const val FIRST_EXIF_BYTES = 64 * 1024
+    private const val PNG_WINDOW_BYTES = 64 * 1024
+    private const val MP4_HEAD_BYTES  = 96 * 1024
+    private const val MP4_TAIL_BYTES  = 128 * 1024
+    private const val GLOBAL_MAX_BYTES = 512 * 1024
 
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
