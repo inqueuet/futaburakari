@@ -901,23 +901,34 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             return
         }
 
-        // Text 本体＋直後の Image/Video を同梱
-        val result = mutableListOf<DetailContent>()
+        // Text 本体＋直後の Image/Video を同梱（グループ化）
+        val groups = mutableListOf<List<DetailContent>>()
         for (i in hitIndexes) {
-            result += all[i]
+            val group = mutableListOf<DetailContent>()
+            group += all[i]
             var j = i + 1
             while (j < all.size) {
                 when (val c = all[j]) {
-                    is DetailContent.Image, is DetailContent.Video -> { result += c; j++ }
+                    is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
                     is DetailContent.Text, is DetailContent.ThreadEndTime -> break
                 }
             }
+            groups += group
         }
 
-        // レス番号順に整序（見やすさ向上）
-        val ordered = result
-            .distinctBy { it.id }
-            .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
+        // 同一 Text を先頭に持つグループの重複排除
+        val distinctGroups = groups.distinctBy { it.firstOrNull()?.id }
+
+        // レス番号順に整序（見やすさ向上）。グループ単位で並べ、各グループ内の順序は保持
+        val ordered = distinctGroups
+            .sortedWith(compareBy<List<DetailContent>> { grp ->
+                val head = grp.firstOrNull()
+                when (head) {
+                    null -> Int.MAX_VALUE
+                    else -> extractResNo(head) ?: Int.MAX_VALUE
+                }
+            })
+            .flatten()
 
         showContentListBottomSheet(ordered)
     }
