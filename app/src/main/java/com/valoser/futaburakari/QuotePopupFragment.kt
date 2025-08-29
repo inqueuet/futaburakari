@@ -11,7 +11,10 @@ import androidx.core.os.bundleOf
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.activityViewModels
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.valoser.futaburakari.databinding.FragmentQuotePopupBinding
+import kotlinx.coroutines.withContext
 class QuotePopupFragment : BaseBottomSheetDialogFragment() {
 
     private var _binding: FragmentQuotePopupBinding? = null
@@ -37,23 +40,31 @@ class QuotePopupFragment : BaseBottomSheetDialogFragment() {
 
         val allContent = viewModel.detailContent.value.orEmpty()
 
-        val items: List<DetailContent> = when (mode) {
-            MODE_QUOTE -> {
-                val text = requireArguments().getString(ARG_QUOTED_TEXT).orEmpty()
-                val level = requireArguments().getInt(ARG_QUOTE_LEVEL, 1)
-                resolveQuotedContent(allContent, text, level)
+        // 重い検索はバックグラウンドで実行し、結果だけUIへ反映
+        viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            // プレーンテキストを事前構築
+            val plain = allContent.asSequence()
+                .filterIsInstance<DetailContent.Text>()
+                .associate { t -> t.id to Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString() }
+
+            val items: List<DetailContent> = when (mode) {
+                MODE_QUOTE -> {
+                    val text = requireArguments().getString(ARG_QUOTED_TEXT).orEmpty()
+                    val level = requireArguments().getInt(ARG_QUOTE_LEVEL, 1)
+                    resolveQuotedContentCached(allContent, plain, text, level)
+                }
+                MODE_ID -> {
+                    val id = requireArguments().getString(ARG_ID).orEmpty()
+                    resolveIdReferencesCached(allContent, plain, id)
+                }
+                else -> emptyList()
             }
-            MODE_ID -> {
-                val id = requireArguments().getString(ARG_ID).orEmpty()
-                // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-                // ★ 修正点②：IDがクリックされた際に、新しい全文検索の関数を呼び出す
-                // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-                resolveIdReferences(allContent, id)
+
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                detailAdapter.submitList(null)
+                detailAdapter.submitList(items)
             }
-            else -> emptyList()
         }
-        detailAdapter.submitList(null)
-        detailAdapter.submitList(items)
     }
 
     private fun setupRecyclerView() {
@@ -79,18 +90,17 @@ class QuotePopupFragment : BaseBottomSheetDialogFragment() {
 
     // --- データ解決ロジック ---
 
-    private fun resolveQuotedContent(
+    private fun resolveQuotedContentCached(
         all: List<DetailContent>,
+        plain: Map<String, String>,
         quotedText: String,
         level: Int
     ): List<DetailContent> {
         val needle = quotedText.trim().replace(Regex("\\s+"), " ")
         val textIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text &&
-                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
-                        .toString()
-                        .replace(Regex("\\s+"), " ")
-                        .contains(needle, ignoreCase = true)
+            c is DetailContent.Text && (plain[c.id]
+                ?.replace(Regex("\\s+"), " ")
+                ?.contains(needle, ignoreCase = true) == true)
         }.map { it.index }
 
         return collectWithTrailingMedia(all, textIndexes)
@@ -102,23 +112,11 @@ class QuotePopupFragment : BaseBottomSheetDialogFragment() {
     /**
      * 指定されたIDを持つ投稿と、そのIDを引用している投稿をすべて検索して返す
      */
-    private fun resolveIdReferences(all: List<DetailContent>, id: String): List<DetailContent> {
+    private fun resolveIdReferencesCached(all: List<DetailContent>, plain: Map<String, String>, id: String): List<DetailContent> {
         val searchKey = "ID:$id"
-
-        // 全てのテキストコンテンツに対して全文検索を実行
         val textIndexes = all.withIndex().filter { (_, content) ->
-            if (content is DetailContent.Text) {
-                // HTMLをプレーンテキストに変換してから検索
-                val plainText = Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-                // "ID:xxxx" という文字列が含まれていればヒットとする
-                // これで元の投稿も引用も両方見つかる
-                plainText.contains(searchKey, ignoreCase = true)
-            } else {
-                false
-            }
+            content is DetailContent.Text && (plain[content.id]?.contains(searchKey, ignoreCase = true) == true)
         }.map { it.index }
-
-        // 見つかった投稿と、それに続く画像/動画をまとめて返す
         return collectWithTrailingMedia(all, textIndexes)
     }
 
