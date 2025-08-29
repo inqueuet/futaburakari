@@ -65,9 +65,8 @@ class BookmarkActivity : BaseActivity() {
         }
     }
 
-    // This handles the Up button navigation
     override fun onSupportNavigateUp(): Boolean {
-        finish() // Simply finish this activity to go back to the parent (MainActivity)
+        onBackPressedDispatcher.onBackPressed()
         return true
     }
     

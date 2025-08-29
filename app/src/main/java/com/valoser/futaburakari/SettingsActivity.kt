@@ -1,13 +1,19 @@
 package com.valoser.futaburakari
 
 import android.os.Bundle
-// import androidx.appcompat.app.AppCompatActivity
+import com.valoser.futaburakari.databinding.ActivitySettingsBinding
 
 class SettingsActivity : BaseActivity() {
 
+    private lateinit var binding: ActivitySettingsBinding
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_settings) // ★ 次のステップで作成
+        binding = ActivitySettingsBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        setSupportActionBar(binding.toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
         if (savedInstanceState == null) {
             supportFragmentManager
@@ -15,13 +21,5 @@ class SettingsActivity : BaseActivity() {
                 .replace(R.id.settings_container, SettingsFragment())
                 .commit()
         }
-        // アクションバーに戻るボタンを表示
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-    }
-
-    // 戻るボタンが押されたときの処理
-    override fun onSupportNavigateUp(): Boolean {
-        onBackPressedDispatcher.onBackPressed()
-        return true
     }
 }

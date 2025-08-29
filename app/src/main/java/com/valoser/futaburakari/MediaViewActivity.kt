@@ -164,10 +164,7 @@ class MediaViewActivity : BaseActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
-            android.R.id.home -> {
-                finish()
-                true
-            }
+            android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
             R.id.action_copy_text -> {
                 copyTextToClipboard()
                 true

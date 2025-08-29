@@ -54,6 +54,8 @@ open class BaseActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Unify Up indicator icon across activities that show it
+        runCatching { supportActionBar?.setHomeAsUpIndicator(R.drawable.ic_arrow_back) }
         // If preference changed while this activity was in background, recreate to apply.
         val targetScale = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_font_scale", "1.0")?.toFloatOrNull() ?: 1.0f
@@ -68,5 +70,17 @@ open class BaseActivity : AppCompatActivity() {
         if (current != targetScale || themeChanged || colorChanged) {
             recreate()
         }
+    }
+
+    override fun onSupportNavigateUp(): Boolean {
+        onBackPressedDispatcher.onBackPressed()
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
+        return if (item.itemId == android.R.id.home) {
+            onBackPressedDispatcher.onBackPressed()
+            true
+        } else super.onOptionsItemSelected(item)
     }
 }
