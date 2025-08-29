@@ -12,12 +12,16 @@
         android:fitsSystemWindows="true"
         android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar">
 
-        <androidx.appcompat.widget.Toolbar
+        <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
+            android:layout_height="wrap_content"
+            android:minHeight="?attr/actionBarSize"
             android:background="?attr/colorPrimary"
-            app:popupTheme="@style/ThemeOverlay.AppCompat.Light" />
+            android:theme="@style/ThemeOverlay.Futaburakari.Toolbar"
+            app:titleTextColor="?attr/colorOnPrimary"
+            app:popupTheme="@style/ThemeOverlay.Material3.Light" />
+
 
     </com.google.android.material.appbar.AppBarLayout>
 

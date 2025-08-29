@@ -1,13 +1,11 @@
 <resources>
-    <!--
-        古いテーマ定義は削除しました。
-        こちらの正しいテーマをアプリのデフォルトとして使います。
-    -->
+    <!-- 基底テーマ -->
     <style name="Theme.Futaburakari" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!--
-            ブランドの基本色。
-            この中でテーマの各属性をカスタマイズできます。
-        -->
+        <!-- ツールバーのオーバーフローアイコンの色を設定 -->
+        <item name="android:textColorSecondary">?attr/colorOnPrimary</item>
+        <item name="actionOverflowButtonStyle">@style/OverflowButtonStyle</item>
+
+        <!-- デフォルトカラー設定 -->
         <item name="colorPrimary">@color/my_expressive_primary</item>
         <item name="colorPrimaryVariant">@color/purple_700</item>
         <item name="colorOnPrimary">@color/white</item>

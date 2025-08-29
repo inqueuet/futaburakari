@@ -17,9 +17,10 @@
             android:layout_height="wrap_content"
             android:minHeight="?attr/actionBarSize"
             android:background="?attr/colorPrimary"
+            android:theme="@style/ThemeOverlay.Futaburakari.Toolbar"
             app:titleTextColor="?attr/colorOnPrimary"
-            android:padding="1dp"
-            app:titleCentered="false" />
+            app:popupTheme="@style/ThemeOverlay.Material3.Light" />
+
 
     </com.google.android.material.appbar.AppBarLayout>
 

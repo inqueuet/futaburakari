@@ -16,11 +16,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="?attr/actionBarSize"
-            android:theme="?attr/actionBarTheme"
             android:background="?attr/colorPrimary"
+            android:theme="@style/ThemeOverlay.Futaburakari.Toolbar"
             app:titleTextColor="?attr/colorOnPrimary"
             app:contentInsetStart="0dp"
-            app:popupTheme="?attr/actionBarPopupTheme">
+            app:popupTheme="@style/ThemeOverlay.Material3.Light">
 
             <LinearLayout
                 android:layout_width="match_parent"
