@@ -463,7 +463,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private fun reloadDetails() {
         currentUrl?.let { url ->
             suppressNextRestore = false
+            // 現在の位置を保存し、その場で復元対象としてキューに積む
             saveScroll()
+            restoreScroll()
             detailSearchManager.clearSearch()
             isInitialLoad = true // ★リロード時は再度復元を許可する
             viewModel.fetchDetails(url, forceRefresh = true)
