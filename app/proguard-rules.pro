@@ -28,9 +28,11 @@
 -keep class com.valoser.futaburakari.HistoryEntry { *; }
 -keep class ** extends androidx.work.ListenableWorker
 
-# OkHttp関連を全て保持（サイズは大きくなるが確実）
+# OkHttp クラスの保持（内部実装含む）
 -keep class okhttp3.** { *; }
 -dontwarn okhttp3.**
+# PublicSuffixDatabase はクラス名を変更しない（リソース解決に依存）
+-keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
 
 # Kotlin関連
 -dontwarn kotlin.**

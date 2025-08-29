@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.google.material)
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
+    // Include the public suffix list resource used by OkHttp
     implementation(libs.gson)
 
     // Media3 (ExoPlayer)
