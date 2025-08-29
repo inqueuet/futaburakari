@@ -31,8 +31,6 @@
 # OkHttp クラスの保持（内部実装含む）
 -keep class okhttp3.** { *; }
 -dontwarn okhttp3.**
-# PublicSuffixDatabase はクラス名を変更しない（リソース解決に依存）
--keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
 
 # Kotlin関連
 -dontwarn kotlin.**
