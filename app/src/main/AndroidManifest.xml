@@ -28,19 +28,29 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher">
+
         <!-- AdMob App ID (test). Replace for production. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="@string/admob_app_id" />
-        <!-- WorkManager uses Configuration.Provider in MyApplication for setup -->
+
+        <!-- Startup Initializer -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
             tools:node="merge">
+
+            <!-- ★ WorkManager のデフォルト初期化を無効化（MyApplication で Provider 実装済みのため） -->
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+
+            <!-- ★ OkHttp PSL 初期化 -->
             <meta-data
                 android:name="com.valoser.futaburakari.init.OkHttpPublicSuffixInitializer"
                 android:value="androidx.startup" />
         </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -77,8 +87,7 @@
         <activity
             android:name=".MediaViewActivity"
             android:exported="false"
-            android:theme="@style/Theme.Futaburakari">
-        </activity>
+            android:theme="@style/Theme.Futaburakari" />
         <activity android:name=".SettingsActivity"
             android:label="設定" />
         <activity android:name=".HistoryActivity"
