@@ -1,8 +1,7 @@
 <resources>
     <!-- 基底テーマ -->
     <style name="Theme.Futaburakari" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- ツールバーのオーバーフローアイコンの色を設定 -->
-        <item name="android:textColorSecondary">?attr/colorOnPrimary</item>
+        <!-- ツールバーのオーバーフローアイコンの色は専用styleで制御 -->
         <item name="actionOverflowButtonStyle">@style/OverflowButtonStyle</item>
 
         <!-- デフォルトカラー設定 -->

@@ -15,12 +15,13 @@
             android:theme="@style/ThemeOverlay.Futaburakari.Toolbar"
             app:title="@string/settings_title" />
     </com.google.android.material.appbar.AppBarLayout>
-
     <FrameLayout
         android:id="@+id/settings_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:theme="@style/ThemeOverlay.Futaburakari.Preference"
         app:layout_behavior="@string/appbar_scrolling_view_behavior" />
+
 
     
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
