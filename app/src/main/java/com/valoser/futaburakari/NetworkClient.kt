@@ -123,29 +123,8 @@ class NetworkClient(
     // ===== そうだね =====
     suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
         val refUrl = referer.toHttpUrl()
+        val board = refUrl.pathSegments.firstOrNull() ?: return@withContext null
         val origin = "${refUrl.scheme}://${refUrl.host}"
-
-        fun pathBoardOrNull(): String? {
-            val first = refUrl.pathSegments.firstOrNull() ?: return null
-            // Futaba の板キーは英数（例: b, may, img など）。数値のみのセグメント(例: 71)は除外
-            return if (first.any { it.isLetter() }) first else null
-        }
-
-        // HTML から var bd = 'b' を抽出（フォールバック）
-        fun boardFromHtml(html: String): String? {
-            val m = Regex("var\\s+bd\\s*=\\s*['\"]([A-Za-z0-9_]+)['\"];?").find(html)
-            return m?.groupValues?.getOrNull(1)
-        }
-
-        suspend fun resolveBoard(): String? {
-            pathBoardOrNull()?.let { return it }
-            // 参照ページを取得して埋め込まれた板キーを拾う
-            val bytes = fetchBytes(referer) ?: return null
-            val html = EncodingUtils.decode(bytes, "text/html")
-            return boardFromHtml(html)
-        }
-
-        val board = resolveBoard() ?: return@withContext null
         val sdUrl = "$origin/sd.php?$board.$resNum"
 
         // ★ ここを“必ず戻り値を返す式”に修正
@@ -177,7 +156,6 @@ class NetworkClient(
                 if (!resp.isSuccessful) return@use null
                 val raw = resp.body?.bytes() ?: return@use null
                 val text = EncodingUtils.decode(raw, resp.header("Content-Type")).trim()
-                Log.d("NetworkClient", "postSodaNe ${refUrl.host} board=$board res=$resNum -> '$text'")
                 text.toIntOrNull()
             }
         }

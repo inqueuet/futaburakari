@@ -112,20 +112,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         }
 
         observeViewModel()
-        currentUrl?.let { url ->
-            val key = UrlNormalizer.threadKey(url)
-            val isArchived = runCatching { HistoryManager.getAll(this) }
-                .getOrDefault(emptyList())
-                .any { it.key == key && it.isArchived }
-
-            // アーカイブ済みはキャッシュのみ、未アーカイブはネットワークで最新取得
-            viewModel.fetchDetails(url, forceRefresh = !isArchived)
-
-            // 監視は未アーカイブのみスケジュール
-            if (!isArchived) {
-                com.valoser.futaburakari.worker.ThreadMonitorWorker.schedule(this, url)
-            }
-        }
+        currentUrl?.let { viewModel.fetchDetails(it) }
 
         // 端末戻る：検索展開中は閉じる
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -477,8 +464,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         if (::binding.isInitialized) {
             binding.adView.resume()
         }
-        // サーバ側のそうだね最新値だけを軽量同期
-        currentUrl?.let { viewModel.refreshSodaneCountsOnly(it) }
     }
 
     override fun onDestroy() {

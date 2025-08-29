@@ -15,7 +15,6 @@ import android.text.Spanned
 import android.text.TextPaint
 import android.text.method.LinkMovementMethod
 import android.text.style.BackgroundColorSpan
-import android.text.style.ForegroundColorSpan
 import android.text.style.ClickableSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.LineHeightSpan
@@ -55,15 +54,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
     // ★ 追加: レス番号→現在のそうだね数（サーバ返り値）を覚えておく
     private val sodaneOverrides = mutableMapOf<String, Int>()
-
-    // ★ 追加: ローカルで一度押したことがあるレス（即時二重押下防止用）
-    private val sodanePressedLocal = mutableSetOf<String>()
-
-    fun markSodanePressed(resNum: String) { sodanePressedLocal += resNum }
-    private fun isSodanePressed(resNum: String): Boolean {
-        val vmState = getSodaNeState?.invoke(resNum) == true
-        return vmState || (resNum in sodanePressedLocal)
-    }
 
     // 追加: 確認ボタン用のコールバック
     var onResNumConfirmClickListener: ((resNum: String) -> Unit)? = null
@@ -405,49 +395,41 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                             // 置換により長さが変わるため、終端を再計算
                             tokenAbsEnd = tokenAbsStart + replacement.length
                         }
-                        val alreadyPressed = adapter.isSodanePressed(resNum)
-                        if (!alreadyPressed) {
-                            val span = object : ClickableSpan() {
-                                override fun onClick(widget: View) {
-                                    // 押下済みにマークし、即時置換/更新
-                                    adapter.markSodanePressed(resNum)
-                                    val tv = widget as TextView
-                                    val sp = SpannableStringBuilder(tv.text)
-                                    val start = sp.getSpanStart(this)
-                                    val end = sp.getSpanEnd(this)
-                                    val next = (adapter.sodaneOverrides[resNum] ?: 0) + 1
-                                    adapter.sodaneOverrides[resNum] = next
-                                    val replacement = "そうだねx$next"
-                                    val newEnd = if (start >= 0 && end >= 0 && end <= sp.length) {
-                                        sp.replace(start, end, replacement)
-                                        start + replacement.length
-                                    } else {
-                                        // 位置が特定できない場合は末尾に追記
-                                        sp.append(" $replacement"); sp.length
-                                    }
-                                    // 既存のクリックを除去
-                                    val exist = sp.getSpans(0, sp.length, ClickableSpan::class.java)
-                                    exist.forEach { sp.removeSpan(it) }
-                                    tv.text = sp
 
-                                    // 保険で再描画
-                                    adapter.notifyDataSetChanged()
-
-                                    // 送信
-                                    onSodaNeClickListener?.invoke(resNum)
+                        val span = object : ClickableSpan() {
+                            override fun onClick(widget: View) {
+                                // 1) 楽観的にローカル更新（TextViewの現在テキストを書き換え）
+                                val tv = widget as TextView
+                                val sp = SpannableStringBuilder(tv.text)
+                                val start = sp.getSpanStart(this)
+                                val end = sp.getSpanEnd(this)
+                                val next = (adapter.sodaneOverrides[resNum] ?: 0) + 1
+                                adapter.sodaneOverrides[resNum] = next
+                                val replacement = "そうだねx$next"
+                                val newEnd = if (start >= 0 && end >= 0 && end <= sp.length) {
+                                    sp.replace(start, end, replacement)
+                                    start + replacement.length
+                                } else {
+                                    // 位置が特定できない場合は末尾に追記
+                                    sp.append(" $replacement"); sp.length
                                 }
-                                override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
+                                // 既存のクリックを除去して再付与
+                                val exist = sp.getSpans(0, sp.length, ClickableSpan::class.java)
+                                exist.forEach { sp.removeSpan(it) }
+                                sp.setSpan(this, (newEnd - replacement.length), newEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                                tv.text = sp
+
+                                // 2) 通知（保険で再バインド）
+                                adapter.notifyDataSetChanged()
+
+                                // 3) ネット送信
+                                onSodaNeClickListener?.invoke(resNum)
                             }
-                            spannableBuilder.setSpan(span, tokenAbsStart, tokenAbsEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        } else {
-                            // 押下済みは無効色に
-                            spannableBuilder.setSpan(
-                                ForegroundColorSpan(Color.GRAY),
-                                tokenAbsStart,
-                                tokenAbsEnd,
-                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                            )
+                            override fun updateDrawState(ds: TextPaint) {
+                                ds.isUnderlineText = true
+                            }
                         }
+                        spannableBuilder.setSpan(span, tokenAbsStart, tokenAbsEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                 }
             }
@@ -483,44 +465,33 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val end = start + suffix.length
                         val clickableStart = end - suffixCore.length
                         if (clickableStart >= 0 && end <= spannableBuilder.length) {
-                            val alreadyPressed = adapter.isSodanePressed(resNum)
-                            if (!alreadyPressed) {
-                                val span = object : ClickableSpan() {
-                                    override fun onClick(widget: View) {
-                                        adapter.markSodanePressed(resNum)
-                                        val tv = widget as TextView
-                                        val sp = SpannableStringBuilder(tv.text)
-                                        val start = sp.getSpanStart(this)
-                                        val endPos = sp.getSpanEnd(this)
-                                        val next = (adapter.sodaneOverrides[resNum] ?: 0) + 1
-                                        adapter.sodaneOverrides[resNum] = next
-                                        val replacement = "そうだねx$next"
-                                        val newEnd = if (start >= 0 && endPos >= 0 && endPos <= sp.length) {
-                                            sp.replace(start, endPos, replacement)
-                                            start + replacement.length
-                                        } else {
-                                            sp.append(" $replacement"); sp.length
-                                        }
-                                        val exist = sp.getSpans(0, sp.length, ClickableSpan::class.java)
-                                        exist.forEach { sp.removeSpan(it) }
-                                        tv.text = sp
-
-                                        adapter.notifyDataSetChanged()
-
-                                        onSodaNeClickListener?.invoke(resNum)
+                            val span = object : ClickableSpan() {
+                                override fun onClick(widget: View) {
+                                    val tv = widget as TextView
+                                    val sp = SpannableStringBuilder(tv.text)
+                                    val start = sp.getSpanStart(this)
+                                    val endPos = sp.getSpanEnd(this)
+                                    val next = (adapter.sodaneOverrides[resNum] ?: 0) + 1
+                                    adapter.sodaneOverrides[resNum] = next
+                                    val replacement = "そうだねx$next"
+                                    val newEnd = if (start >= 0 && endPos >= 0 && endPos <= sp.length) {
+                                        sp.replace(start, endPos, replacement)
+                                        start + replacement.length
+                                    } else {
+                                        sp.append(" $replacement"); sp.length
                                     }
-                                    override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
+                                    val exist = sp.getSpans(0, sp.length, ClickableSpan::class.java)
+                                    exist.forEach { sp.removeSpan(it) }
+                                    sp.setSpan(this, (newEnd - replacement.length), newEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                                    tv.text = sp
+
+                                    adapter.notifyDataSetChanged()
+
+                                    onSodaNeClickListener?.invoke(resNum)
                                 }
-                                spannableBuilder.setSpan(span, clickableStart, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                            } else {
-                                // 押下済みは無効色に
-                                spannableBuilder.setSpan(
-                                    ForegroundColorSpan(Color.GRAY),
-                                    clickableStart,
-                                    end,
-                                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                                )
+                                override fun updateDrawState(ds: TextPaint) { ds.isUnderlineText = true }
                             }
+                            spannableBuilder.setSpan(span, clickableStart, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
                     }
                 }
