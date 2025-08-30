@@ -475,6 +475,38 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    // del.php 経由の削除
+    fun deleteViaDelPhp(resNum: String, reason: String = "110") {
+        viewModelScope.launch {
+            try {
+                val url = currentUrl ?: return@launch
+                _isLoading.postValue(true)
+
+                // 事前に参照スレをGETしてCookie類を確実に用意
+                withContext(Dispatchers.IO) { networkClient.fetchDocument(url) }
+
+                val ok = withContext(Dispatchers.IO) {
+                    networkClient.deleteViaDelPhp(
+                        threadUrl = url,
+                        targetResNum = resNum,
+                        reason = reason,
+                    )
+                }
+
+                if (ok) {
+                    // 成功したら最新状態を取得
+                    fetchDetails(url, forceRefresh = true)
+                } else {
+                    _error.postValue("del の実行に失敗しました。権限やCookieを確認してください。")
+                }
+            } catch (e: Exception) {
+                _error.postValue("del 実行中にエラーが発生しました: ${e.message}")
+            } finally {
+                _isLoading.postValue(false)
+            }
+        }
+    }
+
     // ===== Helpers & Regex =====
 
     private fun isMediaUrl(rawHref: String): Boolean {

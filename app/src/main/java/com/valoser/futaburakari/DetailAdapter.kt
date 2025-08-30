@@ -42,6 +42,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onSodaNeClickListener: ((resNum: String) -> Unit)? = null
     var onThreadEndTimeClickListener: (() -> Unit)? = null
     var onResNumClickListener: ((resNum: String, resBody: String) -> Unit)? = null
+    // 追加: del メニュー用（del.php を叩く）
+    var onResNumDelClickListener: ((resNum: String) -> Unit)? = null
     // 追加: IDクリック
     var onIdClickListener: ((id: String) -> Unit)? = null
     // ★ 追加: 本文タップ時のコールバック
@@ -247,13 +249,14 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
                                 val resNum = matchedResNum ?: mainResNum ?: return
-                                val menuItems = arrayOf("返信", "削除", "確認")
+                                val menuItems = arrayOf("返信", "削除", "確認", "del")
                                 AlertDialog.Builder(widget.context)
                                     .setItems(menuItems) { _: DialogInterface, which: Int ->
                                         when (which) {
                                             0 -> onResNumClickListener?.invoke(resNum, ">No.$resNum")
                                             1 -> onResNumClickListener?.invoke(resNum, "")
                                             2 -> adapter.onResNumConfirmClickListener?.invoke(resNum)
+                                            3 -> adapter.onResNumDelClickListener?.invoke(resNum)
                                         }
                                     }
                                     .show()

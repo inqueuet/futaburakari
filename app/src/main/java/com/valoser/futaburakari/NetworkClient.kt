@@ -241,4 +241,63 @@ class NetworkClient(
             return@withContext false
         }
     }
+
+    // ===== del.php 経由の削除（管理用エンドポイント想定） =====
+    // 例: https://may.2chan.net/b/res/1347318913.htm を参照中 →
+    //     POST https://may.2chan.net/del.php
+    //     body: mode=post&b=b&d=1347319371&reason=110&responsemode=ajax
+    suspend fun deleteViaDelPhp(
+        threadUrl: String,
+        targetResNum: String,
+        reason: String = "110",
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val refUrl = threadUrl.toHttpUrl()
+            val origin = "${refUrl.scheme}://${refUrl.host}"
+            val board = refUrl.pathSegments.firstOrNull() ?: return@withContext false
+            val endpoint = "$origin/del.php"
+
+            // Cookie: OkHttpのJar + WebViewのCookie を統合
+            val jarCookies: List<Cookie> = runCatching { httpClient.cookieJar.loadForRequest(endpoint.toHttpUrl()) }
+                .getOrElse { emptyList() }
+            val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
+            val cm = CookieManager.getInstance()
+            val webCookieRef = cm.getCookie(threadUrl)
+            val webCookieOrg = cm.getCookie(origin)
+            val mergedCookie = mergeCookies(jarCookie, webCookieOrg, webCookieRef)
+
+            val form = FormBody.Builder()
+                .add("mode", "post")
+                .add("b", board)
+                .add("d", targetResNum)
+                .add("reason", reason)
+                .add("responsemode", "ajax")
+                .build()
+
+            val req = Request.Builder()
+                .url(endpoint)
+                .post(form)
+                .header("User-Agent", Ua.STRING)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Origin", origin)
+                .header("Referer", threadUrl)
+                .apply { if (!mergedCookie.isNullOrBlank()) header("Cookie", mergedCookie) }
+                .build()
+
+            return@withContext httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use false
+                val body = resp.body?.bytes() ?: return@use false
+                val okBySize = body.size == 2
+                val okByText = runCatching {
+                    EncodingUtils.decode(body, resp.header("Content-Type")).trim().equals("OK", true)
+                }.getOrDefault(false)
+                okBySize || okByText
+            }
+        } catch (e: Exception) {
+            Log.e("NetworkClient", "deleteViaDelPhp で例外発生", e)
+            return@withContext false
+        }
+    }
 }

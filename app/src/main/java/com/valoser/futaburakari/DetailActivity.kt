@@ -289,6 +289,18 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         detailAdapter.onResNumConfirmClickListener = { resNum ->
             showResReferencesPopup(resNum)
         }
+        // del（管理削除）
+        detailAdapter.onResNumDelClickListener = { resNum ->
+            // 確認ダイアログ（誤タップ防止）。不要なら直接呼んでもOK。
+            AlertDialog.Builder(this)
+                .setTitle("del 実行")
+                .setMessage("No.$resNum を通報しますか？")
+                .setPositiveButton("実行") { _, _ ->
+                    viewModel.deleteViaDelPhp(resNum)
+                }
+                .setNegativeButton("キャンセル", null)
+                .show()
+        }
         // レス番号(No.xxx)タップ → 返信画面へ（引用文付き）
         //detailAdapter.onResNumClickListener = { _, resBody ->
         //    currentUrl?.let { url ->
