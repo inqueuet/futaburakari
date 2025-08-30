@@ -51,6 +51,9 @@ class DetailViewModel @Inject constructor(
 
     private val cacheManager = DetailCacheManager(appContext)
     private var currentUrl: String? = null
+    // NG フィルタ適用前の生コンテンツを保持
+    private var rawContent: List<DetailContent> = emptyList()
+    private val ngStore by lazy { NgStore(appContext) }
 
     // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
     private val sodaNeStates = mutableMapOf<String, Boolean>()
@@ -77,7 +80,8 @@ class DetailViewModel @Inject constructor(
                         cacheManager.loadDetails(url)
                     }
                     if (cachedDetails != null) {
-                        _detailContent.postValue(cachedDetails)
+                        rawContent = cachedDetails
+                        applyNgAndPost()
                         _isLoading.value = false
                         return@launch
                     }
@@ -92,8 +96,9 @@ class DetailViewModel @Inject constructor(
 
                 val progressivelyLoadedContent = parseContentFromDocument(document, url)
 
-                // 全ての解析が完了してから一度だけ通知
-                _detailContent.postValue(progressivelyLoadedContent)
+                // キャッシュは生データを保存し、表示はNG適用後
+                rawContent = progressivelyLoadedContent
+                applyNgAndPost()
                 _isLoading.value = false
 
                 // バックグラウンドでメタデータを取得し、完了後に再度更新
@@ -104,7 +109,8 @@ class DetailViewModel @Inject constructor(
                 Log.e("DetailViewModel", "Error fetching details for $url", e)
                 val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
                 if (cached != null) {
-                    _detailContent.postValue(cached)
+                    rawContent = cached
+                    applyNgAndPost()
                     _error.value = null
                 } else {
                     _error.value = "詳細の取得に失敗しました: ${e.message}"
@@ -130,24 +136,16 @@ class DetailViewModel @Inject constructor(
 
                 // --- ▼▼▼ ここから修正 ▼▼▼ ---
 
-                val currentContent = _detailContent.value ?: emptyList()
-
-                // 1. 現在表示しているコンテンツのIDをSetとして保持する
-                val currentIds = currentContent.map { it.id }.toSet()
+                val currentIds = rawContent.map { it.id }.toSet()
 
                 // 2. 新しく取得したリストの中から、まだ表示されていないIDを持つアイテムだけを抽出する
                 val newItems = newContentList.filter { it.id !in currentIds }
 
                 if (newItems.isNotEmpty()) {
-                    // 3. 新しいアイテムが存在する場合のみ、リストを更新する
-                    val updatedContent = currentContent + newItems
-
-                    _detailContent.postValue(updatedContent)
-
-                    withContext(Dispatchers.IO) {
-                        cacheManager.saveDetails(url, updatedContent)
-                    }
-
+                    // 3. 生データを更新してキャッシュ保存、表示はNG適用後
+                    rawContent = rawContent + newItems
+                    withContext(Dispatchers.IO) { cacheManager.saveDetails(url, rawContent) }
+                    applyNgAndPost()
                     updateMetadataInBackground(newItems, url)
                     callback(true)
                 } else {
@@ -519,5 +517,105 @@ class DetailViewModel @Inject constructor(
         // (E) プリコンパイル済み正規表現
         private val DOC_WRITE = Regex("""document\.write\s*\(\s*'(.*?)'\s*\)""")
         private val TIME = Regex("""<span id="contdisp">([^<]+)</span>""")
+    }
+
+    // ===== NG filtering =====
+
+    fun reapplyNgFilter() {
+        applyNgAndPost()
+    }
+
+    private fun applyNgAndPost() {
+        ngStore.cleanup()
+        val rules = ngStore.getRules()
+        if (rules.isEmpty()) {
+            _detailContent.postValue(rawContent)
+            return
+        }
+        val filtered = filterByNgRules(rawContent, rules)
+        _detailContent.postValue(filtered)
+        // 生データはキャッシュへ保存
+        currentUrl?.let { url ->
+            viewModelScope.launch(Dispatchers.IO) { cacheManager.saveDetails(url, rawContent) }
+        }
+    }
+
+    private fun filterByNgRules(src: List<DetailContent>, rules: List<NgRule>): List<DetailContent> {
+        if (src.isEmpty()) return src
+        val out = ArrayList<DetailContent>(src.size)
+        var skipping = false
+        for (item in src) {
+            when (item) {
+                is DetailContent.Text -> {
+                    val id = extractIdFromHtml(item.htmlContent)
+                    val body = extractPlainBody(item.htmlContent)
+                    val isNg = rules.any { r ->
+                        when (r.type) {
+                            RuleType.ID -> {
+                                if (id.isNullOrBlank()) false else match(id, r.pattern, r.match ?: MatchType.EXACT, ignoreCase = false)
+                            }
+                            RuleType.BODY -> match(body, r.pattern, r.match ?: MatchType.SUBSTRING, ignoreCase = true)
+                            RuleType.TITLE -> false // タイトルNGはMainActivity側で適用
+                        }
+                    }
+                    if (isNg) {
+                        skipping = true
+                        continue
+                    } else {
+                        skipping = false
+                        out += item
+                    }
+                }
+                is DetailContent.Image, is DetailContent.Video -> {
+                    if (!skipping) out += item
+                }
+                is DetailContent.ThreadEndTime -> out += item
+            }
+        }
+        return out
+    }
+
+    private fun match(target: String, pattern: String, type: MatchType, ignoreCase: Boolean): Boolean {
+        return when (type) {
+            MatchType.EXACT -> target.equals(pattern, ignoreCase)
+            MatchType.PREFIX -> target.startsWith(pattern, ignoreCase)
+            MatchType.SUBSTRING -> target.contains(pattern, ignoreCase)
+            MatchType.REGEX -> runCatching { Regex(pattern, if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet()).containsMatchIn(target) }.getOrElse { false }
+        }
+    }
+
+    private fun extractIdFromHtml(html: String): String? {
+        val plain = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        val m = Regex("""\bID:([\u0021-\u007E]+)""").find(plain)
+        return m?.groupValues?.getOrNull(1)?.trim()
+    }
+
+    private fun extractPlainBody(html: String): String {
+        val plain = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        val dateRegex = Regex("""\d{2}/\d{2}/\d{2}\([^)]+\)\d{2}:\d{2}:\d{2}""")
+        val fileExtRegex = Regex("""\.(?:jpg|jpeg|png|gif|webp|bmp|svg|webm|mp4|mov|mkv|avi|wmv|flv)\b""", RegexOption.IGNORE_CASE)
+        val sizeSuffixRegex = Regex("""[ \t]*[\\-ー−―–—]?\s*\(\s*\d+(?:\.\d+)?\s*(?:[kKmMgGtT]?[bB])\s*\)""")
+        val headLabelRegex = Regex("""^(?:画像|動画|ファイル名|ファイル|添付|サムネ|サムネイル)(?:\s*ファイル名)?\s*[:：]""", RegexOption.IGNORE_CASE)
+
+        fun isLabeledSizeOnlyLine(t: String): Boolean {
+            return headLabelRegex.containsMatchIn(t) && sizeSuffixRegex.containsMatchIn(t)
+        }
+
+        return plain
+            .lineSequence()
+            .map { it.trimEnd() }
+            .filterNot { line ->
+                val t = line.trim()
+                t.startsWith("ID:") || t.startsWith("No.") || dateRegex.containsMatchIn(t) || t.contains("Name")
+            }
+            .filterNot { line ->
+                val t = line.trim()
+                headLabelRegex.containsMatchIn(t) ||
+                        (fileExtRegex.containsMatchIn(t) && sizeSuffixRegex.containsMatchIn(t)) ||
+                        isLabeledSizeOnlyLine(t) ||
+                        (fileExtRegex.containsMatchIn(t) && t.contains("サムネ"))
+            }
+            .joinToString("\n")
+            .trimEnd()
     }
 }

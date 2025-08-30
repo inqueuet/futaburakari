@@ -36,6 +36,11 @@
             app:defaultValue="green"
             app:summary="%s" />
 
+        <Preference
+            app:key="pref_key_manage_title_ng"
+            app:title="スレタイNG管理"
+            app:summary="カタログのスレッドタイトルに対するNGを設定します" />
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="投稿設定">

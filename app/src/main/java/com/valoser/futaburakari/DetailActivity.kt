@@ -62,6 +62,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private var plainTextCache: Map<String, String> = emptyMap()
     private var buildPlainCacheJob: kotlinx.coroutines.Job? = null
 
+    private val ngStore by lazy { NgStore(this) }
+
     companion object {
         const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
@@ -83,6 +85,12 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             Toast.makeText(this, "送信しました。更新します。", Toast.LENGTH_SHORT).show()
             reloadDetails()
         }
+    }
+    // NG管理画面から戻ったらフィルタを再適用
+    private val ngManagerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        viewModel.reapplyNgFilter()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -251,9 +259,17 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             QuotePopupFragment.showForQuote(supportFragmentManager, core, quoteLevel)
         }
 
-        // ID タップ → 同一IDの投稿をポップアップ表示
+        // ID タップ → メニュー（同一ID表示 / NG追加）
         detailAdapter.onIdClickListener = { id ->
-            QuotePopupFragment.showForId(supportFragmentManager, id)
+            val items = arrayOf("同一IDの投稿を表示", "このIDをNGに追加")
+            AlertDialog.Builder(this)
+                .setItems(items) { _, which ->
+                    when (which) {
+                        0 -> QuotePopupFragment.showForId(supportFragmentManager, id)
+                        1 -> showAddNgDialog(type = RuleType.ID, prefill = id)
+                    }
+                }
+                .show()
         }
 
         // 「そうだね」: 楽観的にUIを+1してから送信
@@ -283,6 +299,11 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // ★ 変更点 2: 本文タップ時の処理を新規追加
         detailAdapter.onBodyClickListener = { quotedBody ->
             launchReplyActivity(quotedBody)
+        }
+
+        // 本文長押し → NG追加
+        detailAdapter.onAddNgFromBodyListener = { bodyText ->
+            showAddNgDialog(type = RuleType.BODY, prefill = bodyText)
         }
 
         // setupRecyclerView() 内に追記
@@ -574,6 +595,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             true
         }
         R.id.action_reload -> { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails(); true }
+        R.id.action_ng_manage -> { openNgManager(); true }
         else -> super.onOptionsItemSelected(item)
     }
 
@@ -604,6 +626,64 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             }
             replyActivityResultLauncher.launch(intent)
         }
+    }
+
+    private fun openNgManager() {
+        ngManagerLauncher.launch(Intent(this, NgManagerActivity::class.java))
+    }
+
+    private fun showAddNgDialog(type: RuleType, prefill: String) {
+        if (type == RuleType.ID) {
+            AlertDialog.Builder(this)
+                .setTitle("IDをNGに追加")
+                .setMessage("ID: $prefill をNGにしますか？")
+                .setPositiveButton("追加") { _, _ ->
+                    val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
+                    ngStore.addRule(RuleType.ID, prefill, MatchType.EXACT, sourceKey = source, ephemeral = true)
+                    viewModel.reapplyNgFilter()
+                    Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("キャンセル", null)
+                .show()
+            return
+        }
+
+        // BODY: 入力 + マッチ方法選択
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 0)
+        }
+        val input = android.widget.EditText(this).apply {
+            hint = "含めたくない語句（例: スパム語）"
+            setText(prefill)
+        }
+        val radio = android.widget.RadioGroup(this).apply {
+            val optSub = android.widget.RadioButton(context).apply { text = "部分一致"; id = 1; isChecked = true }
+            val optPre = android.widget.RadioButton(context).apply { text = "前方一致"; id = 2 }
+            val optRe  = android.widget.RadioButton(context).apply { text = "正規表現"; id = 3 }
+            addView(optSub); addView(optPre); addView(optRe)
+        }
+        container.addView(input)
+        container.addView(radio)
+
+        AlertDialog.Builder(this)
+            .setTitle("本文でNG追加")
+            .setView(container)
+            .setPositiveButton("追加") { _, _ ->
+                val pat = input.text?.toString()?.trim().orEmpty()
+                if (pat.isEmpty()) return@setPositiveButton
+                val mt = when (radio.checkedRadioButtonId) {
+                    2 -> MatchType.PREFIX
+                    3 -> MatchType.REGEX
+                    else -> MatchType.SUBSTRING
+                }
+                val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
+                ngStore.addRule(RuleType.BODY, pat, mt, sourceKey = source, ephemeral = true)
+                viewModel.reapplyNgFilter()
+                Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
     }
 
     // =========================================================

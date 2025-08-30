@@ -21,4 +21,8 @@
         android:title="@string/scroll_back"
         android:icon="@drawable/ic_arrow_back"
         app:showAsAction="ifRoom" />
+    <item
+        android:id="@+id/action_ng_manage"
+        android:title="NG管理"
+        app:showAsAction="never" />
 </menu>

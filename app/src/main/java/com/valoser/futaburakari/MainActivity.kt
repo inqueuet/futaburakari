@@ -91,6 +91,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     // 下端プル検出用
     private var bottomPullAccumulatedPx: Int = 0
     private var lastBottomPullAtMs: Long = 0L
+    private val ngStore by lazy { NgStore(this) }
 
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -158,6 +159,12 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         autoUpdateRunnable = null
         isAutoUpdateEnabled = false
         setAutoUpdateIndicator(false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 設定でのNG変更を反映
+        filterImages(currentQuery)
     }
 
     private fun configureSwipeRefreshIndicatorPosition() {
@@ -572,12 +579,29 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     }
 
     private fun filterImages(query: String?) {
+        // タイトルNG適用 → 検索クエリ適用 の順。
+        val rules = ngStore.getRules().filter { it.type == RuleType.TITLE }
+        val titleFiltered = if (rules.isEmpty()) allItems else allItems.filter { item ->
+            val title = item.title.orEmpty()
+            !rules.any { r -> matchTitle(title, r) }
+        }
         val filteredList = if (query.isNullOrEmpty()) {
-            allItems
+            titleFiltered
         } else {
-            allItems.filter { it.title.contains(query, ignoreCase = true) }
+            titleFiltered.filter { it.title.contains(query, ignoreCase = true) }
         }
         imageAdapter.submitList(filteredList)
+    }
+
+    private fun matchTitle(title: String, rule: NgRule): Boolean {
+        val pattern = rule.pattern
+        val mt = rule.match ?: MatchType.SUBSTRING
+        return when (mt) {
+            MatchType.EXACT -> title == pattern
+            MatchType.PREFIX -> title.startsWith(pattern, ignoreCase = true)
+            MatchType.SUBSTRING -> title.contains(pattern, ignoreCase = true)
+            MatchType.REGEX -> runCatching { Regex(pattern, setOf(RegexOption.IGNORE_CASE)).containsMatchIn(title) }.getOrDefault(false)
+        }
     }
 
     private fun getCurrentBookmarkName(): String {

@@ -48,6 +48,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
     var onIdClickListener: ((id: String) -> Unit)? = null
     // ★ 追加: 本文タップ時のコールバック
     var onBodyClickListener: ((quotedBody: String) -> Unit)? = null
+    // ★ 追加: 本文からNG追加
+    var onAddNgFromBodyListener: ((bodyText: String) -> Unit)? = null
     var onImageLoaded: (() -> Unit)? = null
     private var currentSearchQuery: String? = null
 
@@ -583,7 +585,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 val bodyOnly = extractPlainBody(item.htmlContent)
                 if (bodyOnly.isBlank()) return@setOnLongClickListener true
 
-                val items = arrayOf("引用して返信", "本文をコピー")
+                val items = arrayOf("引用して返信", "本文をコピー", "この本文をNGに追加…")
                 AlertDialog.Builder(ctx)
                     .setItems(items) { _, which ->
                         when (which) {
@@ -595,6 +597,9 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                                 val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 cm.setPrimaryClip(ClipData.newPlainText("text", bodyOnly))
                                 Toast.makeText(ctx, "コピーしました", Toast.LENGTH_SHORT).show()
+                            }
+                            2 -> {
+                                adapter.onAddNgFromBodyListener?.invoke(bodyOnly)
                             }
                         }
                     }

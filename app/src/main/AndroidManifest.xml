@@ -92,6 +92,9 @@
             android:label="設定" />
         <activity android:name=".HistoryActivity"
             android:label="@string/history_title" />
+        <activity android:name=".NgManagerActivity"
+            android:label="NG管理"
+            android:exported="false" />
     </application>
 
 </manifest>

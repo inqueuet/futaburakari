@@ -102,5 +102,15 @@ class SettingsFragment : PreferenceFragmentCompat() {
             requireActivity().recreate()
             true
         }
+
+        // スレタイNG管理を開く
+        val titleNgPref: Preference? = findPreference("pref_key_manage_title_ng")
+        titleNgPref?.setOnPreferenceClickListener {
+            val i = android.content.Intent(requireContext(), NgManagerActivity::class.java).apply {
+                putExtra(NgManagerActivity.EXTRA_LIMIT_RULE_TYPE, RuleType.TITLE.name)
+            }
+            startActivity(i)
+            true
+        }
     }
 }
