@@ -314,7 +314,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         detailAdapter.onResNumDelClickListener = { resNum ->
             // 確認ダイアログ（誤タップ防止）。不要なら直接呼んでもOK。
             AlertDialog.Builder(this)
-                .setTitle("del 実行")
+                .setTitle("del(通報) 実行")
                 .setMessage("No.$resNum を通報しますか？")
                 .setPositiveButton("実行") { _, _ ->
                     viewModel.deleteViaDelPhp(resNum)
@@ -657,10 +657,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             hint = "含めたくない語句（例: スパム語）"
             setText(prefill)
         }
-        val radio = android.widget.RadioGroup(this).apply {
-            val optSub = android.widget.RadioButton(context).apply { text = "部分一致"; id = 1; isChecked = true }
-            val optPre = android.widget.RadioButton(context).apply { text = "前方一致"; id = 2 }
-            val optRe  = android.widget.RadioButton(context).apply { text = "正規表現"; id = 3 }
+        val radio: android.widget.RadioGroup
+        val idSub = android.view.View.generateViewId()
+        val idPre = android.view.View.generateViewId()
+        val idRe  = android.view.View.generateViewId()
+        radio = android.widget.RadioGroup(this).apply {
+            val optSub = android.widget.RadioButton(context).apply { text = "部分一致"; id = idSub; isChecked = true }
+            val optPre = android.widget.RadioButton(context).apply { text = "前方一致"; id = idPre }
+            val optRe  = android.widget.RadioButton(context).apply { text = "正規表現"; id = idRe }
             addView(optSub); addView(optPre); addView(optRe)
         }
         container.addView(input)
@@ -673,8 +677,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 val pat = input.text?.toString()?.trim().orEmpty()
                 if (pat.isEmpty()) return@setPositiveButton
                 val mt = when (radio.checkedRadioButtonId) {
-                    2 -> MatchType.PREFIX
-                    3 -> MatchType.REGEX
+                    idPre -> MatchType.PREFIX
+                    idRe -> MatchType.REGEX
                     else -> MatchType.SUBSTRING
                 }
                 val source = currentUrl?.let { UrlNormalizer.threadKey(it) }

@@ -251,7 +251,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                         val span = object : ClickableSpan() {
                             override fun onClick(widget: View) {
                                 val resNum = matchedResNum ?: mainResNum ?: return
-                                val menuItems = arrayOf("返信", "削除", "確認", "del")
+                                val menuItems = arrayOf("返信", "削除", "確認", "del(通報)")
                                 AlertDialog.Builder(widget.context)
                                     .setItems(menuItems) { _: DialogInterface, which: Int ->
                                         when (which) {
