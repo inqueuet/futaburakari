@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import androidx.work.OutOfQuotaPolicy
 import com.valoser.futaburakari.HistoryManager
 import com.valoser.futaburakari.NetworkClient
 import com.valoser.futaburakari.UrlNormalizer
@@ -33,11 +34,14 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val url = inputData.getString(KEY_URL) ?: return Result.success()
+        val oneShot = inputData.getBoolean(KEY_ONE_SHOT, false)
 
         // 設定が無効なら即終了
         val prefs = applicationContext.getSharedPreferences(PREFS_BG, Context.MODE_PRIVATE)
-        if (!prefs.getBoolean(KEY_BG_ENABLED, false)) {
-            return Result.success()
+        if (!oneShot) {
+            if (!prefs.getBoolean(KEY_BG_ENABLED, false)) {
+                return Result.success()
+            }
         }
 
         // 履歴に無いスレッドは監視しない
@@ -66,15 +70,30 @@ class ThreadMonitorWorker @AssistedInject constructor(
             // 2) メディアを内部保存し、ローカルパスへ差し替え
             val archived = archiveMedia(applicationContext, url, parsed)
 
-            // 3) キャッシュへ保存（置き換え保存）
-            DetailCacheManager(applicationContext).saveDetails(url, archived)
+            // 3) キャッシュへ保存（置き換え保存） + アーカイブスナップショット保存
+            val cm = DetailCacheManager(applicationContext)
+            cm.saveDetails(url, archived)
+            cm.saveArchiveSnapshot(url, archived)
+
+            // 3.5) サムネイル（履歴）をローカルに更新（先頭のメディアを使用）
+            runCatching {
+                val firstMedia = archived.firstOrNull { it is com.valoser.futaburakari.DetailContent.Image || it is com.valoser.futaburakari.DetailContent.Video }
+                val thumb = when (firstMedia) {
+                    is com.valoser.futaburakari.DetailContent.Image -> firstMedia.imageUrl
+                    is com.valoser.futaburakari.DetailContent.Video -> firstMedia.videoUrl
+                    else -> null
+                }
+                if (!thumb.isNullOrBlank()) {
+                    HistoryManager.updateThumbnail(applicationContext, url, thumb)
+                }
+            }
 
             // 4) 既知の最終レス番号（Textの件数）を履歴へ反映（未読数更新のため）
             val latestReplyNo = parsed.count { it is com.valoser.futaburakari.DetailContent.Text }
             HistoryManager.applyFetchResult(applicationContext, url, latestReplyNo)
 
-            // 次回スケジュール
-            schedule(applicationContext, url)
+            // 次回スケジュール（通常監視のみ）
+            if (!oneShot) schedule(applicationContext, url)
             Result.success()
         } catch (e: java.io.IOException) {
             // fetchDocumentは非200でIOExceptionを投げる
@@ -102,6 +121,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
     companion object {
         private const val KEY_URL = "url"
+        private const val KEY_ONE_SHOT = "one_shot"
         const val PREFS_BG = "com.valoser.futaburakari.bg"
         const val KEY_BG_ENABLED = "pref_key_bg_monitor_enabled"
 
@@ -130,6 +150,23 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 ExistingWorkPolicy.REPLACE,
                 req
             )
+        }
+
+        // 即時に単発のスナップショット取得（設定ON/OFFに関係なく実行）
+        fun snapshotNow(context: Context, url: String) {
+            val data = workDataOf(KEY_URL to url, KEY_ONE_SHOT to true)
+            val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
+                .setInputData(data)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setConstraints(
+                    androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .addTag("thread-monitor")
+                .build()
+            val unique = "snapshot-" + UrlNormalizer.threadKey(url)
+            WorkManager.getInstance(context).enqueueUniqueWork(unique, ExistingWorkPolicy.REPLACE, req)
         }
 
         fun cancelAll(context: Context) {

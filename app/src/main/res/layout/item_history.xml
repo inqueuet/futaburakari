@@ -63,23 +63,6 @@
         android:minWidth="32dp"
         android:gravity="center"/>
 
-    <!-- アーカイブバッジ -->
-    <TextView
-        android:id="@+id/archiveBadge"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:paddingLeft="8dp"
-        android:paddingRight="8dp"
-        android:paddingTop="2dp"
-        android:paddingBottom="2dp"
-        android:background="@drawable/archive_badge_bg"
-        android:textColor="@android:color/white"
-        android:textStyle="bold"
-        android:textSize="12sp"
-        android:text="ARCHIVE"
-        android:visibility="gone"
-        android:minWidth="32dp"
-        android:gravity="center"/>
+    
 
 </LinearLayout>

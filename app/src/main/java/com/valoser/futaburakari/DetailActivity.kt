@@ -7,6 +7,10 @@ import android.os.Bundle
 import android.text.Html
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
+import coil.load
+import androidx.recyclerview.widget.GridLayoutManager
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -114,6 +118,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         currentUrl?.let { url ->
             val title = binding.toolbarTitle.text?.toString().orEmpty().ifBlank { url }
             HistoryManager.addOrUpdate(this, url, title)
+            // すぐ閉じた場合でも本文を含めてローカルに残せるよう、単発のスナップショット取得を即時キュー
+            ThreadMonitorWorker.snapshotNow(this, url)
         }
 
         setupRecyclerView()
@@ -551,7 +557,12 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         currentUrl?.let { url ->
             val key = UrlNormalizer.threadKey(url)     // ★ ここで正規化
             val (pos, off) = scrollStore.getScrollState(key)
-            pendingScrollPosition = pos to off
+            // 既存保存がない (0,0) は保留しない（後の画像読み込みで“先頭へ戻る”の再適用を防止）
+            if (pos > 0 || off > 0) {
+                pendingScrollPosition = pos to off
+            } else {
+                pendingScrollPosition = null
+            }
             //applyPendingScroll()
         }
     }
@@ -560,6 +571,11 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private fun applyPendingScroll() {
         // 保留中のスクロール位置がある場合のみ実行
         pendingScrollPosition?.let { (pos, off) ->
+            // (0,0) は意図的な指定とみなさずスキップ
+            if (pos == 0 && off == 0) {
+                pendingScrollPosition = null
+                return
+            }
             // アダプターにアイテムがあり、位置が有効な範囲内か確認
             if (detailAdapter.itemCount > 0 && pos < detailAdapter.itemCount) {
                 // RecyclerViewのレイアウトが完了した後にスクロールを実行
@@ -573,6 +589,17 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.detail_menu, menu)
         detailSearchManager.setupSearch(menu) // 検索メニューの初期化
+        // メディア一覧（ID参照に依存せずタイトルでバインド）
+        for (i in 0 until menu.size()) {
+            val mi = menu.getItem(i)
+            if (mi.title?.toString() == "メディア一覧") {
+                mi.setOnMenuItemClickListener {
+                    showMediaList()
+                    true
+                }
+                break
+            }
+        }
         return true
     }
 
@@ -792,6 +819,100 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             )
         }
         dialog.setContentView(recycler)
+        dialog.show()
+    }
+
+    // メディア一覧（画像のみ・3列）のシートを表示し、選択でそのレス位置へスクロール
+    private fun showMediaList() {
+        val current = detailAdapter.currentList
+        if (current.isEmpty()) {
+            Toast.makeText(this, "コンテンツがありません", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        data class ImageEntry(
+            val imageAdapterPosition: Int, // 画像アイテムの位置
+            val parentTextPosition: Int,   // 直前のレス(Text)の位置（スクロール先）
+            val url: String
+        )
+
+        fun findParentTextPosition(from: Int): Int {
+            for (i in from downTo 0) {
+                if (current[i] is DetailContent.Text) return i
+            }
+            return from
+        }
+
+        val images = mutableListOf<ImageEntry>()
+        current.withIndex().forEach { (i, c) ->
+            when (c) {
+                is DetailContent.Image -> {
+                    val parent = findParentTextPosition(i)
+                    images += ImageEntry(i, parent, c.imageUrl)
+                }
+                is DetailContent.Video -> {
+                    // 動画もグリッドに含める（CoilのVideoFrameDecoderで代表フレームを表示）
+                    val parent = findParentTextPosition(i)
+                    images += ImageEntry(i, parent, c.videoUrl)
+                }
+                else -> {}
+            }
+        }
+
+        if (images.isEmpty()) {
+            Toast.makeText(this, "画像はありません", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val dialog = BottomSheetDialog(this)
+
+        // グリッド（3列）のサムネイルアダプタ（画像のみ）
+        class ImageGridAdapter(
+            private val data: List<ImageEntry>,
+            private val onClick: (ImageEntry) -> Unit
+        ) : RecyclerView.Adapter<ImageGridAdapter.VH>() {
+            inner class VH(val iv: android.widget.ImageView) : RecyclerView.ViewHolder(iv)
+
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val ctx = parent.context
+                val density = ctx.resources.displayMetrics.density
+                val sizeDp = 110
+                val sizePx = (sizeDp * density).toInt()
+                val iv = android.widget.ImageView(ctx).apply {
+                    layoutParams = ViewGroup.MarginLayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        sizePx
+                    ).apply {
+                        val m = (4 * density).toInt()
+                        setMargins(m, m, m, m)
+                    }
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    setBackgroundColor(0xFF222222.toInt())
+                }
+                return VH(iv)
+            }
+
+            override fun onBindViewHolder(holder: VH, position: Int) {
+                val item = data[position]
+                holder.iv.load(item.url)
+                holder.iv.setOnClickListener { onClick(item) }
+            }
+
+            override fun getItemCount(): Int = data.size
+        }
+
+        val rv = RecyclerView(this).apply {
+            layoutManager = GridLayoutManager(this@DetailActivity, 3)
+            setHasFixedSize(true)
+        }
+        val adapter = ImageGridAdapter(images) { entry ->
+            dialog.dismiss()
+            // そのレス位置まで移動（Text位置を優先）
+            val target = entry.parentTextPosition.takeIf { it >= 0 } ?: entry.imageAdapterPosition
+            layoutManager.scrollToPositionWithOffset(target, 0)
+        }
+        rv.adapter = adapter
+        dialog.setContentView(rv)
         dialog.show()
     }
 

@@ -41,20 +41,35 @@ class DetailCacheManager(private val context: Context) {
         return File(cacheDir, fileName)
     }
 
+    // レガシーキー（ドメイン非含有）のキャッシュファイル（旧版互換）
+    private fun getLegacyCacheFile(url: String): File {
+        val key = UrlNormalizer.legacyThreadKey(url)
+        val fileName = key.sha256()
+        return File(cacheDir, fileName)
+    }
+
     fun getArchiveDirForUrl(url: String): File {
         val key = UrlNormalizer.threadKey(url)
         val dirName = key.sha256()
         return File(archiveRoot, dirName).apply { mkdirs() }
     }
 
+    private fun getArchiveSnapshotFile(url: String): File {
+        val dir = getArchiveDirForUrl(url)
+        return File(dir, "snapshot.json")
+    }
+
     fun saveDetails(url: String, details: List<DetailContent>) {
         val cacheFile = getCacheFile(url)
+        val legacyFile = getLegacyCacheFile(url)
         Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
         try {
             val cachedData = CachedDetails(System.currentTimeMillis(), details)
             val jsonString = gson.toJson(cachedData)
             Log.d("DetailCacheManager", "JSON string length: ${jsonString.length}")
             cacheFile.writeText(jsonString)
+            // 旧ファイルが残っていれば削除（容量節約）
+            runCatching { if (legacyFile.exists()) legacyFile.delete() }
             Log.d("DetailCacheManager", "Successfully saved cache for $url")
         } catch (e: Exception) {
             Log.e("DetailCacheManager", "Error saving cache for $url", e)
@@ -63,9 +78,24 @@ class DetailCacheManager(private val context: Context) {
 
     fun loadDetails(url: String): List<DetailContent>? {
         val cacheFile = getCacheFile(url)
+        val legacyFile = getLegacyCacheFile(url)
         Log.d("DetailCacheManager", "Loading from cache file: ${cacheFile.absolutePath}")
 
         if (!cacheFile.exists()) {
+            // レガシー名をフォールバックで試す
+            if (legacyFile.exists()) {
+                Log.d("DetailCacheManager", "Primary cache missing; trying legacy: ${legacyFile.name}")
+                return try {
+                    val jsonString = legacyFile.readText()
+                    val cachedData: CachedDetails = gson.fromJson(jsonString, object : TypeToken<CachedDetails>() {}.type)
+                    // 新名へ移行（コピー）。失敗しても読み出しは返す。
+                    runCatching { legacyFile.copyTo(cacheFile, overwrite = true) }
+                    cachedData.details
+                } catch (e: Exception) {
+                    Log.e("DetailCacheManager", "Error reading legacy cache file.", e)
+                    null
+                }
+            }
             Log.d("DetailCacheManager", "Cache file not found: ${cacheFile.name}")
             return null
         }
@@ -89,6 +119,7 @@ class DetailCacheManager(private val context: Context) {
 
     fun invalidateCache(url: String) {
         val cacheFile = getCacheFile(url)
+        val legacyFile = getLegacyCacheFile(url)
         Log.d("DetailCacheManager", "Invalidating cache for $url. Deleting file: ${cacheFile.name}")
         if (cacheFile.exists()) {
             if (cacheFile.delete()) {
@@ -99,6 +130,10 @@ class DetailCacheManager(private val context: Context) {
         } else {
             Log.d("DetailCacheManager", "Cache file to invalidate not found: ${cacheFile.name}")
         }
+        // レガシー側も削除
+        if (legacyFile.exists()) {
+            runCatching { legacyFile.delete() }
+        }
     }
 
     fun clearArchiveForUrl(url: String) {
@@ -107,6 +142,61 @@ class DetailCacheManager(private val context: Context) {
             if (!dir.deleteRecursively()) {
                 Log.w("DetailCacheManager", "Failed to delete archive dir: ${dir.absolutePath}")
             }
+        }
+    }
+
+    /**
+     * アーカイブディレクトリに残っている媒体から、最低限の詳細リストを再構成する。
+     * ネットワーク/キャッシュが使えない場合の最後のフォールバック用。
+     * 取得できるのは媒体のみ（テキストは復元不可）。
+     */
+    fun reconstructFromArchive(url: String): List<DetailContent>? {
+        // スナップショットがあればまず採用（本文も含む）
+        loadArchiveSnapshot(url)?.let { return it }
+        val dir = getArchiveDirForUrl(url)
+        if (!dir.exists()) return null
+        val files = dir.listFiles()?.filter { it.isFile && it.length() > 0 }?.sortedBy { it.lastModified() }
+            ?: return null
+        if (files.isEmpty()) return null
+        fun isVideoName(name: String): Boolean {
+            val lower = name.lowercase()
+            return lower.endsWith(".mp4") || lower.endsWith(".webm")
+        }
+        val list = mutableListOf<DetailContent>()
+        for (f in files) {
+            val uri = f.toURI().toString()
+            val name = f.name
+            if (isVideoName(name)) {
+                list += DetailContent.Video(id = uri, videoUrl = uri, prompt = null, fileName = name)
+            } else {
+                list += DetailContent.Image(id = uri, imageUrl = uri, prompt = null, fileName = name)
+            }
+        }
+        return list
+    }
+
+    // アーカイブスナップショット（本文含む）
+    fun saveArchiveSnapshot(url: String, details: List<DetailContent>) {
+        runCatching {
+            val f = getArchiveSnapshotFile(url)
+            val json = gson.toJson(CachedDetails(System.currentTimeMillis(), details))
+            f.writeText(json)
+            Log.d("DetailCacheManager", "Saved archive snapshot: ${f.absolutePath}")
+        }.onFailure {
+            Log.w("DetailCacheManager", "Failed to save archive snapshot", it)
+        }
+    }
+
+    fun loadArchiveSnapshot(url: String): List<DetailContent>? {
+        val f = getArchiveSnapshotFile(url)
+        if (!f.exists()) return null
+        return try {
+            val json = f.readText()
+            val data: CachedDetails = gson.fromJson(json, object : TypeToken<CachedDetails>() {}.type)
+            data.details
+        } catch (e: Exception) {
+            Log.w("DetailCacheManager", "Failed to load archive snapshot", e)
+            null
         }
     }
 

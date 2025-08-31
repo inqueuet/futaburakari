@@ -55,8 +55,7 @@ class HistoryAdapter(
             badge.visibility = android.view.View.GONE
         }
 
-        // アーカイブバッジ
-        holder.binding.archiveBadge.visibility = if (item.isArchived) android.view.View.VISIBLE else android.view.View.GONE
+        // アーカイブバッジは廃止（表示しない）
         // サムネイル
         val iv = holder.binding.thumbnailImageView
         if (item.thumbnailUrl.isNullOrBlank()) {

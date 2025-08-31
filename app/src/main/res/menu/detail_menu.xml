@@ -25,4 +25,9 @@
         android:id="@+id/action_ng_manage"
         android:title="NG管理"
         app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_media_list"
+        android:title="メディア一覧"
+        app:showAsAction="never" />
 </menu>

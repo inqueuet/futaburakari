@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.MalformedURLException
+import java.io.IOException
 import java.net.URL
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -76,14 +77,25 @@ class DetailViewModel @Inject constructor(
 
             try {
                 if (!forceRefresh) {
-                    val cachedDetails = withContext(Dispatchers.IO) {
-                        cacheManager.loadDetails(url)
-                    }
+                    val cachedDetails = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
                     if (cachedDetails != null) {
                         rawContent = cachedDetails
                         applyNgAndPost()
                         _isLoading.value = false
                         return@launch
+                    }
+                    // 履歴がアーカイブ済みで、アーカイブスナップショットがあれば即時表示してネットワークを避ける
+                    val archived = runCatching {
+                        HistoryManager.getAll(appContext).any { it.url == url && it.isArchived }
+                    }.getOrDefault(false)
+                    if (archived) {
+                        val snap = withContext(Dispatchers.IO) { cacheManager.loadArchiveSnapshot(url) }
+                        if (!snap.isNullOrEmpty()) {
+                            rawContent = snap
+                            applyNgAndPost()
+                            _isLoading.value = false
+                            return@launch
+                        }
                     }
                 }
 
@@ -109,11 +121,48 @@ class DetailViewModel @Inject constructor(
                 Log.e("DetailViewModel", "Error fetching details for $url", e)
                 val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
                 if (cached != null) {
+                    // 404（dat落ち）相当なら履歴をアーカイブ扱いにする（BG監視OFF時の救済）
+                    if (e is IOException && (e.message?.contains("404") == true)) {
+                        runCatching { HistoryManager.markArchived(appContext, url) }
+                    }
                     rawContent = cached
                     applyNgAndPost()
+                    // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映
+                    runCatching {
+                        val media = cached.firstOrNull { it is DetailContent.Image || it is DetailContent.Video }
+                        val thumb = when (media) {
+                            is DetailContent.Image -> media.imageUrl
+                            is DetailContent.Video -> media.videoUrl
+                            else -> null
+                        }
+                        if (!thumb.isNullOrBlank()) {
+                            HistoryManager.updateThumbnail(appContext, url, thumb)
+                        }
+                    }
                     _error.value = null
                 } else {
-                    _error.value = "詳細の取得に失敗しました: ${e.message}"
+                    // キャッシュも無い → アーカイブスナップショット or 媒体だけでも再構成
+                    val reconstructed = withContext(Dispatchers.IO) {
+                        cacheManager.loadArchiveSnapshot(url) ?: cacheManager.reconstructFromArchive(url)
+                    }
+                    if (!reconstructed.isNullOrEmpty()) {
+                        // アーカイブ扱いにしてサムネも反映
+                        runCatching { HistoryManager.markArchived(appContext, url) }
+                        runCatching {
+                            val first = reconstructed.first()
+                            val thumb = when (first) {
+                                is DetailContent.Image -> first.imageUrl
+                                is DetailContent.Video -> first.videoUrl
+                                else -> null
+                            }
+                            if (!thumb.isNullOrBlank()) HistoryManager.updateThumbnail(appContext, url, thumb)
+                        }
+                        rawContent = reconstructed
+                        applyNgAndPost()
+                        _error.value = null
+                    } else {
+                        _error.value = "詳細の取得に失敗しました: ${e.message}"
+                    }
                 }
                 _isLoading.value = false
             }
@@ -534,9 +583,12 @@ class DetailViewModel @Inject constructor(
         }
         val filtered = filterByNgRules(rawContent, rules)
         _detailContent.postValue(filtered)
-        // 生データはキャッシュへ保存
+        // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
         currentUrl?.let { url ->
-            viewModelScope.launch(Dispatchers.IO) { cacheManager.saveDetails(url, rawContent) }
+            viewModelScope.launch(Dispatchers.IO) {
+                cacheManager.saveDetails(url, rawContent)
+                cacheManager.saveArchiveSnapshot(url, rawContent)
+            }
         }
     }
 
@@ -586,7 +638,8 @@ class DetailViewModel @Inject constructor(
 
     private fun extractIdFromHtml(html: String): String? {
         val plain = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
-        val m = Regex("""\bID:([\u0021-\u007E]+)""").find(plain)
+        // ID: の後ろ、空白または '(' が現れるまでをID本体として抽出
+        val m = Regex("""\bID:([^\n\r\t\s(]+)""").find(plain)
         return m?.groupValues?.getOrNull(1)?.trim()
     }
 
