@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
+import android.text.method.ScrollingMovementMethod
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
@@ -29,6 +30,9 @@ class ImageDisplayActivity : BaseActivity() {
 
         val imageView: ImageView = findViewById(R.id.imageViewDisplayedImage)
         val textViewPrompt: TextView = findViewById(R.id.textViewPromptInfo)
+        // Ensure long prompt content can scroll within its area
+        textViewPrompt.movementMethod = ScrollingMovementMethod.getInstance()
+        textViewPrompt.isVerticalScrollBarEnabled = true
         val buttonCopy: Button = findViewById(R.id.buttonCopyPrompt)
 
         val imageUriString = intent.getStringExtra(EXTRA_IMAGE_URI)
