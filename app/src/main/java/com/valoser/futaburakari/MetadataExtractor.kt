@@ -493,7 +493,7 @@ object MetadataExtractor {
     private fun scanXmpForPrompts(xmp: String): String? {
         // 属性 prompt/parameters="..."
         run {
-            val attrPattern = Pattern.compile("""([a-zA-Z0-9_:.\-]*?(prompt|parameters))\\s*=\\s*\"((?:\\\\.|[^\"])*)\""", Pattern.CASE_INSENSITIVE or Pattern.DOTALL)
+            val attrPattern = Pattern.compile("""([a-zA-Z0-9_:.\-]*?(prompt|parameters))\\s*=\\s*\"((?:\\\\.|[^\"])*)z""", Pattern.CASE_INSENSITIVE or Pattern.DOTALL)
             val m = attrPattern.matcher(xmp)
             if (m.find()) {
                 val v = m.group(3) ?: ""
