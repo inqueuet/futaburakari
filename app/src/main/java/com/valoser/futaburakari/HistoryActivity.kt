@@ -14,6 +14,8 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.valoser.futaburakari.databinding.ActivityHistoryBinding
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class HistoryActivity : BaseActivity() {
 
@@ -50,6 +52,15 @@ class HistoryActivity : BaseActivity() {
         }
         binding.recyclerView.layoutManager = LinearLayoutManager(this)
         binding.recyclerView.adapter = adapter
+
+        // Pad bottom for gesture nav/system bars
+        val rv = binding.recyclerView
+        val origBottom = rv.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(rv) { v, insets ->
+            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, origBottom + sys.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
 
         // swipe to delete
         val touchHelper = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {

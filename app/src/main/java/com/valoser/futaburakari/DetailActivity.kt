@@ -156,6 +156,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             saveScroll()
             onBackPressedDispatcher.onBackPressed()
         }
+
+        // Ensure bottom container sits above navigation bar
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.bottomContainer) { v, insets ->
+            val sys = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, sys.bottom)
+            // RecyclerView bottom padding mirrors bottomContainer height; this will be picked up
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
     }
 
     private fun setupAdBanner() {

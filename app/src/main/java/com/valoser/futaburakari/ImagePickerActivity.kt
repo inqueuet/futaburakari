@@ -12,7 +12,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 // import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
 import com.valoser.futaburakari.databinding.ActivityImagePickerBinding
 
 class ImagePickerActivity : BaseActivity() {
@@ -49,7 +48,6 @@ class ImagePickerActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false) // Added for Edge-to-Edge
         binding = ActivityImagePickerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 

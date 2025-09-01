@@ -12,8 +12,7 @@
         <item name="colorSecondary">@color/teal_200</item>
         <item name="colorSecondaryVariant">@color/teal_700</item>
         <item name="colorOnSecondary">@color/black</item>
-        <!-- ステータスバーの色。 -->
-        <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
+        <!-- Edge-to-edge managed at runtime via enableEdgeToEdge() -->
     </style>
 
     <style name="Theme.Futaburakari.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />

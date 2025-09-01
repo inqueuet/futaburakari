@@ -15,7 +15,8 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 // import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
-import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -118,7 +119,6 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -147,6 +147,15 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         }
 
         loadAndFetchInitialData()
+
+        // Apply bottom system bar insets to RecyclerView padding
+        val rv = binding.recyclerView
+        val originalPaddingBottom = rv.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(rv) { v, insets ->
+            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, originalPaddingBottom + sys.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
     }
 
     override fun onDestroy() {

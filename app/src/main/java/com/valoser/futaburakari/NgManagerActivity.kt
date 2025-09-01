@@ -9,6 +9,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updateLayoutParams
 
 class NgManagerActivity : BaseActivity() {
     companion object {
@@ -51,6 +54,18 @@ class NgManagerActivity : BaseActivity() {
         refresh()
 
         findViewById<FloatingActionButton>(R.id.addNgFab)?.setOnClickListener { showAddDialog() }
+
+        // Lift the FAB above navigation bar
+        findViewById<FloatingActionButton>(R.id.addNgFab)?.let { fab ->
+            val orig = (fab.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.bottomMargin ?: 0
+            ViewCompat.setOnApplyWindowInsetsListener(fab) { v, insets ->
+                val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                v.updateLayoutParams<android.view.ViewGroup.MarginLayoutParams> {
+                    bottomMargin = orig + sys.bottom
+                }
+                WindowInsetsCompat.CONSUMED
+            }
+        }
     }
 
     private fun refresh() {

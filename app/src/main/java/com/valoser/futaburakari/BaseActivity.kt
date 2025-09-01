@@ -3,6 +3,7 @@ package com.valoser.futaburakari
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.preference.PreferenceManager
@@ -29,6 +30,8 @@ open class BaseActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         applyThemePreferences()
         super.onCreate(savedInstanceState)
+        // Enable edge-to-edge with backward-compatible behavior
+        enableEdgeToEdge()
     }
 
     private fun applyThemePreferences() {

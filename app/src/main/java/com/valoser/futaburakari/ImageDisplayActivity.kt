@@ -12,7 +12,6 @@ import android.widget.TextView
 import android.widget.Toast
 // import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import coil.load
@@ -26,7 +25,6 @@ class ImageDisplayActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false) // Added for Edge-to-Edge
         setContentView(R.layout.activity_image_display)
 
         val imageView: ImageView = findViewById(R.id.imageViewDisplayedImage)
