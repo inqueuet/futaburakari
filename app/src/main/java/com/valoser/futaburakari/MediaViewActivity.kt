@@ -12,6 +12,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 // import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -80,6 +82,17 @@ class MediaViewActivity : BaseActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
 
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = binding.toolbar
+            val origTop = tb.paddingTop
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                WindowInsetsCompat.CONSUMED
+            }
+        }
+
         currentType = intent.getStringExtra(EXTRA_TYPE)
         currentUrl = intent.getStringExtra(EXTRA_URL)
         currentText = intent.getStringExtra(EXTRA_TEXT) // プロンプトはこちらで受け取ることを想定
@@ -121,6 +134,17 @@ class MediaViewActivity : BaseActivity() {
             else -> {
                 Toast.makeText(this, "不明なメディアタイプです", Toast.LENGTH_LONG).show()
                 finish()
+            }
+        }
+
+        // Pad text scroll container for bottom system bars when visible
+        run {
+            val sc = binding.scrollContainer
+            val orig = sc.paddingBottom
+            ViewCompat.setOnApplyWindowInsetsListener(sc) { v, insets ->
+                val bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, orig + bottom)
+                WindowInsetsCompat.CONSUMED
             }
         }
     }

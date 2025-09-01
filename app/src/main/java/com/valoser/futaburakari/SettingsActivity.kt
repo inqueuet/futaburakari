@@ -17,6 +17,17 @@ class SettingsActivity : BaseActivity() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = binding.toolbar
+            val origTop = tb.paddingTop
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                WindowInsetsCompat.CONSUMED
+            }
+        }
+
         if (savedInstanceState == null) {
             supportFragmentManager
                 .beginTransaction()

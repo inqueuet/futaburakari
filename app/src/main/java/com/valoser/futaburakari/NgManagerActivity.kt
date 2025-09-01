@@ -31,6 +31,17 @@ class NgManagerActivity : BaseActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(false)
         findViewById<View>(R.id.backButton)?.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
 
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = findViewById<View>(R.id.toolbar)
+            val origTop = tb?.paddingTop ?: 0
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                WindowInsetsCompat.CONSUMED
+            }
+        }
+
         store = NgStore(this)
         store.cleanup()
         limitType = intent.getStringExtra(EXTRA_LIMIT_RULE_TYPE)?.let {
@@ -52,6 +63,16 @@ class NgManagerActivity : BaseActivity() {
         })
         recyclerView.adapter = adapter
         refresh()
+
+        // Pad RecyclerView bottom for system bars
+        run {
+            val orig = recyclerView.paddingBottom
+            ViewCompat.setOnApplyWindowInsetsListener(recyclerView) { v, insets ->
+                val bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, orig + bottom)
+                WindowInsetsCompat.CONSUMED
+            }
+        }
 
         findViewById<FloatingActionButton>(R.id.addNgFab)?.setOnClickListener { showAddDialog() }
 

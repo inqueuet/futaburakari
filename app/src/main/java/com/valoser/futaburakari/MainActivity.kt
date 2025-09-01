@@ -123,6 +123,17 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         setContentView(binding.root)
 
         setSupportActionBar(binding.toolbar)
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = binding.toolbar
+            val origTop = tb.paddingTop
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val sys = WindowInsetsCompat.Type.statusBars()
+                val top = insets.getInsets(sys).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                WindowInsetsCompat.CONSUMED
+            }
+        }
         enableToolbarMultiline()
 
         prefs = PreferenceManager.getDefaultSharedPreferences(this)

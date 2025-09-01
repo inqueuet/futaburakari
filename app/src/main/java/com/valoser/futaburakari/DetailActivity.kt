@@ -106,6 +106,16 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         scrollStore = ScrollPositionStore(this)
 
         setSupportActionBar(binding.toolbar)
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = binding.toolbar
+            val origTop = tb.paddingTop
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                androidx.core.view.WindowInsetsCompat.CONSUMED
+            }
+        }
         supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
         // Hilt により viewModel は注入済み（by viewModels()）

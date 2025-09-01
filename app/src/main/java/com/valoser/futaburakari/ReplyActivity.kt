@@ -10,6 +10,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 // import androidx.appcompat.app.AppCompatActivity
 import com.valoser.futaburakari.databinding.ActivityReplyNativeBinding
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
@@ -59,6 +61,17 @@ class ReplyActivity : BaseActivity() {
         // 独自の戻るボタンにクリックリスナーを付ける
         binding.backButton.setOnClickListener {
             finish()
+        }
+
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = binding.toolbar
+            val origTop = tb.paddingTop
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                WindowInsetsCompat.CONSUMED
+            }
         }
 
         // 不可視 WebView ワーカーをアタッチして TokenProvider をセット
@@ -161,6 +174,17 @@ class ReplyActivity : BaseActivity() {
                     binding.progressBar.visibility = android.view.View.GONE
                     Toast.makeText(this, st.message, Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+
+        // Pad scroll container for bottom system bars
+        run {
+            val sc = binding.scroll
+            val origBottom = sc.paddingBottom
+            ViewCompat.setOnApplyWindowInsetsListener(sc) { v, insets ->
+                val bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, origBottom + bottom)
+                WindowInsetsCompat.CONSUMED
             }
         }
     }

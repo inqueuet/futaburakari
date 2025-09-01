@@ -31,6 +31,16 @@ class BookmarkActivity : BaseActivity() {
         // Setup the Toolbar from the layout
         setSupportActionBar(binding.toolbar) // binding.toolbar は activity_bookmark.xml で定義したID
 
+        // Pad toolbar for status bar insets (edge-to-edge)
+        run {
+            val tb = binding.toolbar
+            val origTop = tb.paddingTop
+            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
+                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
+                WindowInsetsCompat.CONSUMED
+            }
+        }
         // Enable the Up button (back arrow)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         // Title is set in XML (app:title), so this line can be removed or commented
