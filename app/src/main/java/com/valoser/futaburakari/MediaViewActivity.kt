@@ -110,6 +110,15 @@ class MediaViewActivity : BaseActivity() {
                         placeholder(R.drawable.ic_launcher_background)
                         error(android.R.drawable.ic_dialog_alert)
                     }
+                    // Try extracting prompt/metadata in background
+                    lifecycleScope.launch {
+                        val prompt = MetadataExtractor.extract(this@MediaViewActivity, it, networkClient)
+                        if (!prompt.isNullOrBlank()) {
+                            currentText = prompt
+                            supportActionBar?.subtitle = prompt
+                            invalidateOptionsMenu()
+                        }
+                    }
                 }
                 supportActionBar?.title = "画像ビューア"
                 currentText?.let { supportActionBar?.subtitle = it }
@@ -119,7 +128,18 @@ class MediaViewActivity : BaseActivity() {
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = true
                 binding.textView.isVisible = false
-                currentUrl?.let { initializePlayer(it) }
+                currentUrl?.let {
+                    initializePlayer(it)
+                    // Try extracting prompt/metadata in background
+                    lifecycleScope.launch {
+                        val prompt = MetadataExtractor.extract(this@MediaViewActivity, it, networkClient)
+                        if (!prompt.isNullOrBlank()) {
+                            currentText = prompt
+                            supportActionBar?.subtitle = prompt
+                            invalidateOptionsMenu()
+                        }
+                    }
+                }
                 supportActionBar?.title = "動画ビューア"
                 currentText?.let { supportActionBar?.subtitle = it }
             }

@@ -89,6 +89,7 @@ dependencies {
     // Media3 (ExoPlayer)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.extractor)
     implementation(libs.androidx.exifinterface)
 
     // AndroidX Startup
@@ -119,6 +120,9 @@ dependencies {
     // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
+
+    // Media container parser (MP4) via version catalog
+    implementation(libs.mp4parser.isoparser)
 
     // Testing
     testImplementation(libs.junit)

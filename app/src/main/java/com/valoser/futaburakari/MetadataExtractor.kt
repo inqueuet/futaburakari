@@ -3,6 +3,7 @@ package com.valoser.futaburakari
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.exifinterface.media.ExifInterface
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -24,6 +25,22 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
+// Optional MP4/WebM parsers
+import java.nio.channels.WritableByteChannel
+// Media3 extractor imports (Matroska)
+import androidx.media3.extractor.mkv.MatroskaExtractor
+import androidx.media3.extractor.DefaultExtractorInput
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorOutput
+import androidx.media3.extractor.ExtractorInput
+import androidx.media3.extractor.SeekMap
+import androidx.media3.extractor.TrackOutput
+import androidx.media3.extractor.PositionHolder
+import androidx.media3.common.DataReader
+import androidx.media3.common.Format
+import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.common.util.UnstableApi
+
 object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
@@ -40,7 +57,7 @@ object MetadataExtractor {
     private const val PNG_WINDOW_BYTES = 64 * 1024
     private const val MP4_HEAD_BYTES  = 96 * 1024
     private const val MP4_TAIL_BYTES  = 128 * 1024
-    private const val GLOBAL_MAX_BYTES = 512 * 1024
+    private const val GLOBAL_MAX_BYTES = 256 * 1024
 
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
@@ -71,9 +88,8 @@ object MetadataExtractor {
                 "png" -> {
                     extractPngPromptStreamingWithLimit(uriOrUrl, networkClient)
                 }
-                "mp4", "webm", "mov", "m4v" -> {
-                    extractMp4PromptStreamingWithLimit(uriOrUrl, networkClient)
-                }
+                "mp4", "mov", "m4v" -> extractMp4PromptStreamingWithLimit(uriOrUrl, networkClient)
+                "webm" -> extractWebmPromptStreamingWithLimit(uriOrUrl, networkClient)
                 else -> {
                     val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient) ?: return@withContext null
                     extractBySniff(head, uriOrUrl)
@@ -165,7 +181,8 @@ object MetadataExtractor {
 
         var merged = concatNonNull(head, tail)
         if (merged != null) {
-            extractFromMp4Bytes(merged)?.let { return it }
+            extractFromMp4WithLib(merged)?.let { return it }
+            extractFromMp4Container(merged)?.let { return it }
         }
 
         // 必要なら段階的に拡張（一度に一つの接続のみ）
@@ -181,7 +198,8 @@ object MetadataExtractor {
             } ?: break
 
             merged = if (merged == null) more else merged + more
-            extractFromMp4Bytes(merged)?.let { return it }
+            extractFromMp4WithLib(merged)?.let { return it }
+            extractFromMp4Container(merged)?.let { return it }
             total = merged.size
             extra *= 2
         }
@@ -220,9 +238,13 @@ object MetadataExtractor {
 
     private fun extractByType(fileBytes: ByteArray, uriOrUrl: String): String? {
         return when {
-            uriOrUrl.endsWith(".mp4", true) || uriOrUrl.endsWith(".webm", true) ||
-                    uriOrUrl.endsWith(".mov", true) || uriOrUrl.endsWith(".m4v", true) -> {
-                extractFromMp4Bytes(fileBytes)
+            uriOrUrl.endsWith(".mp4", true) || uriOrUrl.endsWith(".mov", true) || uriOrUrl.endsWith(".m4v", true) -> {
+                extractFromMp4WithLib(fileBytes)
+                    ?: extractFromMp4Container(fileBytes)
+            }
+            uriOrUrl.endsWith(".webm", true) -> {
+                extractFromWebmWithLib(fileBytes)
+                    ?: extractFromWebmContainer(fileBytes)
             }
             isPng(fileBytes) -> extractFromPngChunks(fileBytes)
             else -> extractFromExif(fileBytes)
@@ -248,6 +270,370 @@ object MetadataExtractor {
         val nearMeta = regexSearchWindow(latin, "(moov|udta|meta|ilst)".toRegex(RegexOption.IGNORE_CASE), 4096)
         if (nearMeta != null) {
             scanTextForPrompts(nearMeta)?.let { return it }
+        }
+        return null
+    }
+
+    private fun extractFromMp4WithLib(bytes: ByteArray): String? {
+        return try {
+            val isoFileCls = Class.forName("org.mp4parser.IsoFile")
+            val bbChanCls = Class.forName("org.mp4parser.tools.ByteBufferByteChannel")
+            val readableChanCls = Class.forName("java.nio.channels.ReadableByteChannel")
+
+            val channel = bbChanCls.getConstructor(ByteBuffer::class.java).newInstance(ByteBuffer.wrap(bytes))
+            val iso = isoFileCls.getConstructor(readableChanCls).newInstance(channel)
+
+            fun getBoxes(container: Any): List<Any> {
+                val m = container.javaClass.methods.firstOrNull { it.name == "getBoxes" && it.parameterCount == 0 }
+                @Suppress("UNCHECKED_CAST")
+                return (m?.invoke(container) as? List<Any>) ?: emptyList()
+            }
+            fun getType(box: Any): String {
+                val m = box.javaClass.methods.firstOrNull { it.name == "getType" }
+                return (m?.invoke(box) as? String) ?: ""
+            }
+            fun findChild(container: Any, type: String): Any? = getBoxes(container).firstOrNull { getType(it) == type }
+            fun findChildren(container: Any, type: String): List<Any> = getBoxes(container).filter { getType(it) == type }
+            fun boxToBytes(box: Any): ByteArray {
+                val out = ByteArrayOutputStream()
+                val ch = object : WritableByteChannel {
+                    private var open = true
+                    override fun isOpen(): Boolean = open
+                    override fun close() { open = false }
+                    override fun write(src: java.nio.ByteBuffer): Int {
+                        val remaining = src.remaining()
+                        val arr = ByteArray(remaining)
+                        src.get(arr)
+                        out.write(arr)
+                        return remaining
+                    }
+                }
+                val m = box.javaClass.methods.firstOrNull { it.name == "getBox" && it.parameterCount == 1 }
+                m?.invoke(box, ch)
+                ch.close()
+                return out.toByteArray()
+            }
+
+            fun decodeIlstItem(item: Any): String? {
+                val datas = findChildren(item, "data")
+                for (d in datas) {
+                    val raw = boxToBytes(d)
+                    if (raw.size <= 16) continue
+                    val payload = raw.copyOfRange(16, raw.size)
+                    val s = try { String(payload, StandardCharsets.UTF_8) } catch (_: Exception) {
+                        try { String(payload, StandardCharsets.UTF_16) } catch (_: Exception) { String(payload, StandardCharsets.ISO_8859_1) }
+                    }
+                    scanTextForPrompts(s)?.let { return it }
+                    if (s.isNotBlank() && !isLabely(s)) return s.trim()
+                }
+                return null
+            }
+
+            val roots = getBoxes(iso)
+            val moov = roots.firstOrNull { getType(it) == "moov" } ?: return null
+            val udta = findChild(moov, "udta")
+            if (udta != null) {
+                // XMP_
+                val xmp = findChild(udta, "XMP_")
+                if (xmp != null) {
+                    val raw = boxToBytes(xmp)
+                    if (raw.size > 8) {
+                        val content = raw.copyOfRange(8, raw.size)
+                        val xmpStr = runCatching { String(content, StandardCharsets.UTF_8) }.getOrNull()
+                        if (!xmpStr.isNullOrEmpty()) scanXmpForPrompts(xmpStr)?.let { return it }
+                    }
+                }
+                // meta → ilst
+                val meta = findChild(udta, "meta")
+                val ilst = if (meta != null) findChild(meta, "ilst") else null
+                if (ilst != null) {
+                    val keyCandidates = setOf("\u00A9des", "desc", "\u00A9cmt")
+                    for (item in getBoxes(ilst)) {
+                        if (getType(item) in keyCandidates) {
+                            decodeIlstItem(item)?.let { return it }
+                        }
+                    }
+                }
+            }
+
+            // moov直下のmetaにも対応
+            val metaMoov = findChild(moov, "meta")
+            val ilstMoov = if (metaMoov != null) findChild(metaMoov, "ilst") else null
+            if (ilstMoov != null) {
+                val keyCandidates = setOf("\u00A9des", "desc", "\u00A9cmt")
+                for (item in getBoxes(ilstMoov)) {
+                    if (getType(item) in keyCandidates) {
+                        decodeIlstItem(item)?.let { return it }
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    // ====== WebM: 同時接続数制限付きストリーミング処理 ======
+    private suspend fun extractWebmPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
+        val size = httpHeadContentLengthWithLimit(fileUrl, networkClient)
+        val head = httpGetRangeWithLimit(fileUrl, 0, MP4_HEAD_BYTES.toLong(), networkClient)
+        val tail = if (size != null && size > MP4_TAIL_BYTES) {
+            httpGetRangeWithLimit(fileUrl, size - MP4_TAIL_BYTES, MP4_TAIL_BYTES.toLong(), networkClient)
+        } else {
+            httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES, MP4_TAIL_BYTES).toLong(), networkClient)
+        }
+        var merged = concatNonNull(head, tail)
+        if (merged != null) {
+            extractFromWebmWithLib(merged)?.let { return it }
+            extractFromWebmContainer(merged)?.let { return it }
+        }
+        var extra = 256 * 1024
+        var total = (merged?.size ?: 0)
+        while (total < GLOBAL_MAX_BYTES) {
+            val more = if (size != null) {
+                val start = max(0L, size - MP4_TAIL_BYTES - extra)
+                val len = min(extra, GLOBAL_MAX_BYTES - total)
+                httpGetRangeWithLimit(fileUrl, start, len.toLong(), networkClient)
+            } else {
+                httpGetRangeWithLimit(fileUrl, 0, min(GLOBAL_MAX_BYTES - total, extra).toLong(), networkClient)
+            } ?: break
+
+            merged = if (merged == null) more else merged + more
+            extractFromWebmWithLib(merged)?.let { return it }
+            extractFromWebmContainer(merged)?.let { return it }
+            total = merged.size
+            extra *= 2
+        }
+        return null
+    }
+
+    // ====== MP4/MOV/M4V: ISOBMFF Box 構造の軽量パース ======
+    private fun extractFromMp4Container(bytes: ByteArray): String? {
+        fun u32(off: Int): Long = if (off + 4 <= bytes.size)
+            ((bytes[off].toLong() and 0xFF) shl 24) or ((bytes[off + 1].toLong() and 0xFF) shl 16) or ((bytes[off + 2].toLong() and 0xFF) shl 8) or (bytes[off + 3].toLong() and 0xFF)
+        else 0
+        fun typ(off: Int): String? = if (off + 4 <= bytes.size) String(bytes, off, 4, StandardCharsets.ISO_8859_1) else null
+
+        data class Box(val type: String, val start: Int, val size: Int, val contentStart: Int, val contentEnd: Int)
+        fun readBoxes(start: Int, end: Int, isMeta: Boolean = false): List<Box> {
+            val list = mutableListOf<Box>()
+            var p = start
+            while (p + 8 <= end) {
+                var size = u32(p).toInt()
+                val type = typ(p + 4) ?: break
+                var header = 8
+                if (size == 1 && p + 16 <= end) { // 64-bit size
+                    val hi = u32(p + 8)
+                    val lo = u32(p + 12)
+                    val s64 = (hi shl 32) or lo
+                    if (s64 > Int.MAX_VALUE) break
+                    size = s64.toInt()
+                    header = 16
+                } else if (size == 0) {
+                    size = end - p
+                }
+                val boxStart = p
+                val boxEnd = (p + size).coerceAtMost(end)
+                val cStart = (p + header) + (if (isMeta) 4 else 0) // meta は version/flags 4bytes
+                val cEnd = boxEnd
+                if (boxEnd <= boxStart || cStart > cEnd) break
+                list.add(Box(type, boxStart, boxEnd - boxStart, cStart, cEnd))
+                p = boxEnd
+            }
+            return list
+        }
+
+        fun isType(box: Box, t: String) = box.type.equals(t, ignoreCase = false)
+        fun findChild(parent: Box, t: String, isMeta: Boolean = false): Box? =
+            readBoxes(parent.contentStart, parent.contentEnd, isMeta).firstOrNull { it.type == t }
+        fun findChildren(parent: Box, t: String, isMeta: Boolean = false): List<Box> =
+            readBoxes(parent.contentStart, parent.contentEnd, isMeta).filter { it.type == t }
+
+        val top = readBoxes(0, bytes.size)
+        val moov = top.firstOrNull { it.type == "moov" } ?: return null
+        val udta = findChild(moov, "udta")
+        val meta = if (udta != null) findChild(udta, "meta", isMeta = true) else findChild(moov, "meta", isMeta = true)
+        // XMP_ 直下も探索
+        if (udta != null) {
+            val xmp = findChild(udta, "XMP_")
+            if (xmp != null) {
+                val xmpStr = try { String(bytes, xmp.contentStart, (xmp.contentEnd - xmp.contentStart), StandardCharsets.UTF_8) } catch (_: Exception) { null }
+                if (!xmpStr.isNullOrEmpty()) scanXmpForPrompts(xmpStr)?.let { return it }
+            }
+        }
+        if (meta != null) {
+            // ilst を探す
+            val ilst = findChild(meta, "ilst", isMeta = false)
+            if (ilst != null) {
+                val items = readBoxes(ilst.contentStart, ilst.contentEnd)
+                val keyCandidates = listOf(
+                    byteArrayOf(0xA9.toByte(), 'd'.code.toByte(), 'e'.code.toByte(), 's'.code.toByte()), // ©des
+                    "desc".toByteArray(StandardCharsets.ISO_8859_1),
+                    byteArrayOf(0xA9.toByte(), 'c'.code.toByte(), 'm'.code.toByte(), 't'.code.toByte())  // ©cmt
+                )
+                for (item in items) {
+                    val tBytes = bytes.copyOfRange(item.start + 4, item.start + 8)
+                    val isTarget = keyCandidates.any { it.contentEquals(tBytes) }
+                    if (!isTarget) continue
+                    // data ボックス
+                    val datas = findChildren(item, "data")
+                    for (d in datas) {
+                        val payloadStart = d.contentStart + 8 // 4:type + 4:locale
+                        if (payloadStart <= d.contentEnd) {
+                            val payload = bytes.copyOfRange(payloadStart, d.contentEnd)
+                            val str = try { String(payload, StandardCharsets.UTF_8) } catch (_: Exception) {
+                                try { String(payload, StandardCharsets.UTF_16) } catch (_: Exception) { String(payload, StandardCharsets.ISO_8859_1) }
+                            }
+                            scanTextForPrompts(str)?.let { return it }
+                            if (str.isNotBlank() && !isLabely(str)) return str.trim()
+                        }
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    // ====== WebM: EBML構造の軽量パース（Tags → SimpleTag） ======
+    private fun extractFromWebmContainer(bytes: ByteArray): String? {
+        class Reader {
+            var p = 0
+            fun eof() = p >= bytes.size
+            fun readVint(): Pair<Long, Int>? {
+                if (p >= bytes.size) return null
+                val b0 = bytes[p].toInt() and 0xFF
+                var mask = 0x80
+                var length = 1
+                while (length <= 8 && (b0 and mask) == 0) { mask = mask shr 1; length++ }
+                if (length > 8 || p + length > bytes.size) return null
+                var value = (b0 and (mask - 1)).toLong()
+                for (i in 1 until length) value = (value shl 8) or (bytes[p + i].toLong() and 0xFF)
+                val oldP = p
+                p += length
+                return Pair(value, length)
+            }
+            fun readBytes(n: Int): ByteArray? { if (p + n > bytes.size) return null; val out = bytes.copyOfRange(p, p + n); p += n; return out }
+        }
+        var lastTagName: String? = null
+        fun readElement(r: Reader, end: Int, onTag: (name: String, value: String) -> Unit) {
+            while (r.p < end) {
+                val idPair = r.readVint() ?: return
+                val sizePair = r.readVint() ?: return
+                val id = idPair.first
+                val size = sizePair.first.toInt()
+                val start = r.p
+                val limit = (start + size).coerceAtMost(bytes.size)
+                when (id) {
+                    0x18538067L, // Segment
+                    0x1254C367L, // Tags
+                    0x7373L,     // Tag
+                    0x1549A966L  // Info（スキップ）
+                    -> { readElement(r, limit, onTag) }
+                    0x67C8L -> { // SimpleTag
+                        readElement(r, limit, onTag)
+                    }
+                    0x45A3L -> { // TagName (UTF-8)
+                        val data = r.readBytes(size) ?: return
+                        lastTagName = String(data, StandardCharsets.UTF_8).trim()
+                    }
+                    0x4487L -> { // TagString (UTF-8)
+                        val value = String(r.readBytes(size) ?: return, StandardCharsets.UTF_8)
+                        val name = lastTagName ?: ""
+                        val keyMatch = name.equals("prompt", true) || name.equals("parameters", true) || name.equals("description", true) || name.equals("comment", true)
+                        val maybe = scanTextForPrompts(value)
+                        if (maybe != null) return onTag(name.ifBlank { "TagString" }, maybe)
+                        if (keyMatch && value.isNotBlank()) return onTag(name, value.trim())
+                    }
+                    else -> {
+                        // その他バイナリは読み飛ばし
+                        r.p = limit
+                    }
+                }
+                r.p = limit
+            }
+        }
+
+        var result: String? = null
+        val r = Reader()
+        readElement(r, bytes.size) { _, v -> if (result == null) result = v }
+        return result
+    }
+
+    // Media3 MatroskaExtractor を使ったWebM正式パース（UnstableApi使用）
+
+    @OptIn(UnstableApi::class)
+    private fun extractFromWebmWithLib(bytes: ByteArray): String? {
+        try {
+            class BAReader(private val data: ByteArray) : DataReader {
+                private var pos = 0
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    val remaining = data.size - pos
+                    if (remaining <= 0) return -1
+                    val toRead = min(length, remaining)
+                    System.arraycopy(data, pos, buffer, offset, toRead)
+                    pos += toRead
+                    return toRead
+                }
+            }
+
+            val input = DefaultExtractorInput(BAReader(bytes), 0, bytes.size.toLong())
+            val found = StringBuilder()
+
+            val output = object : ExtractorOutput {
+                override fun seekMap(seekMap: SeekMap) {}
+                override fun track(id: Int, type: Int): TrackOutput {
+                    return object : TrackOutput {
+                        override fun format(format: Format) {
+                            val meta = format.metadata
+                            if (meta != null) {
+                                for (i in 0 until meta.length()) {
+                                    val entryStr = meta[i].toString()
+                                    val fromJson = scanTextForPrompts(entryStr)
+                                    if (!fromJson.isNullOrBlank() && found.isEmpty()) {
+                                        found.append(fromJson)
+                                    } else if (found.isEmpty()) {
+                                        val t = entryStr.trim()
+                                        if (t.isNotEmpty() && (t.contains("prompt", true) || t.contains("parameters", true) || t.contains("description", true) || t.contains("comment", true))) {
+                                            found.append(t)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int {
+                            val tmp = ByteArray(min(16 * 1024, length))
+                            var remain = length
+                            var total = 0
+                            while (remain > 0) {
+                                val r = input.read(tmp, 0, min(tmp.size, remain))
+                                if (r == -1) break
+                                remain -= r
+                                total += r
+                            }
+                            return if (total == 0 && allowEndOfInput) -1 else total
+                        }
+
+                        override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
+                            data.skipBytes(length)
+                        }
+
+                        override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {}
+                    }
+                }
+                override fun endTracks() {}
+            }
+
+            val extractor: Extractor = MatroskaExtractor()
+            extractor.init(output)
+            val posHolder = PositionHolder()
+            var result: Int
+            do {
+                result = extractor.read(input, posHolder)
+            } while (result == Extractor.RESULT_CONTINUE && found.isEmpty())
+            if (found.isNotEmpty()) return found.toString()
+        } catch (_: Throwable) {
+            // ignore and fall back
         }
         return null
     }
