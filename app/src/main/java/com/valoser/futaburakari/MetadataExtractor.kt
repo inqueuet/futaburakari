@@ -62,7 +62,10 @@ object MetadataExtractor {
                 "jpg", "jpeg", "webp" -> {
                     val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
                     if (head != null) {
+                        // EXIF優先 → JPEGのAPP1(XMP)/APP13(IPTC) → テキスト走査
                         extractFromExif(head)
+                            ?: extractFromJpegAppSegments(head)
+                            ?: extractBySniff(head, uriOrUrl)
                     } else null
                 }
                 "png" -> {
@@ -231,6 +234,7 @@ object MetadataExtractor {
             return extractFromPngChunks(bytes)
         }
         extractFromExif(bytes)?.let { return it }
+        extractFromJpegAppSegments(bytes)?.let { return it }
         return scanTextForPrompts(String(bytes, StandardCharsets.UTF_8))
     }
 
@@ -330,8 +334,10 @@ object MetadataExtractor {
                     val nul = data.indexOf(0.toByte())
                     if (nul > 0) {
                         val key = String(data, 0, nul, StandardCharsets.ISO_8859_1)
-                        if (isPromptKey(key)) {
-                            val value = String(data, nul + 1, data.size - (nul + 1), StandardCharsets.ISO_8859_1)
+                        val value = String(data, nul + 1, data.size - (nul + 1), StandardCharsets.ISO_8859_1)
+                        if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                            scanXmpForPrompts(value)?.let { prompts += it }
+                        } else if (isPromptKey(key)) {
                             if (value.isNotBlank()) prompts += value
                         }
                     }
@@ -340,10 +346,12 @@ object MetadataExtractor {
                     val nul = data.indexOf(0.toByte())
                     if (nul > 0 && nul + 1 < data.size) {
                         val key = String(data, 0, nul, StandardCharsets.ISO_8859_1)
-                        if (isPromptKey(key)) {
-                            val compressed = data.copyOfRange(nul + 2, data.size)
-                            val valueBytes = decompress(compressed)
-                            val value = valueBytes.toString(StandardCharsets.UTF_8)
+                        val compressed = data.copyOfRange(nul + 2, data.size)
+                        val valueBytes = decompress(compressed)
+                        val value = valueBytes.toString(StandardCharsets.UTF_8)
+                        if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                            scanXmpForPrompts(value)?.let { prompts += it }
+                        } else if (isPromptKey(key)) {
                             if (value.isNotBlank()) prompts += value
                         }
                     }
@@ -360,7 +368,9 @@ object MetadataExtractor {
                             val textField = data.copyOfRange(p, data.size)
                             val valueBytes = if (compFlag == 1) decompress(textField) else textField
                             val value = valueBytes.toString(StandardCharsets.UTF_8)
-                            if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                            if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                                scanXmpForPrompts(value)?.let { prompts += it }
+                            } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
                         } else {
                             p = langEnd + 1
                             val transEnd = indexOfZero(data, p)
@@ -368,24 +378,163 @@ object MetadataExtractor {
                                 val textField = data.copyOfRange(p, data.size)
                                 val valueBytes = if (compFlag == 1) decompress(textField) else textField
                                 val value = valueBytes.toString(StandardCharsets.UTF_8)
-                                if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                                if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                                    scanXmpForPrompts(value)?.let { prompts += it }
+                                } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
                             } else {
                                 p = transEnd + 1
                                 if (p <= data.size) {
                                     val textField = data.copyOfRange(p, data.size)
                                     val valueBytes = if (compFlag == 1) decompress(textField) else textField
                                     val value = valueBytes.toString(StandardCharsets.UTF_8)
-                                    if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                                    if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                                        scanXmpForPrompts(value)?.let { prompts += it }
+                                    } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
                                 }
                             }
                         }
                     }
+                }
+                // C2PA: PNGのカスタムチャンク "c2pa" (JUMBF/manifest store) を簡易走査
+                // バイナリ中にJSON文字列が含まれる場合は既存のテキスト解析で拾う
+                "c2pa" -> {
+                    extractPromptFromC2paData(data)?.let { prompts += it }
                 }
                 "IEND" -> return prompts.joinToString("\n\n").ifEmpty { null }
             }
             offset += 12 + length
         }
         return prompts.joinToString("\n\n").ifEmpty { null }
+    }
+
+    private fun extractFromJpegAppSegments(bytes: ByteArray): String? {
+        // JPEGシグネチャ確認
+        if (bytes.size < 4 || bytes[0] != 0xFF.toByte() || bytes[1] != 0xD8.toByte()) return null
+        var p = 2
+        while (p + 4 <= bytes.size) {
+            if (bytes[p] != 0xFF.toByte()) { p++; continue }
+            var marker = bytes[p + 1].toInt() and 0xFF
+            p += 2
+            if (marker == 0xD9 || marker == 0xDA) break // EOI/SOS
+            if (p + 2 > bytes.size) break
+            val len = ((bytes[p].toInt() and 0xFF) shl 8) or (bytes[p + 1].toInt() and 0xFF)
+            p += 2
+            val dataLen = len - 2
+            if (p + dataLen > bytes.size || dataLen <= 0) break
+            val seg = bytes.copyOfRange(p, p + dataLen)
+            when (marker) {
+                0xE1 -> { // APP1: XMP (またはEXIF)
+                    val xmpPrefix = "http://ns.adobe.com/xap/1.0/\u0000".toByteArray(StandardCharsets.ISO_8859_1)
+                    if (seg.size > xmpPrefix.size && seg.copyOfRange(0, xmpPrefix.size).contentEquals(xmpPrefix)) {
+                        val xmpBytes = seg.copyOfRange(xmpPrefix.size, seg.size)
+                        val xmpStr = try { String(xmpBytes, StandardCharsets.UTF_8) } catch (_: Exception) { String(xmpBytes, StandardCharsets.ISO_8859_1) }
+                        scanXmpForPrompts(xmpStr)?.let { return it }
+                    }
+                }
+                0xED -> { // APP13: Photoshop IRB (IPTC)
+                    parsePhotoshopIrbForIptc(seg)?.let { return it }
+                }
+            }
+            p += dataLen
+        }
+        return null
+    }
+
+    private fun parsePhotoshopIrbForIptc(app13: ByteArray): String? {
+        val header = "Photoshop 3.0\u0000".toByteArray(StandardCharsets.ISO_8859_1)
+        if (app13.size < header.size || !app13.copyOfRange(0, header.size).contentEquals(header)) return null
+        var p = header.size
+        while (p + 12 <= app13.size) {
+            if (app13[p] != '8'.code.toByte() || app13[p + 1] != 'B'.code.toByte() || app13[p + 2] != 'I'.code.toByte() || app13[p + 3] != 'M'.code.toByte()) break
+            p += 4
+            if (p + 2 > app13.size) break
+            val resId = ((app13[p].toInt() and 0xFF) shl 8) or (app13[p + 1].toInt() and 0xFF)
+            p += 2
+            if (p >= app13.size) break
+            val nameLen = app13[p].toInt() and 0xFF
+            p += 1
+            val nameEnd = (p + nameLen).coerceAtMost(app13.size)
+            p = nameEnd
+            if ((1 + nameLen) % 2 == 1) p += 1
+            if (p + 4 > app13.size) break
+            val size = ((app13[p].toInt() and 0xFF) shl 24) or ((app13[p + 1].toInt() and 0xFF) shl 16) or ((app13[p + 2].toInt() and 0xFF) shl 8) or (app13[p + 3].toInt() and 0xFF)
+            p += 4
+            if (p + size > app13.size) break
+            val data = app13.copyOfRange(p, p + size)
+            p += size
+            if (size % 2 == 1) p += 1
+            if (resId == 0x0404) {
+                parseIptcIimForPrompt(data)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun parseIptcIimForPrompt(data: ByteArray): String? {
+        var p = 0
+        while (p + 5 <= data.size) {
+            if (data[p] != 0x1C.toByte()) { p++; continue }
+            val rec = data[p + 1].toInt() and 0xFF
+            val dset = data[p + 2].toInt() and 0xFF
+            val len = ((data[p + 3].toInt() and 0xFF) shl 8) or (data[p + 4].toInt() and 0xFF)
+            p += 5
+            if (p + len > data.size) break
+            val valueBytes = data.copyOfRange(p, p + len)
+            p += len
+            if (rec == 2 && (dset == 120 || dset == 105 || dset == 116 || dset == 122)) {
+                val str = try { String(valueBytes, StandardCharsets.UTF_8) } catch (_: Exception) { String(valueBytes, StandardCharsets.ISO_8859_1) }
+                scanTextForPrompts(str)?.let { return it }
+                if (str.isNotBlank() && !isLabely(str)) return str.trim()
+            }
+        }
+        return null
+    }
+
+    private fun scanXmpForPrompts(xmp: String): String? {
+        // 属性 prompt/parameters="..."
+        run {
+            val attrPattern = Pattern.compile("""([a-zA-Z0-9_:.\-]*?(prompt|parameters))\\s*=\\s*\"((?:\\\\.|[^\"])*)\""", Pattern.CASE_INSENSITIVE or Pattern.DOTALL)
+            val m = attrPattern.matcher(xmp)
+            if (m.find()) {
+                val v = m.group(3) ?: ""
+                if (v.isNotBlank()) return v.replace("\\\"", "\"")
+            }
+        }
+        // タグ <ns:prompt>...</ns:prompt> or <ns:parameters>...</ns:parameters>
+        run {
+            val tagPattern = Pattern.compile("""<([a-zA-Z0-9_:.\-]*?(prompt|parameters))[^>]*>([\\s\\S]*?)</[^>]+>""", Pattern.CASE_INSENSITIVE)
+            val m = tagPattern.matcher(xmp)
+            if (m.find()) {
+                val v = m.group(3) ?: ""
+                if (v.isNotBlank()) return v.trim()
+            }
+        }
+        // dc:description/rdf:Alt/rdf:li のテキスト
+        run {
+            val descPattern = Pattern.compile("<dc:description[^>]*>\\s*<rdf:Alt>\\s*<rdf:li[^>]*>([\\s\\S]*?)</rdf:li>", Pattern.CASE_INSENSITIVE)
+            val m = descPattern.matcher(xmp)
+            if (m.find()) {
+                val v = m.group(1) ?: ""
+                if (v.isNotBlank() && !isLabely(v)) return v.trim()
+            }
+        }
+        // XMP内にJSONが埋まっている可能性にも対応
+        scanTextForPrompts(xmp)?.let { return it }
+        return null
+    }
+
+    private fun extractPromptFromC2paData(data: ByteArray): String? {
+        // C2PAのmanifest storeはJUMBF/CBOR等のバイナリだが、JSON-LDが素で含まれる場合がある。
+        // 文字列化して既存のJSON/ワークフロー抽出ロジックに委譲する。
+        kotlin.run {
+            val latin = try { String(data, StandardCharsets.ISO_8859_1) } catch (_: Exception) { null }
+            if (!latin.isNullOrEmpty()) scanTextForPrompts(latin)?.let { return it }
+        }
+        kotlin.run {
+            val utf8 = try { String(data, StandardCharsets.UTF_8) } catch (_: Exception) { null }
+            if (!utf8.isNullOrEmpty()) scanTextForPrompts(utf8)?.let { return it }
+        }
+        return null
     }
 
     private fun indexOfZero(arr: ByteArray, from: Int): Int {
