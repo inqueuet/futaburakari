@@ -604,7 +604,7 @@ class DetailViewModel @Inject constructor(
                     val isNg = rules.any { r ->
                         when (r.type) {
                             RuleType.ID -> {
-                                if (id.isNullOrBlank()) false else match(id, r.pattern, r.match ?: MatchType.EXACT, ignoreCase = false)
+                                if (id.isNullOrBlank()) false else match(id, r.pattern, r.match ?: MatchType.EXACT, ignoreCase = true)
                             }
                             RuleType.BODY -> match(body, r.pattern, r.match ?: MatchType.SUBSTRING, ignoreCase = true)
                             RuleType.TITLE -> false // タイトルNGはMainActivity側で適用
@@ -637,10 +637,35 @@ class DetailViewModel @Inject constructor(
     }
 
     private fun extractIdFromHtml(html: String): String? {
-        val plain = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
-        // ID: の後ろ、空白または '(' が現れるまでをID本体として抽出
-        val m = Regex("""\bID:([^\n\r\t\s(]+)""").find(plain)
-        return m?.groupValues?.getOrNull(1)?.trim()
+        // 0) まず HTML 上で抽出（タグ境界で確実に切れる）
+        run {
+            val htmlNorm = java.text.Normalizer.normalize(
+                html
+                    .replace("\u200B", "")
+                    .replace('　', ' ')
+                    .replace('：', ':')
+                , java.text.Normalizer.Form.NFKC
+            )
+            val htmlRegex = Regex("""(?i)\bID\s*:\s*([^\s<)]+)""")
+            val hm = htmlRegex.find(htmlNorm)
+            hm?.groupValues?.getOrNull(1)?.trim()?.let { return it }
+        }
+
+        // 1) HTMLから生成したプレーンテキスト側（タグが落ちることで No. が隣接するケースに対処）
+        val plain = android.text.Html
+            .fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT)
+            .toString()
+        val normalized = java.text.Normalizer.normalize(
+            plain
+                .replace("\u200B", "")
+                .replace('　', ' ')
+                .replace('：', ':')
+            , java.text.Normalizer.Form.NFKC
+        )
+        // No. が直後に続く場合に備えて、No. 直前で打ち切る先読み
+        val plainRegex = Regex("""\b[Ii][Dd]\s*:\s*([A-Za-z0-9+/_\.-]+)(?=\s|\(|$|No\.)""")
+        val pm = plainRegex.find(normalized)
+        return pm?.groupValues?.getOrNull(1)?.trim()
     }
 
     private fun extractPlainBody(html: String): String {

@@ -77,8 +77,11 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     private lateinit var prefs: SharedPreferences
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "pref_key_ads_enabled") {
-            setupAdBanner()
+        when (key) {
+            // 広告設定の即時反映
+            "pref_key_ads_enabled" -> setupAdBanner()
+            // NGルール変更を即時反映（NgStore は DefaultSharedPreferences を使用）
+            "ng_rules_json" -> viewModel.reapplyNgFilter()
         }
     }
 
