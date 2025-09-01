@@ -27,8 +27,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 12
-        versionName = "2.3"
+        versionCode = 13
+        versionName = "2.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -39,6 +39,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Generate native debug symbols archive for Play Console (if NDK code exists)
+            // Output: app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE" // or "FULL" for full DWARF (larger)
+            }
         }
     }
 
