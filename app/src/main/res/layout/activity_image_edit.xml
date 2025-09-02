@@ -6,7 +6,7 @@
     android:layout_height="match_parent"
     tools:context=".ImageEditActivity">
 
-    <com.example.hutaburakari.ui.ZoomImageView
+    <com.valoser.futaburakari.ui.ZoomImageView
         android:id="@+id/imageView"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -16,7 +16,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <com.example.hutaburakari.ui.MosaicOverlayView
+    <com.valoser.futaburakari.ui.MosaicOverlayView
         android:id="@+id/mosaicOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -25,7 +25,7 @@
         app:layout_constraintStart_toStartOf="@id/imageView"
         app:layout_constraintEnd_toEndOf="@id/imageView" />
 
-    <com.example.hutaburakari.ui.BrushOverlayView
+    <com.valoser.futaburakari.ui.BrushOverlayView
         android:id="@+id/brushOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"

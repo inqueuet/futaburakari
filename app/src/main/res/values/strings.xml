@@ -37,6 +37,92 @@
 
     <string name="video_thumbnail">動画サムネイル</string>
 
-
     <!-- <string name="reload">Reload</string> -->
+
+    <!-- AdMob test IDs (replace in production) -->
+    <!-- Use official Google test IDs to ensure fill during dev -->
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
+    <string name="admob_banner_id">ca-app-pub-3940256099942544/6300978111</string>
+
+    <string name="history">履歴</string>
+    <string name="history_title">閲覧履歴</string>
+    <string name="settings_title">設定</string>
+    <string name="clear_history">履歴を全削除</string>
+    <string name="confirm_clear_history">履歴をすべて削除しますか？</string>
+    <string name="no_history">履歴がありません</string>
+    <string name="bg_monitor">バックグラウンド監視</string>
+    <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
+    <string name="settings_inquiry">お問合せ</string>
+
+    <!-- Settings: Display options -->
+    <string-array name="pref_grid_span_entries">
+        <item>2 列</item>
+        <item>3 列</item>
+        <item>4 列</item>
+        <item>5 列</item>
+        <item>6 列</item>
+    </string-array>
+    <string-array name="pref_grid_span_values">
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+    </string-array>
+
+    <string-array name="pref_font_scale_entries">
+        <item>小</item>
+        <item>標準</item>
+        <item>大</item>
+        <item>特大</item>
+    </string-array>
+    <string-array name="pref_font_scale_values">
+        <item>0.85</item>
+        <item>1.0</item>
+        <item>1.15</item>
+        <item>1.30</item>
+    </string-array>
+
+    <!-- Theme mode -->
+    <string-array name="pref_theme_mode_entries">
+        <item>システムに合わせる</item>
+        <item>ライト</item>
+        <item>ダーク</item>
+    </string-array>
+    <string-array name="pref_theme_mode_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+    </string-array>
+
+    <!-- Color mode -->
+    <string-array name="pref_color_mode_entries">
+        <item>グリーン</item>
+        <item>パープル</item>
+        <item>ブルー</item>
+        <item>オレンジ</item>
+    </string-array>
+    <string-array name="pref_color_mode_values">
+        <item>green</item>
+        <item>purple</item>
+        <item>blue</item>
+        <item>orange</item>
+    </string-array>
+
+    <!-- Auto cleanup limit -->
+    <string-array name="pref_auto_cleanup_entries">
+        <item>無効</item>
+        <item>1 GB</item>
+        <item>5 GB</item>
+        <item>10 GB</item>
+        <item>20 GB</item>
+    </string-array>
+    <string-array name="pref_auto_cleanup_values">
+        <item>0</item>
+        <item>1024</item>
+        <item>5120</item>
+        <item>10240</item>
+        <item>20480</item>
+    </string-array>
+
 </resources>

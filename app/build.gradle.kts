@@ -1,22 +1,34 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.dagger.hilt.android") // Hiltプラグインを追加
-    id("com.google.devtools.ksp")      // KSPプラグインを追加
+    id("com.google.dagger.hilt.android")
+    // KSP は version catalog でバージョンを管理（libs.plugins.ksp を作成）
+    alias(libs.plugins.ksp)
+    id("com.google.gms.google-services")
+}
+
+kotlin {
+    // JDK は 11 を使用（必要なら 17 にしてOK）
+    jvmToolchain(17)
+    compilerOptions {
+        // 旧 kotlinOptions { jvmTarget = "11" } の代替（deprecated解消）
+        jvmTarget.set(JvmTarget.JVM_11)
+    }
 }
 
 android {
-    namespace = "com.example.hutaburakari"
+    namespace = "com.valoser.futaburakari"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.hutaburakari"
+        applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.2"
-
+        versionCode = 15
+        versionName = "2.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -27,15 +39,20 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Generate native debug symbols archive for Play Console (if NDK code exists)
+            // Output: app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE" // or "FULL" for full DWARF (larger)
+            }
         }
     }
+
     compileOptions {
+        // Java のソース/ターゲット互換性
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
+
     buildFeatures {
         compose = true
         viewBinding = true
@@ -43,7 +60,6 @@ android {
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -61,38 +77,54 @@ dependencies {
     implementation(libs.jsoup)
     // Lifecycle-aware state collection
     implementation(libs.androidx.lifecycle.runtime.compose)
+
+    // Unified dependencies from catalog
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.recyclerview)
+    implementation(libs.google.material)
+    implementation(libs.okhttp)
+    implementation(platform(libs.okhttp.bom))
+    implementation(libs.gson)
 
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
-    implementation("com.google.android.material:material:1.11.0")
-    implementation("com.squareup.okhttp3:okhttp:5.1.0")
-    implementation("com.squareup.okhttp3:okhttp-urlconnection:5.1.0")
-    implementation("com.google.code.gson:gson:2.13.1")
-    implementation("org.jsoup:jsoup:1.21.1")
-    // implementation("com.google.code.gson:gson-extras:2.10.1") // この行を削除しました
+    // Media3 (ExoPlayer)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.extractor)
+    implementation(libs.androidx.exifinterface)
 
-    // Media3 (ExoPlayer) のライブラリを追加
-    implementation("androidx.media3:media3-exoplayer:1.8.0")
-    implementation("androidx.media3:media3-ui:1.8.0")
-    implementation("androidx.exifinterface:exifinterface:1.4.1")
+    // AndroidX Startup
+    implementation(libs.androidx.startup.runtime)
 
-    implementation("com.google.dagger:hilt-android:2.55") // バージョンを2.56.2に変更
-    ksp("com.google.dagger:hilt-compiler:2.55")      // バージョンを2.56.2に変更
-    implementation("com.github.franmontiel:PersistentCookieJar:v1.0.1")
-    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+    // Hilt
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
 
-    implementation("androidx.activity:activity-ktx:1.9.0")
-    implementation("androidx.preference:preference-ktx:1.2.1")
+    implementation(libs.androidx.swiperefreshlayout)
+    implementation(libs.androidx.activity.ktx)
+    implementation(libs.androidx.preference.ktx)
 
-    // 正しいアーティファクトID "coil-video" を使用します
-    implementation("io.coil-kt:coil-video:2.7.0")
-    implementation("io.coil-kt:coil-gif:2.7.0")
+    // Coil extensions
+    implementation(libs.coil.core)
+    implementation(libs.coil.video)
+    implementation(libs.coil.gif)
 
-    // こちらは正しい記述です
-    implementation("io.coil-kt:coil:2.7.0")
+    // Google Mobile Ads SDK (AdMob)
+    implementation(libs.play.services.ads)
 
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
+    // Hilt WorkManager integration
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
+
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+
+    // Media container parser (MP4) via version catalog
+    implementation(libs.mp4parser.isoparser)
+
+    // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

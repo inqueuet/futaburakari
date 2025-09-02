@@ -20,11 +20,17 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# PersistentCookieJarの内部データクラスSerializableCookieを難読化から除外する
-# これにより、GsonがJSONとの間で正しくシリアライズ/デシリアライズできるようになる
--keep class com.example.hutaburakari.PersistentCookieJar$SerializableCookie { *; }
--keep class com.example.hutaburakari.Bookmark { *; }
--keep class com.example.hutaburakari.cache.CachedDetails { *; }
--keep class com.example.hutaburakari.DetailContent { *; }
--keep class com.example.hutaburakari.DetailContent$* { *; }
--keep class com.example.hutaburakari.FutabaResponse { *; }
+-keep class com.valoser.futaburakari.PersistentCookieJar$SerializableCookie { *; }
+-keep class com.valoser.futaburakari.Bookmark { *; }
+-keep class com.valoser.futaburakari.cache.CachedDetails { *; }
+-keep class com.valoser.futaburakari.DetailContent { *; }
+-keep class com.valoser.futaburakari.DetailContent$* { *; }
+-keep class com.valoser.futaburakari.HistoryEntry { *; }
+-keep class ** extends androidx.work.ListenableWorker
+
+# OkHttp クラスの保持（内部実装含む）
+-keep class okhttp3.** { *; }
+-dontwarn okhttp3.**
+
+# Kotlin関連
+-dontwarn kotlin.**

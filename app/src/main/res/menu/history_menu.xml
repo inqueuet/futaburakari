@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_clear_history"
+        android:title="@string/clear_history"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_toggle_unread_only"
+        android:title="未読のみ表示"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_sort_mode"
+        android:title="並び替え"
+        app:showAsAction="never">
+        <menu>
+            <item android:id="@+id/sort_mixed" android:title="混合（未読優先）" />
+            <item android:id="@+id/sort_updated" android:title="更新時刻順" />
+            <item android:id="@+id/sort_viewed" android:title="閲覧時刻順" />
+            <item android:id="@+id/sort_unread" android:title="未読数順" />
+        </menu>
+    </item>
+
+</menu>
+

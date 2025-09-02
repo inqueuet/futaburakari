@@ -1,5 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="表示設定">
+
+        <ListPreference
+            app:key="pref_key_grid_span"
+            app:title="グリッド列数"
+            app:entries="@array/pref_grid_span_entries"
+            app:entryValues="@array/pref_grid_span_values"
+            app:defaultValue="4"
+            app:summary="%s 列" />
+
+        <ListPreference
+            app:key="pref_key_font_scale"
+            app:title="フォントサイズ"
+            app:entries="@array/pref_font_scale_entries"
+            app:entryValues="@array/pref_font_scale_values"
+            app:defaultValue="1.0"
+            app:summary="現在: %s" />
+
+        <ListPreference
+            app:key="pref_key_theme_mode"
+            app:title="テーマモード"
+            app:entries="@array/pref_theme_mode_entries"
+            app:entryValues="@array/pref_theme_mode_values"
+            app:defaultValue="system"
+            app:summary="%s" />
+
+        <ListPreference
+            app:key="pref_key_color_mode"
+            app:title="カラーモード"
+            app:entries="@array/pref_color_mode_entries"
+            app:entryValues="@array/pref_color_mode_values"
+            app:defaultValue="green"
+            app:summary="%s" />
+
+        <Preference
+            app:key="pref_key_manage_title_ng"
+            app:title="スレタイNG管理"
+            app:summary="カタログのスレッドタイトルに対するNGを設定します" />
+
+    </PreferenceCategory>
 
     <PreferenceCategory app:title="投稿設定">
 
@@ -19,6 +61,53 @@
             app:title="キャッシュを削除"
             app:summary="画像とスレッド内容のキャッシュをすべて削除します。" />
 
+        <ListPreference
+            app:key="pref_key_auto_cleanup_limit_mb"
+            app:title="自動クリーンアップ上限"
+            app:entries="@array/pref_auto_cleanup_entries"
+            app:entryValues="@array/pref_auto_cleanup_values"
+            app:defaultValue="0"
+            app:summary="%s" />
+
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="広告表示">
+
+        <SwitchPreferenceCompat
+            app:key="pref_key_ads_enabled"
+            app:title="広告を表示"
+            app:summary="Detail画面下部にバナー広告を固定表示します"
+            app:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="バックグラウンド">
+        <SwitchPreferenceCompat
+            app:key="pref_key_bg_monitor_enabled"
+            app:title="@string/bg_monitor"
+            app:summary="@string/bg_monitor_summary"
+            app:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="その他">
+
+        <Preference
+            app:key="pref_key_privacy_policy"
+            app:title="プライバシーポリシー">
+            <intent
+                android:action="android.intent.action.VIEW"
+                android:data="https://note.com/inqueuet/n/nb86f8e3f405a" />
+        </Preference>
+
+        <Preference
+            app:key="pref_key_inquiry"
+            app:title="@string/settings_inquiry">
+            <intent
+                android:action="android.intent.action.SENDTO"
+                android:data="mailto:admin@inqueuet.com" />
+        </Preference>
+
+    </PreferenceCategory>
+      
 </PreferenceScreen>
