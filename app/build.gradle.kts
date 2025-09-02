@@ -27,8 +27,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.6"
+        versionCode = 21
+        versionName = "3.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -89,7 +89,7 @@ dependencies {
     // Media3 (ExoPlayer)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
-    implementation(libs.androidx.media3.extractor)
+    // extractor is no longer needed (video prompt parsing removed)
     implementation(libs.androidx.exifinterface)
 
     // AndroidX Startup
@@ -121,8 +121,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
 
-    // Media container parser (MP4) via version catalog
-    implementation(libs.mp4parser.isoparser)
+    // MP4 parser removed (video prompt parsing removed)
 
     // Testing
     testImplementation(libs.junit)
