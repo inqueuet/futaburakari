@@ -26,6 +26,12 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import android.widget.TextView
 import com.valoser.futaburakari.databinding.ActivityMainBinding
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import com.valoser.futaburakari.ui.compose.MainCatalogScreen
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import dagger.hilt.android.AndroidEntryPoint
 import com.google.gson.Gson
 import dagger.hilt.android.EntryPointAccessors
@@ -59,15 +65,15 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "pref_key_grid_span" -> {
-                val newSpan = getGridSpanCount()
-                if (::gridLayoutManager.isInitialized) {
-                    gridLayoutManager.spanCount = newSpan
-                    binding.recyclerView.requestLayout()
-                }
+                spanCountState.intValue = getGridSpanCount()
             }
             "pref_key_font_scale" -> {
                 // Recreate to apply new font scale immediately
                 recreate()
+            }
+            // NGルール変更（設定画面など）
+            "ng_rules_json" -> {
+                ngRulesState.value = ngStore.getRules()
             }
         }
     }
@@ -93,6 +99,12 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private var bottomPullAccumulatedPx: Int = 0
     private var lastBottomPullAtMs: Long = 0L
     private val ngStore by lazy { NgStore(this) }
+    // Compose UI state
+    private val spanCountState = mutableIntStateOf(4)
+    private val toolbarSubtitleState = mutableStateOf("")
+    private val isLoadingState = mutableStateOf(false)
+    private val itemsState = mutableStateOf<List<ImageItem>>(emptyList())
+    private val ngRulesState = mutableStateOf<List<NgRule>>(emptyList())
 
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -119,22 +131,41 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
-        setSupportActionBar(binding.toolbar)
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val sys = WindowInsetsCompat.Type.statusBars()
-                val top = insets.getInsets(sys).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                WindowInsetsCompat.CONSUMED
+        // Compose用初期化
+        spanCountState.intValue = getGridSpanCount()
+        ngRulesState.value = ngStore.getRules()
+
+        // Compose UI
+        setContent {
+            FutaburakariTheme {
+                MainCatalogScreen(
+                    title = getString(R.string.app_name),
+                    subtitle = toolbarSubtitleState.value,
+                    items = itemsState.value,
+                    isLoading = isLoadingState.value,
+                    spanCount = spanCountState.intValue,
+                    query = currentQuery.orEmpty(),
+                    onQueryChange = { q -> currentQuery = q },
+                    onReload = {
+                        cancelAutoUpdate()
+                        fetchDataForCurrentUrl()
+                        Toast.makeText(this, getString(R.string.reloading), Toast.LENGTH_SHORT).show()
+                    },
+                    onSelectBookmark = { showBookmarkSelectionDialog() },
+                    onManageBookmarks = {
+                        val intent = Intent(this, BookmarkActivity::class.java)
+                        bookmarkActivityResultLauncher.launch(intent)
+                    },
+                    onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
+                    onOpenHistory = { startActivity(Intent(this, HistoryActivity::class.java)) },
+                    onImageEdit = { startActivity(Intent(this, ImagePickerActivity::class.java)) },
+                    onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
+                    onItemClick = { item -> handleItemClick(item) },
+                    ngRules = ngRulesState.value,
+                )
             }
         }
-        enableToolbarMultiline()
 
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
@@ -142,31 +173,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         // 端末再起動後も catset 適用済みボードをスキップできるように永続化されたセットを読み込み
         restoreAppliedBoards()
 
-        setupRecyclerView()
-        setupAutoUpdateScroll() // 自動更新機能のセットアップ
         observeViewModel()
-        setupClickListener()
-
-        // スワイプインジケータを中央に配置
-        configureSwipeRefreshIndicatorPosition()
-
-        // スワイプ更新のリスナーを設定
-        binding.swipeRefreshLayout.setOnRefreshListener {
-            cancelAutoUpdate()
-            syncLoadingUi()
-            fetchDataForCurrentUrl()
-        }
-
         loadAndFetchInitialData()
-
-        // Apply bottom system bar insets to RecyclerView padding
-        val rv = binding.recyclerView
-        val originalPaddingBottom = rv.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(rv) { v, insets ->
-            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, originalPaddingBottom + sys.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
     }
 
     override fun onDestroy() {
@@ -175,7 +183,6 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         }
         // 遅延実行の取り消し（画面破棄後に走らないように）
-        autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
         autoUpdateRunnable = null
         isAutoUpdateEnabled = false
         setAutoUpdateIndicator(false)
@@ -183,8 +190,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     override fun onResume() {
         super.onResume()
-        // 設定でのNG変更を反映
-        filterImages(currentQuery)
+        // 設定でのNG変更を反映（Composeへ）
+        ngRulesState.value = ngStore.getRules()
     }
 
     private fun configureSwipeRefreshIndicatorPosition() {
@@ -420,7 +427,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun loadAndFetchInitialData() {
         currentSelectedUrl = BookmarkManager.getSelectedBookmarkUrl(this)
-        binding.toolbar.subtitle = getCurrentBookmarkName()
+        toolbarSubtitleState.value = getCurrentBookmarkName()
         fetchDataForCurrentUrl()
     }
 
@@ -651,7 +658,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             .setAdapter(adapter) { dialog, which ->
                 val selectedBookmark = bookmarks[which]
                 currentSelectedUrl = selectedBookmark.url
-                binding.toolbar.subtitle = selectedBookmark.name
+                toolbarSubtitleState.value = selectedBookmark.name
                 BookmarkManager.saveSelectedBookmarkUrl(this, selectedBookmark.url)
                 fetchDataForCurrentUrl()
                 dialog.dismiss()
@@ -730,24 +737,20 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { isLoading ->
             lastIsLoading = isLoading
-            if (!isLoading) binding.swipeRefreshLayout.isRefreshing = false
-            syncLoadingUi()
+            isLoadingState.value = isLoading
         }
 
         viewModel.images.observe(this) { items ->
-            // 取得完了時は確実にリフレッシュ終了
-            binding.swipeRefreshLayout.isRefreshing = false
-            syncLoadingUi()
+            // Compose UIへ反映
             setAutoUpdateIndicator(false)
             allItems = items
-            // ユーザー入力中の検索クエリを維持
-            filterImages(currentQuery)
+            itemsState.value = items
 
             // いったん既存プリフェッチを止める
             prefetchJob?.cancel()
 
             // レイアウトが確定してから可視範囲を算出
-            binding.recyclerView.post {
+            /*binding.recyclerView.post {
                 prefetchJob = lifecycleScope.launch {
                     // 画面に表示されるおおよその件数（縦4行分）
                     val span = gridLayoutManager.spanCount           // 例: 4
@@ -785,25 +788,54 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
                             delay(50)
                         }
                 }
-            }
+            }*/
         }
 
         viewModel.error.observe(this) { errorMessage ->
-            // エラー時も確実にリフレッシュ終了
-            binding.swipeRefreshLayout.isRefreshing = false
-            syncLoadingUi()
+            // エラー時の表示
             setAutoUpdateIndicator(false)
             Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
         }
     }
 
     private fun cancelAutoUpdate() {
-        autoUpdateRunnable?.let { binding.recyclerView.removeCallbacks(it) }
+        // RecyclerViewコールバックはComposeでは不要
         autoUpdateRunnable = null
         isAutoUpdateEnabled = false
         setAutoUpdateIndicator(false)
     }
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
+    }
+
+    private fun handleItemClick(item: ImageItem) {
+        val baseUrlString = currentSelectedUrl
+        val imageUrlString: String = item.fullImageUrl ?: item.previewUrl
+
+        if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
+            try {
+                val absoluteUrl = URL(URL(baseUrlString), imageUrlString).toString()
+                Log.d("MainActivity_Prefetch", "Resolved absolute URL: $absoluteUrl")
+
+                val imageLoader = this.imageLoader
+                val request = ImageRequest.Builder(this)
+                    .data(absoluteUrl)
+                    .lifecycle(lifecycle = null)
+                    .build()
+                imageLoader.enqueue(request)
+            } catch (e: Exception) {
+                Log.e(
+                    "MainActivity_Prefetch",
+                    "Prefetch failed for base:'$baseUrlString', image:'$imageUrlString'",
+                    e
+                )
+            }
+        }
+
+        val intent = Intent(this, DetailActivity::class.java).apply {
+            putExtra(DetailActivity.EXTRA_URL, item.detailUrl)
+            putExtra(DetailActivity.EXTRA_TITLE, item.title)
+        }
+        startActivity(intent)
     }
 }

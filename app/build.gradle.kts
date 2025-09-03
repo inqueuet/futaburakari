@@ -68,6 +68,10 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    // Compose Foundation (LazyVerticalGrid など)
+    implementation("androidx.compose.foundation:foundation")
+    // Material Icons
+    implementation("androidx.compose.material:material-icons-extended")
 
     // ViewModel for Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose.android)
