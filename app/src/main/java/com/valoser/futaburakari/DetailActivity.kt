@@ -21,6 +21,7 @@ import androidx.lifecycle.Observer
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.valoser.futaburakari.databinding.ActivityDetailBinding
+import androidx.activity.compose.setContent
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
@@ -36,6 +37,7 @@ import com.google.android.gms.ads.LoadAdError
 
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
+import com.valoser.futaburakari.ui.detail.DetailScreenHybrid
 
 @AndroidEntryPoint
 class DetailActivity : BaseActivity(), SearchManagerCallback {
@@ -103,7 +105,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityDetailBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        // Switch to Compose container; embed the legacy XML via AndroidView
+        setContent { DetailScreenHybrid(binding) }
 
         // ★ ここですぐに初期化
         scrollStore = ScrollPositionStore(this)
