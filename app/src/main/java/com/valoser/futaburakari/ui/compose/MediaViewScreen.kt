@@ -6,6 +6,9 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -38,6 +41,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,8 +52,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import coil.load
-import com.valoser.futaburakari.widget.ZoomableImageView
+import coil.compose.AsyncImage
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
@@ -156,23 +161,11 @@ fun MediaViewScreen(
 private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(12.dp)) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
-            AndroidView(
+            ZoomableAsyncImage(
+                model = url,
                 modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    ZoomableImageView(ctx).apply {
-                        minScale = 1.0f
-                        midScale = 2.5f
-                        maxScale = 5.0f
-                        if (!url.isNullOrBlank()) {
-                            this.load(url)
-                        }
-                    }
-                },
-                update = { iv ->
-                    if (!url.isNullOrBlank()) {
-                        iv.load(url)
-                    }
-                }
+                minScale = 1f,
+                maxScale = 5f,
             )
         }
     }
@@ -228,4 +221,45 @@ private fun buildDefaultFileName(text: String?): String {
     val timestamp = sdf.format(java.util.Date())
     val textHint = (text ?: "text").take(15).replace(Regex("[^a-zA-Z0-9_]"), "_")
     return "${textHint}_$timestamp"
+}
+
+@Composable
+private fun ZoomableAsyncImage(
+    model: Any?,
+    modifier: Modifier = Modifier,
+    minScale: Float = 1f,
+    maxScale: Float = 5f
+) {
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val state = rememberTransformableState { zoomChange, panChange, _ ->
+        val newScale = (scale * zoomChange).coerceIn(minScale, maxScale)
+        scale = newScale
+        // パンは必要に応じてクランプ可能（ここでは無制限）
+        offset += panChange
+    }
+
+    AsyncImage(
+        model = model,
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = modifier
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offset.x,
+                translationY = offset.y,
+            )
+            .transformable(state)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        // シンプルなトグルズーム
+                        val mid = (minScale + maxScale) / 2f
+                        scale = if (scale < mid) mid else 1f
+                        offset = Offset.Zero
+                    }
+                )
+            }
+    )
 }
