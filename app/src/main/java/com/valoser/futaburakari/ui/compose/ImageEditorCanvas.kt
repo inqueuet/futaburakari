@@ -101,30 +101,29 @@ fun ImageEditorCanvas(
         return lengthInImagePx * zoom
     }
 
-    fun imageRectInView(): android.graphics.RectF {
-        val rect = android.graphics.RectF(0f, 0f, imgW, imgH)
-        buildMatrix().mapRect(rect)
-        return rect
-    }
-
     fun clampOffset() {
         if (viewSize.width == 0 || viewSize.height == 0) return
         val vw = viewSize.width.toFloat()
         val vh = viewSize.height.toFloat()
-        val rect = imageRectInView()
+        val left = offset.x
+        val top = offset.y
+        val width = imgW * zoom
+        val height = imgH * zoom
+        val right = left + width
+        val bottom = top + height
         var dx = 0f
         var dy = 0f
-        if (rect.width() <= vw) {
-            dx = vw * 0.5f - (rect.left + rect.right) * 0.5f
+        if (width <= vw) {
+            dx = vw * 0.5f - (left + right) * 0.5f
         } else {
-            if (rect.left > 0) dx = -rect.left
-            if (rect.right < vw) dx = vw - rect.right
+            if (left > 0) dx = -left
+            if (right < vw) dx = vw - right
         }
-        if (rect.height() <= vh) {
-            dy = vh * 0.5f - (rect.top + rect.bottom) * 0.5f
+        if (height <= vh) {
+            dy = vh * 0.5f - (top + bottom) * 0.5f
         } else {
-            if (rect.top > 0) dy = -rect.top
-            if (rect.bottom < vh) dy = vh - rect.bottom
+            if (top > 0) dy = -top
+            if (bottom < vh) dy = vh - bottom
         }
         if (dx != 0f || dy != 0f) {
             offset = Offset(offset.x + dx, offset.y + dy)
@@ -133,7 +132,7 @@ fun ImageEditorCanvas(
 
     // Pinch/drag transform centered at gesture centroid
     val transformGestureModifier = if (!locked) {
-        Modifier.pointerInput(locked, zoom, offset, minZoom, maxZoom) {
+        Modifier.pointerInput(locked) {
             detectTransformGestures { centroid, pan, gestureZoom, _ ->
                 var target = (zoom * gestureZoom).coerceIn(minZoom, maxZoom)
                 val factor = if (zoom != 0f) target / zoom else 1f
@@ -142,14 +141,14 @@ fun ImageEditorCanvas(
                 zoom = target
                 // Apply pan after zoom
                 offset += pan
+                // Defer heavy work; clamping is cheap now but still avoid extra invalidations
                 clampOffset()
-                overlayTick++
             }
         }
     } else Modifier
 
     // Double-tap to toggle zoom at tap position
-    val doubleTapModifier = Modifier.pointerInput(locked, zoom, minZoom) {
+    val doubleTapModifier = Modifier.pointerInput(locked) {
         detectTapGestures(
             onDoubleTap = { pos ->
                 if (!locked) {
@@ -159,7 +158,6 @@ fun ImageEditorCanvas(
                     offset = (offset - pos) * factor + pos
                     zoom = target
                     clampOffset()
-                    overlayTick++
                 }
             }
         )
@@ -167,7 +165,7 @@ fun ImageEditorCanvas(
 
     // Drawing gestures when locked and tool active
     val drawGestureModifier = if (locked && (toolName == "MOSAIC" || toolName == "ERASER")) {
-        Modifier.pointerInput(locked, toolName, brushSizePx, zoom, offset) {
+        Modifier.pointerInput(locked, toolName, brushSizePx) {
             detectDragGestures(
                 onDragStart = { pos ->
                     val pImg = invertToImage(pos)
@@ -217,19 +215,12 @@ fun ImageEditorCanvas(
         // read tick to recompose when overlay or matrix changes
         val tick = overlayTick
         if (tick < 0) { /* read state no-op */ }
-        // Draw base image using Compose primitives for reliability
-        withTransform({
-            scale(zoom, zoom)
-            translate(offset.x, offset.y)
-        }) {
-            drawImage(imageBitmap)
-        }
-
-        // Draw mosaic overlay through Android Canvas (engine API)
+        // Draw base image and overlay using the exact same matrix
         drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
             native.save()
             native.concat(buildMatrix())
+            native.drawBitmap(bitmap, 0f, 0f, null)
             engine?.drawMosaicWithMask(native)
             native.restore()
         }
