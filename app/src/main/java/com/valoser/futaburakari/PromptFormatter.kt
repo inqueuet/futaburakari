@@ -174,6 +174,7 @@ object PromptFormatter {
         appendIfExists(settings, "Sampler", json, "sampler", "Sampler")
         appendIfExists(settings, "CFG", json, "scale", "guidance_scale")
         appendIfExists(settings, "Seed", json, "seed")
+        appendIfExists(settings, "Software", json, "software")
 
         val w = json.optInt("width", -1)
         val h = json.optInt("height", -1)
@@ -183,6 +184,13 @@ object PromptFormatter {
 
         appendIfExists(settings, "Model", json, "Model", "model")
         appendIfExists(settings, "Model hash", json, "Model hash", "model_hash")
+
+        // Tensor.Art 対応: modelid からURLを生成
+        val modelId = json.optString("modelid", null) ?: json.optString("model_id", null)
+        if (!modelId.isNullOrBlank()) {
+            settings["Model ID"] = modelId
+            settings.putIfAbsent("Model URL", "https://tensor.art/models/$modelId")
+        }
 
         return PromptViewData(positive, negative, settings)
     }

@@ -383,19 +383,7 @@ class DetailViewModel @Inject constructor(
                     sendJobs.add(job)
                 }
                 is DetailContent.Video -> {
-                    val job = viewModelScope.async(limitedIO) {
-                        val prompt = try {
-                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.videoUrl, networkClient) }
-                        } catch (e: Exception) {
-                            Log.e("DetailViewModel", "Metadata task error for ${content.videoUrl}", e)
-                            null
-                        }
-                        if (prompt == null) {
-                            Log.w("DetailViewModel", "Metadata for ${content.videoUrl} was null (timeout or null)")
-                        }
-                        updates.send(content.id to prompt)
-                    }
-                    sendJobs.add(job)
+                    // 動画のプロンプト取得は廃止
                 }
                 else -> {}
             }

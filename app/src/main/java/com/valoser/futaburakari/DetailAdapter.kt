@@ -760,7 +760,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             }
         }
 
-        // 折りたたみ/展開の簡易ヘルパ（TextView内完結）
+        // 折りたたみ/展開の簡易ヘルパ（画像のプロンプト用）
         private fun setPromptWithToggle(tv: TextView, content: CharSequence, maxLines: Int = 8) {
             tv.text = content
             tv.visibility = View.VISIBLE
@@ -782,7 +782,6 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
         private val thumb: ImageView = view.findViewById(R.id.videoThumbView)
         private val spinner: View?   = view.findViewById(R.id.videoLoadingSpinner)
-        private val promptView: TextView? = view.findViewById(R.id.promptTextView)
 
         fun bind(item: DetailContent.Video) {
             // --- サムネローディング ---
@@ -828,76 +827,14 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
                 val i = Intent(ctx, MediaViewActivity::class.java).apply {
                     putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_VIDEO)
                     putExtra(MediaViewActivity.EXTRA_URL, item.videoUrl)
-                    putExtra(MediaViewActivity.EXTRA_TEXT, item.prompt)
                 }
                 ctx.startActivity(i)
             }
 
-            // --- プロンプト表示 ---
-            promptView?.let { tv ->
-                val raw = item.prompt.orEmpty()
-                if (raw.isNotEmpty()) {
-                    val promptRaw = raw
-                    val pd = PromptFormatter.parse(raw)
-                    if (pd != null) {
-                        val pretty = PromptFormatter.toSpannable(pd)
-                        setPromptWithToggle(tv, pretty, maxLines = 8)
-                    } else {
-                        // フォールバック：生テキストにファイル名スパン
-                        val sp = SpannableString(raw)
-                        val m = fileNamePattern.matcher(raw)
-                        while (m.find()) {
-                            val file = m.group(1) ?: continue
-                            val s = m.start()
-                            val e = m.end()
-                            if (s >= 0 && e <= sp.length) {
-                                val span = object : ClickableSpan() {
-                                    override fun onClick(widget: View) {
-                                        onQuoteClickListener?.invoke(file)
-                                    }
-                                }
-                                sp.setSpan(span, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                            }
-                        }
-                        tv.movementMethod = LinkMovementMethod.getInstance()
-                        setPromptWithToggle(tv, sp, maxLines = 8)
-                    }
-
-                    tv.visibility = View.VISIBLE
-
-                    // シングル＝折りたたみ/展開、ダブル＝全文ビューア
-                    tv.setSingleAndDoubleClickListener(
-                        onSingleClick = {
-                            val collapsed = tv.maxLines != Int.MAX_VALUE
-                            tv.maxLines = if (collapsed) Int.MAX_VALUE else 8
-                            val again = pd?.let { PromptFormatter.toSpannable(it) } ?: tv.text
-                            tv.text = again
-                        },
-                        onDoubleClick = {
-                            val ctx = tv.context
-                            val i = Intent(ctx, MediaViewActivity::class.java).apply {
-                                putExtra(MediaViewActivity.EXTRA_TYPE, MediaViewActivity.TYPE_TEXT)
-                                putExtra(MediaViewActivity.EXTRA_TEXT, promptRaw) // ★ raw を固定で渡す
-                            }
-                            ctx.startActivity(i)
-                        }
-                    )
-                } else {
-                    tv.text = ""
-                    tv.visibility = View.GONE
-                }
-            }
+            // プロンプト表示は廃止
         }
 
-        private fun setPromptWithToggle(tv: TextView, content: CharSequence, maxLines: Int = 8) {
-            tv.text = content
-            tv.visibility = View.VISIBLE
-            tv.post {
-                val needsFold = tv.lineCount > maxLines
-                if (!needsFold) return@post
-                tv.maxLines = maxLines
-            }
-        }
+        // 動画ではプロンプトを表示しないため不要
     }
 
     class ThreadEndTimeViewHolder(

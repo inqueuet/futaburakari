@@ -36,8 +36,7 @@ class MediaViewActivity : BaseActivity() {
 
     private var currentType: String? = null
     private var currentUrl: String? = null
-    private var currentText: String? = null // プロンプトやテキスト用
-    private var currentPrompt: String? = null // 念のためプロンプトも保持
+    private var currentText: String? = null // テキスト用（画像メタ/明示テキスト）
 
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
@@ -46,8 +45,7 @@ class MediaViewActivity : BaseActivity() {
     companion object {
         const val EXTRA_TYPE = "EXTRA_TYPE"
         const val EXTRA_URL = "EXTRA_URL"
-        const val EXTRA_TEXT = "EXTRA_TEXT" // プロンプトや一般的なテキスト表示用
-        const val EXTRA_PROMPT = "EXTRA_PROMPT" // DetailAdapterからのプロンプト専用 (オプション)
+        const val EXTRA_TEXT = "EXTRA_TEXT" // テキスト表示用
         const val TYPE_IMAGE = "image"
         const val TYPE_VIDEO = "video"
         const val TYPE_TEXT = "text" // プロンプト表示用
@@ -57,7 +55,7 @@ class MediaViewActivity : BaseActivity() {
     private val createTextFileLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri: Uri? ->
         uri?.let {
             // Handle the URI for the created file (e.g., write text to it)
-            val textToSave = currentText ?: currentPrompt ?: ""
+            val textToSave = currentText ?: ""
             if (textToSave.isNotEmpty()) {
                 try {
                     contentResolver.openOutputStream(it)?.use { outputStream ->
@@ -95,8 +93,7 @@ class MediaViewActivity : BaseActivity() {
 
         currentType = intent.getStringExtra(EXTRA_TYPE)
         currentUrl = intent.getStringExtra(EXTRA_URL)
-        currentText = intent.getStringExtra(EXTRA_TEXT) // プロンプトはこちらで受け取ることを想定
-        currentPrompt = intent.getStringExtra(EXTRA_PROMPT) // DetailAdapterからはこちらで渡される可能性も考慮
+        currentText = intent.getStringExtra(EXTRA_TEXT)
 
         when (currentType) {
             TYPE_IMAGE -> {
@@ -128,18 +125,7 @@ class MediaViewActivity : BaseActivity() {
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = true
                 binding.textView.isVisible = false
-                currentUrl?.let {
-                    initializePlayer(it)
-                    // Try extracting prompt/metadata in background
-                    lifecycleScope.launch {
-                        val prompt = MetadataExtractor.extract(this@MediaViewActivity, it, networkClient)
-                        if (!prompt.isNullOrBlank()) {
-                            currentText = prompt
-                            supportActionBar?.subtitle = prompt
-                            invalidateOptionsMenu()
-                        }
-                    }
-                }
+                currentUrl?.let { initializePlayer(it) }
                 supportActionBar?.title = "動画ビューア"
                 currentText?.let { supportActionBar?.subtitle = it }
             }
@@ -148,7 +134,7 @@ class MediaViewActivity : BaseActivity() {
                 binding.imageView.isVisible = false
                 binding.playerView.isVisible = false
                 binding.textView.isVisible = true
-                binding.textView.text = currentText ?: currentPrompt ?: "テキストがありません"
+                binding.textView.text = currentText ?: "テキストがありません"
                 supportActionBar?.title = "テキストビューア"
             }
             else -> {
@@ -189,7 +175,7 @@ class MediaViewActivity : BaseActivity() {
             }
             TYPE_IMAGE, TYPE_VIDEO -> {
                 // copy_text can be visible if there's a prompt/text associated with image/video
-                val hasTextContent = !(currentText.isNullOrEmpty() && currentPrompt.isNullOrEmpty())
+                val hasTextContent = !currentText.isNullOrEmpty()
                 menu.findItem(R.id.action_copy_text)?.isVisible = hasTextContent
                 menu.findItem(R.id.action_save_text)?.isVisible = false // Text save only for TYPE_TEXT
                 menu.findItem(R.id.action_save_media)?.isVisible = true
@@ -213,8 +199,8 @@ class MediaViewActivity : BaseActivity() {
             }
             R.id.action_save_text -> {
                 val defaultName = buildDefaultFileName()
-                // Ensure currentText or currentPrompt is not null before launching
-                if (currentText != null || currentPrompt != null) {
+                // Ensure currentText is not null before launching
+                if (!currentText.isNullOrEmpty()) {
                     createTextFileLauncher.launch("$defaultName.txt")
                 } else {
                     Toast.makeText(this, "保存するテキストがありません", Toast.LENGTH_SHORT).show()
@@ -234,7 +220,7 @@ class MediaViewActivity : BaseActivity() {
     }
 
     private fun copyTextToClipboard() {
-        val textToCopy = currentText ?: currentPrompt
+        val textToCopy = currentText
         if (!textToCopy.isNullOrEmpty()) {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Copied Content", textToCopy)
@@ -294,7 +280,7 @@ class MediaViewActivity : BaseActivity() {
         val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
         val timestamp = sdf.format(Date())
         // You can use a portion of the text content if available, sanitized for filename
-        val textHint = (currentText ?: currentPrompt)?.take(15)?.replace(Regex("[^a-zA-Z0-9_]"), "_") ?: "text"
+        val textHint = (currentText)?.take(15)?.replace(Regex("[^a-zA-Z0-9_]"), "_") ?: "text"
         return "${textHint}_$timestamp"
     }
 

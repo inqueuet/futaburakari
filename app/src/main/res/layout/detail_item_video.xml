@@ -44,14 +44,6 @@
         app:show_buffering="when_playing"
         app:surface_type="none" />
 
-    <TextView
-        android:id="@+id/promptTextView"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:background="#11000000"
-        android:textAppearance="?attr/textAppearanceBody2"
-        android:visibility="gone"
-        android:textIsSelectable="true" />
+    <!-- プロンプト表示は廃止のため削除済み -->
 
 </LinearLayout>

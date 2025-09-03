@@ -29,7 +29,6 @@
     <string name="prompt_info_not_found">Prompt information not found.</string>
     <string name="copy_prompt">プロンプトをコピー</string>
 
-    <string name="scroll_back">直前まで戻る</string>
     <string name="image">画像</string>
     <string name="edited_image">編集中の画像</string>
     <string name="save_success">画像を保存しました</string>
