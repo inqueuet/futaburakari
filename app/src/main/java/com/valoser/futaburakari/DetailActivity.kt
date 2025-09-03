@@ -39,6 +39,8 @@ import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
 import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 @AndroidEntryPoint
 class DetailActivity : BaseActivity(), SearchManagerCallback {
@@ -104,6 +106,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     private var toolbarTitleText: String = ""
+    private val bottomOffsetFlowInternal = MutableStateFlow(0)
+    private val bottomOffsetFlow = bottomOffsetFlowInternal.asStateFlow()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -130,6 +134,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     onOpenMedia = { showMediaList() },
                     onSubmitSearch = { q -> detailSearchManager.performSearch(q) },
                     onClearSearch = { detailSearchManager.clearSearch() },
+                    searchStateFlow = detailSearchManager.searchState,
+                    onSearchPrev = { detailSearchManager.navigateToPrevHit() },
+                    onSearchNext = { detailSearchManager.navigateToNextHit() },
+                    bottomOffsetPxFlow = bottomOffsetFlow,
                 )
             }
         }
@@ -155,13 +163,18 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
         // DetailSearchManager は (binding, callback) で生成
         detailSearchManager = DetailSearchManager(binding, this)
-        detailSearchManager.setupSearchNavigation()
+        // 旧ナビUIはレイアウト高さ確保のみ使い、表示はComposeに置換
+        binding.searchUpButton.apply { alpha = 0f; isEnabled = false; isClickable = false }
+        binding.searchDownButton.apply { alpha = 0f; isEnabled = false; isClickable = false }
+        binding.searchResultsCountText.apply { alpha = 0f }
 
         // bottom_container（検索ナビ + 広告）の高さ変化に追従してRecyclerViewの下パディングを更新
         binding.bottomContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateRecyclerBottomPadding()
             // 検索UIや広告の高さが変わったときに、ヒット項目が隠れないよう再吸着
             detailSearchManager.realignToCurrentHitIfActive()
+            // Compose 側のオフセットにも反映（重なり回避）
+            bottomOffsetFlowInternal.value = binding.bottomContainer.height
         }
 
         observeViewModel()
@@ -501,8 +514,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 withContext(kotlinx.coroutines.Dispatchers.Main) { plainTextCache = cache }
             }
 
-            // （必要なら）検索ナビの表示切替
-            binding.searchNavigationControls.isVisible = detailSearchManager.isSearchActive()
+            // 検索ナビの表示切替は DetailSearchManager.performSearch/clearSearch に委譲
 
             // suppressNextRestoreフラグのリセットのみ残す
             if (suppressNextRestore) {

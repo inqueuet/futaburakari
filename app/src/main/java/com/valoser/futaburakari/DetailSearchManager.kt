@@ -5,6 +5,8 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.appcompat.widget.SearchView
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.valoser.futaburakari.databinding.ActivityDetailBinding // Bindingクラス名は実際のプロジェクトに合わせてください
@@ -31,6 +33,15 @@ class DetailSearchManager(
     private var currentSearchQuery: String? = null
     private val searchResultPositions = mutableListOf<Int>()
     private var currentSearchHitIndex = -1
+
+    data class SearchState(
+        val active: Boolean,
+        val currentIndexDisplay: Int, // 1-based, 0 if none
+        val total: Int
+    )
+
+    private val _searchState = MutableStateFlow(SearchState(active = false, currentIndexDisplay = 0, total = 0))
+    val searchState: StateFlow<SearchState> = _searchState
 
     fun setupSearch(menu: Menu) {
         val searchItem = menu.findItem(R.id.action_search)
@@ -190,6 +201,12 @@ class DetailSearchManager(
             ""
         }
         binding.searchResultsCountText.text = countText
+
+        // Flow にも反映（Compose用）
+        val active = searchResultPositions.isNotEmpty() && currentSearchQuery != null
+        val currentDisp = if (active && currentSearchHitIndex in searchResultPositions.indices) currentSearchHitIndex + 1 else 0
+        val total = searchResultPositions.size
+        _searchState.value = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)
     }
 
     fun isSearchActive(): Boolean {
@@ -212,5 +229,20 @@ class DetailSearchManager(
             return true // バックキーイベントを消費したことを示す
         }
         return false // SearchViewが閉じていれば、通常のバックキー処理
+    }
+
+    // ---- Compose用ナビゲーションAPI ----
+    fun navigateToPrevHit() {
+        if (searchResultPositions.isEmpty()) return
+        currentSearchHitIndex--
+        if (currentSearchHitIndex < 0) currentSearchHitIndex = searchResultPositions.size - 1
+        navigateToCurrentHit()
+    }
+
+    fun navigateToNextHit() {
+        if (searchResultPositions.isEmpty()) return
+        currentSearchHitIndex++
+        if (currentSearchHitIndex >= searchResultPositions.size) currentSearchHitIndex = 0
+        navigateToCurrentHit()
     }
 }
