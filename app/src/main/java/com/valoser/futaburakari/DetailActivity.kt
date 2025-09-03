@@ -38,6 +38,8 @@ import com.google.android.gms.ads.LoadAdError
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
 import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,10 +84,16 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private var suppressNextRestore: Boolean = false
 
     private lateinit var prefs: SharedPreferences
+    private val adsEnabledFlowInternal = MutableStateFlow(false)
+    private val adsEnabledFlow = adsEnabledFlowInternal.asStateFlow()
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             // 広告設定の即時反映
-            "pref_key_ads_enabled" -> setupAdBanner()
+            "pref_key_ads_enabled" -> {
+                setupAdBanner()
+                val enabled = prefs.getBoolean("pref_key_ads_enabled", false)
+                adsEnabledFlowInternal.value = enabled
+            }
             // NGルール変更を即時反映（NgStore は DefaultSharedPreferences を使用）
             "ng_rules_json" -> viewModel.reapplyNgFilter()
         }
@@ -130,9 +138,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // Switch to Compose container with Scaffold TopBar; legacy content is hosted inside
         val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_color_mode", "green")
-        val useComposeList = true // フェーズ2: LazyColumnを有効化（必要に応じて設定連動可）
+        val useComposeList = true // フェーズ2: LazyColumnを有効化
+        val showAdsPref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getBoolean("pref_key_ads_enabled", false)
+        adsEnabledFlowInternal.value = showAdsPref
+        val adUnitId = getString(R.string.admob_banner_id)
         setContent {
             FutaburakariTheme(colorMode = colorModePref) {
+                val showAds by adsEnabledFlow.collectAsState()
                 DetailScreenScaffold(
                     binding = binding,
                     title = toolbarTitleText,
@@ -141,7 +154,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                         onBackPressedDispatcher.onBackPressed()
                     },
                     onReply = { launchReplyActivity("") },
-                    onReload = { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails() },
+                    onReload = { reloadDetails() },
                     onOpenNg = { openNgManager() },
                     onOpenMedia = { showMediaList() },
                     onSodaneClick = { resNum -> viewModel.postSodaNe(resNum) },
@@ -164,14 +177,16 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     },
                     onDebouncedSearch = { q -> detailSearchManager.performSearch(q) },
                     onClearSearch = { detailSearchManager.clearSearch() },
+                    onReapplyNgFilter = { viewModel.reapplyNgFilter() },
                     searchStateFlow = detailSearchManager.searchState,
-                    onSearchPrev = { detailSearchManager.navigateToPrevHit() },
-                    onSearchNext = { detailSearchManager.navigateToNextHit() },
                     bottomOffsetPxFlow = bottomOffsetFlow,
                     searchActiveFlow = searchBarActiveFlow,
                     onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
                     recentSearchesFlow = recentSearchStore.items,
                     useComposeList = useComposeList,
+                    showAds = showAds,
+                    adUnitId = adUnitId,
+                    onBottomPaddingChange = { h -> bottomOffsetFlowInternal.value = h },
                     // Compose list scroll state persistence
                     initialScrollIndex = initialScroll.first,
                     initialScrollOffset = initialScroll.second,
@@ -205,13 +220,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     },
                     onBodyClick = { quotedBody -> launchReplyActivity(quotedBody) },
                     onAddNgFromBody = { bodyText -> showAddNgDialog(RuleType.BODY, bodyText) },
-                    onThreadEndTimeClick = { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails() },
+                    onThreadEndTimeClick = { reloadDetails() },
                     onImageLoaded = {
                         applyPendingScroll()
                         detailSearchManager.realignToCurrentHitIfActive()
                     },
                     isRefreshingLive = viewModel.isLoading,
-                    onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) }
+                    onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) },
+                    threadUrl = currentUrl
                 )
             }
         }
@@ -229,8 +245,12 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             ThreadMonitorWorker.snapshotNow(this, url)
         }
 
-        setupRecyclerView()
-        if (useComposeList) {
+        if (!useComposeList) {
+            setupRecyclerView()
+        } else {
+            // Compose リストのみ使用するが、検索マネージャ等が adapter を参照するため
+            // 最低限のインスタンスだけ確保しておく（RecyclerView には接続しない）
+            if (!this::detailAdapter.isInitialized) detailAdapter = DetailAdapter()
             binding.detailRecyclerView.isVisible = false
             binding.swipeRefreshLayout.isEnabled = false
             // Hide legacy fast scroller views when using Compose list
@@ -241,13 +261,15 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // DetailSearchManager は (binding, callback) で生成
         detailSearchManager = DetailSearchManager(binding, this)
 
-        // bottom_container（検索ナビ + 広告）の高さ変化に追従してRecyclerViewの下パディングを更新
-        binding.bottomContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            updateRecyclerBottomPadding()
-            // 検索UIや広告の高さが変わったときに、ヒット項目が隠れないよう再吸着
-            detailSearchManager.realignToCurrentHitIfActive()
-            // Compose 側のオフセットにも反映（重なり回避）
-            bottomOffsetFlowInternal.value = binding.bottomContainer.height
+        // bottom_container の高さ監視はレガシーUI使用時のみ
+        if (!useComposeList) {
+            binding.bottomContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                updateRecyclerBottomPadding()
+                // 検索UIや広告の高さが変わったときに、ヒット項目が隠れないよう再吸着
+                detailSearchManager.realignToCurrentHitIfActive()
+                // Compose 側のオフセットにも反映（重なり回避）
+                bottomOffsetFlowInternal.value = binding.bottomContainer.height
+            }
         }
 
         observeViewModel()
@@ -271,14 +293,18 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             }
         })
 
-        binding.swipeRefreshLayout.setOnRefreshListener { reloadDetails() }
+        if (!useComposeList) {
+            binding.swipeRefreshLayout.setOnRefreshListener { reloadDetails() }
+        }
 
-        // Ensure bottom container sits above navigation bar
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.bottomContainer) { v, insets ->
-            val sys = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, sys.bottom)
-            // RecyclerView bottom padding mirrors bottomContainer height; this will be picked up
-            androidx.core.view.WindowInsetsCompat.CONSUMED
+        // Ensure bottom container sits above navigation bar (legacy only)
+        if (!useComposeList) {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.bottomContainer) { v, insets ->
+                val sys = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, sys.bottom)
+                // RecyclerView bottom padding mirrors bottomContainer height; this will be picked up
+                androidx.core.view.WindowInsetsCompat.CONSUMED
+            }
         }
     }
 
@@ -319,7 +345,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     override fun onStart() {
         super.onStart()
         // 設定変更（広告ON/OFF）を戻り時にも反映
-        setupAdBanner()
+        // レガシーUI使用時のみバナー制御（Compose移行時はCompose側で表示）
+        if (binding.detailRecyclerView.isVisible) {
+            setupAdBanner()
+        }
         // 設定変更の監視を開始
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
         // アクティビティが表示されるたびにスクロール位置の復元を試みる
@@ -571,12 +600,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 }
             }
 
-            // ↓↓↓★ submitListに完了コールバックを追加 ★↓↓↓
-            detailAdapter.submitList(normalized) {
-                // リストの更新が完了したタイミングで、保留中のスクロールを適用する
-                applyPendingScroll()
-                // リスト更新後に検索ヒットも再吸着
-                detailSearchManager.realignToCurrentHitIfActive()
+            // ↓↓↓ レガシーRecyclerView使用時のみ Adapter に反映 ↓↓↓
+            if (binding.detailRecyclerView.isVisible) {
+                detailAdapter.submitList(normalized) {
+                    // リストの更新が完了したタイミングで、保留中のスクロールを適用する
+                    applyPendingScroll()
+                    // リスト更新後に検索ヒットも再吸着
+                    detailSearchManager.realignToCurrentHitIfActive()
+                }
             }
 
             // プレーンテキストキャッシュをバックグラウンドで構築
@@ -611,11 +642,13 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             }
         })
 
-        // ★ 追加: 「そうだね」更新を購読して Adapter に反映
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.sodaneUpdate.collect { (resNum, count) ->
-                    detailAdapter.updateSodane(resNum, count)
+        // ★ 追加: 「そうだね」更新を購読して Adapter に反映（レガシーRecyclerView使用時のみ）
+        if (binding.detailRecyclerView.isVisible) {
+            lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.sodaneUpdate.collect { (resNum, count) ->
+                        detailAdapter.updateSodane(resNum, count)
+                    }
                 }
             }
         }
@@ -637,7 +670,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     override fun onPause() {
         super.onPause()
         // AdMob: 一時停止
-        if (::binding.isInitialized) {
+        if (::binding.isInitialized && binding.detailRecyclerView.isVisible) {
             binding.adView.pause()
         }
         // 最終的な既読反映（現在の可視範囲から）
@@ -648,14 +681,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     override fun onResume() {
         super.onResume()
         // AdMob: 再開
-        if (::binding.isInitialized) {
+        if (::binding.isInitialized && binding.detailRecyclerView.isVisible) {
             binding.adView.resume()
         }
     }
 
     override fun onDestroy() {
         // AdMob: 解放
-        if (::binding.isInitialized) {
+        if (::binding.isInitialized && binding.detailRecyclerView.isVisible) {
             binding.adView.destroy()
         }
         super.onDestroy()
@@ -722,7 +755,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             launchReplyActivity("")
             true
         }
-        R.id.action_reload -> { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails(); true }
+        R.id.action_reload -> { reloadDetails(); true }
         R.id.action_ng_manage -> { openNgManager(); true }
         else -> super.onOptionsItemSelected(item)
     }

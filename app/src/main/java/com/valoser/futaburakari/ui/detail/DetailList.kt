@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.text.ClickableText
@@ -47,6 +48,7 @@ import androidx.compose.foundation.clickable
 import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
+import kotlinx.coroutines.launch
 
 @Composable
 fun DetailListCompose(
@@ -70,8 +72,11 @@ fun DetailListCompose(
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    // Compose側で検索Prev/Nextナビを提供するためのコールバック
+    onProvideSearchNavigator: (((() -> Unit), (() -> Unit)) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Reuse adapter utilities by creating a lightweight adapter instance configured with callbacks
     val adapter = remember {
         DetailAdapter().apply {
@@ -100,6 +105,50 @@ fun DetailListCompose(
         initialFirstVisibleItemIndex = safeIndex,
         initialFirstVisibleItemScrollOffset = safeOffset
     )
+
+    // Compose内で検索ヒット位置を計算してナビゲーションを提供
+    var hitPositions by remember(items, searchQuery) { mutableStateOf<List<Int>>(emptyList()) }
+    var currentHit by remember(items, searchQuery) { mutableStateOf(0) }
+    LaunchedEffect(items, searchQuery) {
+        val q = searchQuery?.trim().orEmpty()
+        if (q.isBlank()) {
+            hitPositions = emptyList()
+            currentHit = 0
+        } else {
+            val list = mutableListOf<Int>()
+            items.forEachIndexed { idx, content ->
+                val textToSearch: String? = when (content) {
+                    is DetailContent.Text -> Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                    is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
+                    is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
+                    is DetailContent.ThreadEndTime -> null
+                }
+                if (textToSearch?.contains(q, ignoreCase = true) == true) list += idx
+            }
+            hitPositions = list
+            currentHit = if (list.isNotEmpty()) 0 else 0
+        }
+    }
+    val density = LocalDensity.current
+    LaunchedEffect(hitPositions) {
+        // 上位にハンドラを提供（Prev/Next）
+        onProvideSearchNavigator?.invoke(
+            {
+                if (hitPositions.isEmpty()) return@invoke
+                currentHit = if (currentHit - 1 < 0) hitPositions.lastIndex else currentHit - 1
+                val target = hitPositions[currentHit]
+                val offsetPx = with(density) { 20.dp.toPx().toInt() }
+                scope.launch { internalState.animateScrollToItem(target, offsetPx) }
+            },
+            {
+                if (hitPositions.isEmpty()) return@invoke
+                currentHit = if (currentHit + 1 > hitPositions.lastIndex) 0 else currentHit + 1
+                val target = hitPositions[currentHit]
+                val offsetPx = with(density) { 20.dp.toPx().toInt() }
+                scope.launch { internalState.animateScrollToItem(target, offsetPx) }
+            }
+        )
+    }
 
     // Report max visible ordinal (50%以上見えているText単位の最大序数)
     LaunchedEffect(items, internalState) {
@@ -233,16 +282,17 @@ fun DetailListCompose(
                     )
                 }
 
-                is DetailContent.ThreadEndTime ->
-                    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { ctx ->
-                        val v = LayoutInflater.from(ctx).inflate(R.layout.detail_item_thread_end_time, null, false)
-                        val holder = DetailAdapter.ThreadEndTimeViewHolder(v, adapter.onThreadEndTimeClickListener)
-                        v.tag = holder
-                        v
-                    }, update = { view ->
-                        val holder = view.tag as DetailAdapter.ThreadEndTimeViewHolder
-                        holder.bind(item)
-                    })
+                is DetailContent.ThreadEndTime -> {
+                    androidx.compose.material3.Text(
+                        text = item.endTime,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp)
+                            .clickable { adapter.onThreadEndTimeClickListener?.invoke() },
+                    )
+                }
             }
 
             // Divider: ブロック末尾でのみ描画（次要素がText/EndTime or 末尾）

@@ -81,6 +81,8 @@ fun DetailScreenScaffold(
     onSubmitSearch: (String) -> Unit,
     onDebouncedSearch: (String) -> Unit,
     onClearSearch: () -> Unit,
+    // NG再適用のためのフック（追加後呼ぶ）
+    onReapplyNgFilter: (() -> Unit)? = null,
     searchStateFlow: StateFlow<com.valoser.futaburakari.DetailSearchManager.SearchState>? = null,
     onSearchPrev: (() -> Unit)? = null,
     onSearchNext: (() -> Unit)? = null,
@@ -89,6 +91,12 @@ fun DetailScreenScaffold(
     onSearchActiveChange: ((Boolean) -> Unit)? = null,
     recentSearchesFlow: StateFlow<List<String>>? = null,
     useComposeList: Boolean = false,
+    // Compose専用: 広告バーの表示と高さ通知
+    showAds: Boolean = false,
+    adUnitId: String? = null,
+    onBottomPaddingChange: ((Int) -> Unit)? = null,
+    // スレURL（NGルールのsourceKey用）
+    threadUrl: String? = null,
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
@@ -118,6 +126,9 @@ fun DetailScreenScaffold(
             var idMenuTarget by remember { mutableStateOf<String?>(null) }
             var idSheetItems by remember { mutableStateOf<List<DetailContent>?>(null) }
             var resRefItems by remember { mutableStateOf<List<DetailContent>?>(null) }
+            // NG追加（Compose）用の状態
+            var pendingNgId by remember { mutableStateOf<String?>(null) }
+            var pendingNgBody by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -160,12 +171,16 @@ fun DetailScreenScaffold(
                 .fillMaxSize()
                 .padding(contentPadding)
         ) {
-            // Legacy content underneath（広告などのレイアウト維持用）
-            AndroidView(
-                modifier = Modifier.matchParentSize(),
-                factory = { binding.root },
-                update = { /* no-op */ }
-            )
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
+            // Legacy root は Compose リスト未使用時のみ描画
+            if (!useComposeList) {
+                AndroidView(
+                    modifier = Modifier.matchParentSize(),
+                    factory = { binding.root },
+                    update = { /* no-op */ }
+                )
+            }
 
             // Hoist items/listState so they are visible to dialogs/sheets below
             val items = itemsLive?.observeAsState(emptyList())?.value ?: emptyList()
@@ -174,13 +189,18 @@ fun DetailScreenScaffold(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
                 initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
             )
+            // 検索ナビ（Compose内でリストに吸着）を上位スコープで保持
+            var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
+            var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
             if (useComposeList && itemsLive != null) {
                 val searchQuery = currentQueryFlow?.collectAsState(initial = null)?.value
                 val refreshing = isRefreshingLive?.observeAsState(false)?.value ?: false
                 val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
                 var fastScrollActive by remember { mutableStateOf(false) }
-                // Bottom padding so content and scroller don't overlap bottom container
-                val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
+                // Bottom padding: legacy Flow があれば使用。無ければ広告高さから算出
+                val legacyPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value
+                var adPx by remember { mutableStateOf(0) }
+                val bottomPx = legacyPx ?: adPx
                 val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
                 var deleteTarget by remember { mutableStateOf<String?>(null) }
                 SwipeRefresh(state = swipeState, onRefresh = onReload) {
@@ -188,7 +208,15 @@ fun DetailScreenScaffold(
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
-                        onQuoteClick = onQuoteClick,
+                        onQuoteClick = { token ->
+                            // Compose側で引用トークンから一覧を生成して表示
+                            val list = buildQuoteItems(items, token)
+                            if (list.isNotEmpty()) {
+                                resRefItems = list
+                            } else {
+                                onQuoteClick?.invoke(token)
+                            }
+                        },
                         onSodaneClick = onSodaneClick,
                         onThreadEndTimeClick = onThreadEndTimeClick,
                         onResNumClick = { resNum, resBody ->
@@ -206,7 +234,7 @@ fun DetailScreenScaffold(
                         onResNumDelClick = onResNumDelClick,
                         onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
-                        onAddNgFromBody = onAddNgFromBody,
+                        onAddNgFromBody = { body -> pendingNgBody = body },
                         getSodaneState = getSodaneState,
                         onImageLoaded = onImageLoaded,
                         onVisibleMaxOrdinal = onVisibleMaxOrdinal,
@@ -214,7 +242,11 @@ fun DetailScreenScaffold(
                         initialScrollIndex = initialScrollIndex,
                         initialScrollOffset = initialScrollOffset,
                         onSaveScroll = onSaveScroll,
-                        contentPadding = PaddingValues(end = endPadding, bottom = bottomDp)
+                        contentPadding = PaddingValues(end = endPadding, bottom = bottomDp),
+                        onProvideSearchNavigator = { p, n ->
+                            navPrev = p
+                            navNext = n
+                        }
                     )
                 }
                 // Delete confirmation (Compose)
@@ -251,6 +283,21 @@ fun DetailScreenScaffold(
                     bottomPadding = bottomDp,
                     onDragActiveChange = { active -> fastScrollActive = active }
                 )
+                // 広告バー（Compose）
+                if (showAds && adUnitId != null) {
+                    Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                        AdBanner(adUnitId = adUnitId) { h ->
+                            adPx = h
+                            onBottomPaddingChange?.invoke(h)
+                        }
+                    }
+                } else {
+                    // 広告非表示時は余白をクリア
+                    LaunchedEffect(showAds) {
+                        adPx = 0
+                        onBottomPaddingChange?.invoke(0)
+                    }
+                }
                 // Accompanist SwipeRefresh draws its own indicator inside SwipeRefresh
             }
 
@@ -270,8 +317,7 @@ fun DetailScreenScaffold(
                                 idSheetItems = list
                             }) { Text("同一IDの投稿") }
                             androidx.compose.material3.TextButton(onClick = {
-                                // 同一ID投稿一覧: 既存のViewシートの代わりに今はNG追加のみ提供（必要なら後続でComposeシート実装）
-                                onOpenNg()
+                                pendingNgId = idTarget
                                 idMenuTarget = null
                             }) { Text("NGに追加") }
                         }
@@ -282,7 +328,80 @@ fun DetailScreenScaffold(
                 )
             }
 
-            // 同一ID投稿一覧のシート
+            // ID を NG に追加（確認ダイアログ）
+            pendingNgId?.let { toAdd ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { pendingNgId = null },
+                    title = { Text("IDをNGに追加") },
+                    text = { Text("ID: $toAdd をNGにしますか？") },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
+                            ngStore.addRule(com.valoser.futaburakari.RuleType.ID, toAdd, com.valoser.futaburakari.MatchType.EXACT, sourceKey = source, ephemeral = true)
+                            onReapplyNgFilter?.invoke()
+                            android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                            pendingNgId = null
+                        }) { Text("追加") }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { pendingNgId = null }) { Text("キャンセル") }
+                    }
+                )
+            }
+
+            // 本文 NG 追加（入力+マッチ方法）
+            pendingNgBody?.let { initial ->
+                var text by remember(initial) { mutableStateOf(initial) }
+                var match by remember { mutableStateOf(com.valoser.futaburakari.MatchType.SUBSTRING) }
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { pendingNgBody = null },
+                    title = { Text("本文でNG追加") },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = text,
+                                onValueChange = { text = it },
+                                label = { Text("含めたくない語句（例: スパム語）") },
+                                singleLine = false,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                val opt = listOf(
+                                    com.valoser.futaburakari.MatchType.SUBSTRING to "部分一致",
+                                    com.valoser.futaburakari.MatchType.PREFIX to "前方一致",
+                                    com.valoser.futaburakari.MatchType.REGEX to "正規表現",
+                                )
+                                opt.forEach { (mt, label) ->
+                                    androidx.compose.material3.FilterChip(
+                                        selected = match == mt,
+                                        onClick = { match = mt },
+                                        label = { Text(label) },
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            val pat = text.trim()
+                            if (pat.isNotEmpty()) {
+                                val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
+                                ngStore.addRule(com.valoser.futaburakari.RuleType.BODY, pat, match, sourceKey = source, ephemeral = true)
+                                onReapplyNgFilter?.invoke()
+                                android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            pendingNgBody = null
+                        }) { Text("追加") }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { pendingNgBody = null }) { Text("キャンセル") }
+                    }
+                )
+            }
+
+            // 同一ID投稿一覧のシート（Compose）
             val idItems = idSheetItems
             if (idItems != null) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
@@ -290,30 +409,27 @@ fun DetailScreenScaffold(
                     onDismissRequest = { idSheetItems = null },
                     sheetState = sheetState
                 ) {
-                    AndroidView(factory = { ctx ->
-                        val rv = androidx.recyclerview.widget.RecyclerView(ctx).apply {
-                            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
-                        }
-                        val adapter = com.valoser.futaburakari.DetailAdapter().apply {
-                            onQuoteClickListener = null
-                            onIdClickListener = null
-                            onSodaNeClickListener = null
-                            onResNumClickListener = null
-                            onResNumConfirmClickListener = null
-                            onResNumDelClickListener = null
-                            getSodaNeState = { false }
-                            submitList(idItems)
-                        }
-                        rv.adapter = adapter
-                        rv.addItemDecoration(
-                            BlockDividerDecoration(adapter, ctx, paddingStartDp = 0, paddingEndDp = 0)
-                        )
-                        rv
-                    })
+                    DetailListCompose(
+                        items = idItems,
+                        searchQuery = null,
+                        onQuoteClick = onQuoteClick,
+                        onSodaneClick = null,
+                        onThreadEndTimeClick = null,
+                        onResNumClick = null,
+                        onResNumConfirmClick = null,
+                        onResNumDelClick = null,
+                        onIdClick = null,
+                        onBodyClick = null,
+                        onAddNgFromBody = null,
+                        getSodaneState = { false },
+                        onImageLoaded = onImageLoaded,
+                        onVisibleMaxOrdinal = null,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                    )
                 }
             }
 
-            // 引用/No.参照一覧のシート
+            // 引用/No.参照一覧のシート（Compose）
             val refItems = resRefItems
             if (refItems != null) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
@@ -321,26 +437,23 @@ fun DetailScreenScaffold(
                     onDismissRequest = { resRefItems = null },
                     sheetState = sheetState
                 ) {
-                    AndroidView(factory = { ctx ->
-                        val rv = androidx.recyclerview.widget.RecyclerView(ctx).apply {
-                            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
-                        }
-                        val adapter = com.valoser.futaburakari.DetailAdapter().apply {
-                            onQuoteClickListener = null
-                            onIdClickListener = null
-                            onSodaNeClickListener = null
-                            onResNumClickListener = null
-                            onResNumConfirmClickListener = null
-                            onResNumDelClickListener = null
-                            getSodaNeState = { false }
-                            submitList(refItems)
-                        }
-                        rv.adapter = adapter
-                        rv.addItemDecoration(
-                            BlockDividerDecoration(adapter, ctx, paddingStartDp = 0, paddingEndDp = 0)
-                        )
-                        rv
-                    })
+                    DetailListCompose(
+                        items = refItems,
+                        searchQuery = null,
+                        onQuoteClick = onQuoteClick,
+                        onSodaneClick = null,
+                        onThreadEndTimeClick = null,
+                        onResNumClick = null,
+                        onResNumConfirmClick = null,
+                        onResNumDelClick = null,
+                        onIdClick = null,
+                        onBodyClick = null,
+                        onAddNgFromBody = null,
+                        getSodaneState = { false },
+                        onImageLoaded = onImageLoaded,
+                        onVisibleMaxOrdinal = null,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                    )
                 }
             }
 
@@ -531,13 +644,31 @@ fun DetailScreenScaffold(
                             .padding(bottom = bottomDp),
                         current = s.currentIndexDisplay,
                         total = s.total,
-                        onPrev = { onSearchPrev?.invoke() },
-                        onNext = { onSearchNext?.invoke() }
+                        onPrev = { (onSearchPrev ?: navPrev)?.invoke() },
+                        onNext = { (onSearchNext ?: navNext)?.invoke() }
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
+    AndroidView(
+        modifier = Modifier.fillMaxWidth(),
+        factory = { ctx ->
+            com.google.android.gms.ads.AdView(ctx).apply {
+                setAdSize(com.google.android.gms.ads.AdSize.BANNER)
+                this.adUnitId = adUnitId
+                loadAd(com.google.android.gms.ads.AdRequest.Builder().build())
+                viewTreeObserver.addOnGlobalLayoutListener {
+                    onHeightChanged(measuredHeight)
+                }
+            }
+        },
+        update = { v -> onHeightChanged(v.measuredHeight) }
+    )
 }
 
 @Composable
