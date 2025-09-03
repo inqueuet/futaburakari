@@ -123,6 +123,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // Switch to Compose container with Scaffold TopBar; legacy content is hosted inside
         val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_color_mode", "green")
+        val useComposeList = true // フェーズ2: LazyColumnを有効化（必要に応じて設定連動可）
         setContent {
             FutaburakariTheme(colorMode = colorModePref) {
                 DetailScreenScaffold(
@@ -149,6 +150,39 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     searchActiveFlow = searchBarActiveFlow,
                     onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
                     recentSearchesFlow = recentSearchStore.items,
+                    useComposeList = useComposeList,
+                    itemsLive = viewModel.detailContent,
+                    currentQueryFlow = detailSearchManager.currentQueryFlow,
+                    getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
+                    onQuoteClick = { token ->
+                        // Same as adapter wiring
+                        val levelRaw = token.takeWhile { it == '>' }.length
+                        val quoteLevel = if (levelRaw <= 0) 1 else levelRaw
+                        val core = token.drop(levelRaw).trim()
+                        QuotePopupFragment.showForQuote(supportFragmentManager, core, quoteLevel)
+                    },
+                    onResNumClick = { resNum, resBody ->
+                        if (resBody.isEmpty()) confirmAndDelete(resNum) else launchReplyActivity(resBody)
+                    },
+                    onResNumConfirmClick = { resNum -> showResReferencesPopup(resNum) },
+                    onResNumDelClick = { resNum ->
+                        // keep same as adapter behavior
+                        val url = currentUrl ?: return@DetailScreenScaffold
+                        val threadId = url.substringAfterLast("/").substringBefore(".htm")
+                        val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                        val postUrl = boardBasePath + "futaba.php?guid=on"
+                        val pwd = AppPreferences.getPwd(this)
+                        viewModel.deletePost(postUrl, url, resNum, pwd ?: "", onlyImage = false)
+                    },
+                    onBodyClick = { quotedBody -> launchReplyActivity(quotedBody) },
+                    onAddNgFromBody = { bodyText -> showAddNgDialog(RuleType.BODY, bodyText) },
+                    onThreadEndTimeClick = { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails() },
+                    onImageLoaded = {
+                        applyPendingScroll()
+                        detailSearchManager.realignToCurrentHitIfActive()
+                    },
+                    isRefreshingLive = viewModel.isLoading,
+                    onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) }
                 )
             }
         }
@@ -171,6 +205,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         }
 
         setupRecyclerView()
+        if (useComposeList) {
+            binding.detailRecyclerView.isVisible = false
+            binding.swipeRefreshLayout.isEnabled = false
+        }
 
         // DetailSearchManager は (binding, callback) で生成
         detailSearchManager = DetailSearchManager(binding, this)
@@ -971,6 +1009,25 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     if (maxOrdinal > curViewed) {
                         HistoryManager.markViewed(this@DetailActivity, url, maxOrdinal)
                     }
+                }
+            }
+        }
+        markViewedRunnable = r
+        mainHandler.postDelayed(r, 300L)
+    }
+
+    // Compose リスト用：可視最大序数が通知されたら既読を更新（デバウンスあり）
+    private fun markViewedByOrdinal(maxOrdinal: Int) {
+        if (maxOrdinal <= 0) return
+        markViewedRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            markViewedJob?.cancel()
+            markViewedJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val url = currentUrl ?: return@launch
+                val current = HistoryManager.getAll(this@DetailActivity).firstOrNull { it.url == url }
+                val curViewed = current?.lastViewedReplyNo ?: 0
+                if (maxOrdinal > curViewed) {
+                    HistoryManager.markViewed(this@DetailActivity, url, maxOrdinal)
                 }
             }
         }

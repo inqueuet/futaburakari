@@ -31,6 +31,8 @@ class DetailSearchManager(
 
     private var searchView: SearchView? = null
     private var currentSearchQuery: String? = null
+    private val _currentQueryFlow = MutableStateFlow<String?>(null)
+    val currentQueryFlow: StateFlow<String?> = _currentQueryFlow
     private val searchResultPositions = mutableListOf<Int>()
     private var currentSearchHitIndex = -1
 
@@ -75,6 +77,7 @@ class DetailSearchManager(
         if (!callback.isBindingInitialized()) return
 
         currentSearchQuery = query
+        _currentQueryFlow.value = query
         // DetailAdapterに検索クエリを渡してハイライトなどを処理させることを想定
         callback.getDetailAdapter().setSearchQuery(query)
         searchResultPositions.clear()
@@ -107,6 +110,7 @@ class DetailSearchManager(
 
         val searchWasActive = currentSearchQuery != null
         currentSearchQuery = null
+        _currentQueryFlow.value = null
         callback.getDetailAdapter().setSearchQuery(null) // Adapterの検索状態もクリア
         searchResultPositions.clear()
         currentSearchHitIndex = -1
