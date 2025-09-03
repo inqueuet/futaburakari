@@ -21,6 +21,12 @@ class ImageEditViewModel : ViewModel() {
         }
     }
 
+    // 非UIスレッドで準備したエンジンを適用するためのセッター
+    fun setPreparedEngine(bitmap: Bitmap, engine: EditingEngine) {
+        this.sourceBitmap = bitmap
+        this.editingEngine = engine
+    }
+
     override fun onCleared() {
         super.onCleared()
         // ★ 修正: 自身が保持しているBitmapを解放する

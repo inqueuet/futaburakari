@@ -10,12 +10,10 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.view.MotionEvent
-import android.widget.Button
-import android.widget.SeekBar
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,6 +31,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
@@ -63,14 +79,6 @@ class ImageEditActivity : BaseActivity() {
     private lateinit var imageView: ZoomImageView
     private lateinit var brushOverlay: BrushOverlayView
     private lateinit var mosaicOverlay: MosaicOverlayView
-    private lateinit var seekBrushSize: SeekBar
-    private lateinit var textBrushSizeValue: TextView
-    private lateinit var seekMosaicAlpha: SeekBar
-    private lateinit var textMosaicAlphaValue: TextView
-    private lateinit var buttonMosaic: Button
-    private lateinit var buttonErase: Button
-    private lateinit var buttonSave: Button
-    private lateinit var buttonLock: Button
     private var isLocked = false
 
     private enum class Tool { NONE, MOSAIC, ERASER }
@@ -94,6 +102,10 @@ class ImageEditActivity : BaseActivity() {
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra<Uri>(EXTRA_IMAGE_URI)
+        }
+        // フォールバック: data に付与された URI を使用
+        if (imageUri == null) {
+            imageUri = intent.data
         }
 
         if (imageUri == null) {
@@ -125,53 +137,141 @@ class ImageEditActivity : BaseActivity() {
                         )
                     }
                 ) { inner ->
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize().padding(inner),
-                        factory = { ctx ->
-                            val root = layoutInflater.inflate(R.layout.activity_image_edit, null)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(inner)
+                    ) {
+                        // Canvas (Zoom + Overlays)
+                        AndroidView(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            factory = { ctx ->
+                                // Create layered container programmatically
+                                android.widget.FrameLayout(ctx).apply {
+                                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    )
+                                    imageView = ZoomImageView(ctx)
+                                    mosaicOverlay = MosaicOverlayView(ctx)
+                                    brushOverlay = BrushOverlayView(ctx)
 
-                            // bind views
-                            imageView = root.findViewById(R.id.imageView)
-                            brushOverlay = root.findViewById(R.id.brushOverlay)
-                            mosaicOverlay = root.findViewById(R.id.mosaicOverlay)
-                            seekBrushSize = root.findViewById(R.id.seekBrushSize)
-                            textBrushSizeValue = root.findViewById(R.id.textBrushSizeValue)
-                            seekMosaicAlpha = root.findViewById(R.id.seekMosaicAlpha)
-                            textMosaicAlphaValue = root.findViewById(R.id.textMosaicAlphaValue)
-                            buttonMosaic = root.findViewById(R.id.buttonMosaic)
-                            buttonErase = root.findViewById(R.id.buttonErase)
-                            buttonSave = root.findViewById(R.id.buttonSave)
-                            buttonLock = root.findViewById(R.id.buttonLock)
+                                    addView(imageView, android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    ))
+                                    addView(mosaicOverlay, android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    ))
+                                    addView(brushOverlay, android.widget.FrameLayout.LayoutParams(
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                    ))
 
-                            // initialize engine and views
-                            try {
-                                if (viewModel.editingEngine == null) {
-                                    val sourceBitmap: Bitmap? = contentResolver.openInputStream(imageUri!!).use { inputStream ->
-                                        BitmapFactory.decodeStream(inputStream)
+                                    // 重い処理（デコード/エンジン生成）は後続のコルーチンで実行
+                                    // ここではビューのセットアップとタッチ委譲のみ行う
+                                    setupTouchListener()
+                                    imageView.onMatrixChanged = { mosaicOverlay.invalidate() }
+                                    mosaicOverlay.setOnTouchListener { _, ev ->
+                                        imageView.dispatchTouchEvent(ev)
+                                        mosaicOverlay.invalidate()
+                                        true
                                     }
-                                    if (sourceBitmap == null) throw Exception("ビットマップのデコードに失敗")
-                                    viewModel.initializeEngine(sourceBitmap)
+                                    brushOverlay.setOnTouchListener { _, ev ->
+                                        imageView.dispatchTouchEvent(ev)
+                                        true
+                                    }
                                 }
-                                imageView.setImageBitmap(viewModel.sourceBitmap!!)
-                                mosaicOverlay.zoomImageView = imageView
-                                mosaicOverlay.engine = viewModel.editingEngine!!
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                                Toast.makeText(this, "画像の読み込みに失敗: ${e.message}", Toast.LENGTH_LONG).show()
-                                finish()
                             }
+                        )
 
-                            // setup controls
-                            setupBrushSizeControls()
-                            setupMosaicAlphaControls()
-                            setupToolButtons()
-                            setupTouchListener()
-                            setupSaveButton()
-                            setupLockButton()
+                        Spacer(Modifier.height(8.dp))
 
-                            root
+                        // Controls (Compose)
+                        var brushSize by rememberSaveable { mutableIntStateOf(currentBrushSizePx) }
+                        var mosaicAlpha by rememberSaveable { mutableIntStateOf(currentMosaicAlpha) }
+                        var toolName by rememberSaveable { mutableStateOf(currentTool.name) }
+                        var locked by rememberSaveable { mutableStateOf(isLocked) }
+
+                        ElevatedCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                // Brush size
+                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                    Text("太さ: ${brushSize}px")
+                                    Spacer(Modifier.width(12.dp))
+                                    Slider(
+                                        value = brushSize.toFloat(),
+                                        onValueChange = {
+                                            brushSize = it.toInt().coerceIn(1, 50)
+                                            currentBrushSizePx = brushSize
+                                        },
+                                        valueRange = 1f..50f,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                // Mosaic alpha
+                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                    val pct = (mosaicAlpha / 255f * 100).toInt()
+                                    Text("強さ: ${pct}%")
+                                    Spacer(Modifier.width(12.dp))
+                                    Slider(
+                                        value = mosaicAlpha.toFloat(),
+                                        onValueChange = {
+                                            mosaicAlpha = it.toInt().coerceIn(0, 255)
+                                            currentMosaicAlpha = mosaicAlpha
+                                            viewModel.editingEngine?.setMosaicAlpha(currentMosaicAlpha)
+                                            mosaicOverlay.invalidateLayer()
+                                        },
+                                        valueRange = 0f..255f,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    if (toolName == Tool.MOSAIC.name) {
+                                        Button(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("モザイク") }
+                                        Spacer(Modifier.width(8.dp))
+                                        OutlinedButton(onClick = { applyTool(Tool.ERASER); toolName = Tool.ERASER.name }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
+                                    } else if (toolName == Tool.ERASER.name) {
+                                        OutlinedButton(onClick = { applyTool(Tool.MOSAIC); toolName = Tool.MOSAIC.name }, modifier = Modifier.weight(1f)) { Text("モザイク") }
+                                        Spacer(Modifier.width(8.dp))
+                                        Button(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
+                                    } else {
+                                        OutlinedButton(onClick = { applyTool(Tool.MOSAIC); toolName = Tool.MOSAIC.name }, modifier = Modifier.weight(1f)) { Text("モザイク") }
+                                        Spacer(Modifier.width(8.dp))
+                                        OutlinedButton(onClick = { applyTool(Tool.ERASER); toolName = Tool.ERASER.name }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
+                                    }
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(onClick = {
+                                        locked = !locked
+                                        isLocked = locked
+                                        imageView.setTransformLocked(locked)
+                                        if (!locked) {
+                                            applyTool(Tool.NONE)
+                                            brushOverlay.hideCircle()
+                                        }
+                                        mosaicOverlay.invalidate()
+                                    }, modifier = Modifier.weight(1f)) {
+                                        Text(if (locked) "解除" else "固定")
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    Button(onClick = { saveImageToGallery() }, modifier = Modifier.weight(1f)) { Text("保存") }
+                                }
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
@@ -179,75 +279,48 @@ class ImageEditActivity : BaseActivity() {
 
         if (savedInstanceState != null) {
             isLocked = savedInstanceState.getBoolean("lock_state", false)
-            imageView.setTransformLocked(isLocked)
-            updateLockButtonUI()
-        }
-
-        mosaicOverlay.setOnTouchListener { _, ev ->
-            imageView.dispatchTouchEvent(ev)
-            mosaicOverlay.invalidate()
-            true
-        }
-        brushOverlay.setOnTouchListener { _, ev ->
-            imageView.dispatchTouchEvent(ev)
-            true
-        }
-
-        imageView.onMatrixChanged = {
-            mosaicOverlay.invalidate()
-        }
-    }
-
-    // (これ以降のメソッドは変更ありません)
-    // ...
-    private fun setupBrushSizeControls() {
-        seekBrushSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val newSize = progress.coerceIn(1, seekBar?.max ?: 50)
-                currentBrushSizePx = newSize
-                updateBrushSizeLabel()
+            if (::imageView.isInitialized) {
+                imageView.setTransformLocked(isLocked)
             }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
-        seekBrushSize.progress = currentBrushSizePx
-        updateBrushSizeLabel()
-    }
+            // Compose controls handle lock UI state
+        }
 
-    private fun updateBrushSizeLabel() {
-        textBrushSizeValue.text = "${currentBrushSizePx}px"
-    }
+        // 画像読み込みと編集エンジンの構築をバックグラウンドで
+        lifecycleScope.launch {
+            try {
+                val bmp = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(imageUri!!).use { inputStream ->
+                        BitmapFactory.decodeStream(inputStream)
+                    } ?: throw Exception("ビットマップのデコードに失敗")
+                }
 
-    private fun setupMosaicAlphaControls() {
-        seekMosaicAlpha.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                currentMosaicAlpha = progress.coerceIn(0, 255)
-                viewModel.editingEngine?.setMosaicAlpha(currentMosaicAlpha)
-                updateMosaicAlphaLabel()
-                mosaicOverlay.invalidateLayer()
+                val engine = withContext(Dispatchers.Default) {
+                    com.valoser.futaburakari.edit.EditingEngine(bmp)
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (isFinishing) return@withContext
+                    viewModel.setPreparedEngine(bmp, engine)
+                    if (::imageView.isInitialized) {
+                        imageView.setImageBitmap(viewModel.sourceBitmap!!)
+                    }
+                    if (::mosaicOverlay.isInitialized) {
+                        mosaicOverlay.zoomImageView = imageView
+                        mosaicOverlay.engine = viewModel.editingEngine
+                        mosaicOverlay.invalidate()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(this@ImageEditActivity, "画像の読み込みに失敗: ${e.message}", Toast.LENGTH_LONG).show()
+                finish()
             }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
-        seekMosaicAlpha.progress = currentMosaicAlpha
-        updateMosaicAlphaLabel()
-    }
-
-    private fun updateMosaicAlphaLabel() {
-        val percentage = (currentMosaicAlpha / 255.0 * 100).toInt()
-        textMosaicAlphaValue.text = "${percentage}%"
-    }
-
-    private fun setupToolButtons() {
-        buttonMosaic.setOnClickListener { applyTool(Tool.MOSAIC) }
-        buttonErase.setOnClickListener { applyTool(Tool.ERASER) }
+        }
     }
 
     private fun applyTool(tool: Tool) {
         currentTool = tool
-        buttonMosaic.isSelected = (tool == Tool.MOSAIC)
-        buttonErase.isSelected  = (tool == Tool.ERASER)
-        brushOverlay.hideCircle()
+        if (::brushOverlay.isInitialized) brushOverlay.hideCircle()
     }
 
 
@@ -293,29 +366,7 @@ class ImageEditActivity : BaseActivity() {
         }
     }
 
-    private fun setupSaveButton() {
-        buttonSave.setOnClickListener {
-            saveImageToGallery()
-        }
-    }
-
-    private fun setupLockButton() {
-        buttonLock.setOnClickListener {
-            isLocked = !isLocked
-            imageView.setTransformLocked(isLocked)
-            updateLockButtonUI()
-
-            if (!isLocked) {
-                applyTool(Tool.NONE)
-                brushOverlay.hideCircle()
-            }
-            mosaicOverlay.invalidate()
-        }
-    }
-
-    private fun updateLockButtonUI() {
-        buttonLock.text = if (isLocked) "解除" else "固定"
-    }
+    // Legacy save/lock/button setup methods removed (Compose handles UI)
 
     @SuppressLint("MissingPermission")
     private fun saveImageToGallery() {

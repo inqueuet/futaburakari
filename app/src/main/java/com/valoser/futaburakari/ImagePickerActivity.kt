@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,20 +39,28 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
 class ImagePickerActivity : BaseActivity() {
 
-    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val imageUri: Uri? = result.data?.data
-            imageUri?.let {
-                val intent = Intent(this, ImageEditActivity::class.java).apply {
-                    putExtra(ImageEditActivity.EXTRA_IMAGE_URI, it) // it (Uri) を直接渡す
-                }
-                startActivity(intent)
-                finish()
-            }
+    // Android 13+ Photo Picker (no storage permission needed)
+    private val pickVisualMediaLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            openEditorWithUri(uri)
         } else {
-            // Handle the case where image picking was cancelled or failed
             Toast.makeText(this, "画像選択がキャンセルされました", Toast.LENGTH_SHORT).show()
-            finish() // Finish if no image is picked
+            finish()
+        }
+    }
+
+    // Fallback for Android 12- (SAF GetContent)
+    private val getContentLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // For SAF uris, transient read permission is already granted to our app.
+            openEditorWithUri(uri)
+        } else {
+            Toast.makeText(this, "画像選択がキャンセルされました", Toast.LENGTH_SHORT).show()
+            finish()
         }
     }
 
@@ -114,15 +123,15 @@ class ImagePickerActivity : BaseActivity() {
     }
 
     private fun checkAndOpenGallery() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Photo Picker does not require storage permissions
+            launchGallery()
+            return
+        }
+
         val permissionsToRequest = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
-            }
-        } else { // Android 12 and below
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
 
         if (permissionsToRequest.isEmpty()) {
@@ -133,7 +142,26 @@ class ImagePickerActivity : BaseActivity() {
     }
 
     private fun launchGallery() {
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-        pickImageLauncher.launch(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Use modern Photo Picker
+            pickVisualMediaLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        } else {
+            // Use SAF GetContent for broad compatibility with Google Photos etc.
+            getContentLauncher.launch("image/*")
+        }
+    }
+
+    private fun openEditorWithUri(it: Uri) {
+        val intent = Intent(this, ImageEditActivity::class.java).apply {
+            data = it
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(ImageEditActivity.EXTRA_IMAGE_URI, it)
+            clipData = android.content.ClipData.newUri(contentResolver, "image", it)
+        }
+        try { grantUriPermission(packageName, it, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+        startActivity(intent)
+        finish()
     }
 }

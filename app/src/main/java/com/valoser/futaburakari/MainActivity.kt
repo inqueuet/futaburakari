@@ -24,6 +24,9 @@ import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import android.view.Choreographer
+import kotlin.coroutines.resume
 import java.net.URL
 
 @AndroidEntryPoint
@@ -232,8 +235,10 @@ class MainActivity : BaseActivity() {
         }
         viewModel.fetchImagesFromUrl(url)
 
-        // Apply catalog settings asynchronously; if newly applied, refetch once
+        // Apply catalog settings asynchronously after first frame; if newly applied, refetch once
         lifecycleScope.launch {
+            // Let the first frame draw to avoid jank during transitions
+            awaitNextFrame()
             val boardBaseUrl = url.substringBefore("futaba.php")
             if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
                 val boardKey = boardBaseUrl.trimEnd('/')
@@ -242,6 +247,13 @@ class MainActivity : BaseActivity() {
                 if (!wasApplied) viewModel.fetchImagesFromUrl(url)
             }
         }
+    }
+
+    private suspend fun awaitNextFrame() = suspendCancellableCoroutine { cont ->
+        val choreographer = Choreographer.getInstance()
+        val callback = Choreographer.FrameCallback { if (!cont.isCompleted) cont.resume(Unit) }
+        choreographer.postFrameCallback(callback)
+        cont.invokeOnCancellation { choreographer.removeFrameCallback(callback) }
     }
 
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
