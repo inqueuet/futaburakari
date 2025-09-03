@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -24,13 +23,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,20 +39,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
-import com.valoser.futaburakari.ui.BrushOverlayView
-import com.valoser.futaburakari.ui.MosaicOverlayView
-import com.valoser.futaburakari.ui.ZoomImageView
+import com.valoser.futaburakari.ui.compose.ImageEditorCanvas
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,10 +68,10 @@ class ImageEditActivity : BaseActivity() {
     }
 
     private val viewModel: ImageEditViewModel by viewModels()
+    // Compose表示トリガー用の状態（Bitmapローディング完了を通知）
+    private val editorBitmapState = androidx.compose.runtime.mutableStateOf<Bitmap?>(null)
 
-    private lateinit var imageView: ZoomImageView
-    private lateinit var brushOverlay: BrushOverlayView
-    private lateinit var mosaicOverlay: MosaicOverlayView
+    // Canvas-based editor handles rendering/gestures
     private var isLocked = false
 
     private enum class Tool { NONE, MOSAIC, ERASER }
@@ -142,59 +135,35 @@ class ImageEditActivity : BaseActivity() {
                             .fillMaxSize()
                             .padding(inner)
                     ) {
-                        // Canvas (Zoom + Overlays)
-                        AndroidView(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            factory = { ctx ->
-                                // Create layered container programmatically
-                                android.widget.FrameLayout(ctx).apply {
-                                    layoutParams = android.widget.FrameLayout.LayoutParams(
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                    )
-                                    imageView = ZoomImageView(ctx)
-                                    mosaicOverlay = MosaicOverlayView(ctx)
-                                    brushOverlay = BrushOverlayView(ctx)
-
-                                    addView(imageView, android.widget.FrameLayout.LayoutParams(
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                    ))
-                                    addView(mosaicOverlay, android.widget.FrameLayout.LayoutParams(
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                    ))
-                                    addView(brushOverlay, android.widget.FrameLayout.LayoutParams(
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                                    ))
-
-                                    // 重い処理（デコード/エンジン生成）は後続のコルーチンで実行
-                                    // ここではビューのセットアップとタッチ委譲のみ行う
-                                    setupTouchListener()
-                                    imageView.onMatrixChanged = { mosaicOverlay.invalidate() }
-                                    mosaicOverlay.setOnTouchListener { _, ev ->
-                                        imageView.dispatchTouchEvent(ev)
-                                        mosaicOverlay.invalidate()
-                                        true
-                                    }
-                                    brushOverlay.setOnTouchListener { _, ev ->
-                                        imageView.dispatchTouchEvent(ev)
-                                        true
-                                    }
-                                }
-                            }
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        // Controls (Compose)
+                        // Canvas (Zoom + Overlays) - Compose-only
+                        // Controls state (must be defined before overlay to be captured)
                         var brushSize by rememberSaveable { mutableIntStateOf(currentBrushSizePx) }
                         var mosaicAlpha by rememberSaveable { mutableIntStateOf(currentMosaicAlpha) }
                         var toolName by rememberSaveable { mutableStateOf(currentTool.name) }
                         var locked by rememberSaveable { mutableStateOf(isLocked) }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            val bmp = editorBitmapState.value
+                            if (bmp != null) {
+                                ImageEditorCanvas(
+                                    bitmap = bmp,
+                                    engine = viewModel.editingEngine,
+                                    toolName = toolName,
+                                    locked = locked,
+                                    brushSizePx = brushSize,
+                                    mosaicAlpha = mosaicAlpha,
+                                    modifier = Modifier.matchParentSize()
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Controls (Compose)
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                             Column(modifier = Modifier.padding(12.dp)) {
@@ -226,7 +195,6 @@ class ImageEditActivity : BaseActivity() {
                                             mosaicAlpha = it.toInt().coerceIn(0, 255)
                                             currentMosaicAlpha = mosaicAlpha
                                             viewModel.editingEngine?.setMosaicAlpha(currentMosaicAlpha)
-                                            mosaicOverlay.invalidateLayer()
                                         },
                                         valueRange = 0f..255f,
                                         modifier = Modifier.weight(1f)
@@ -257,12 +225,10 @@ class ImageEditActivity : BaseActivity() {
                                     OutlinedButton(onClick = {
                                         locked = !locked
                                         isLocked = locked
-                                        imageView.setTransformLocked(locked)
+                                        // Compose canvas handles interaction lock
                                         if (!locked) {
                                             applyTool(Tool.NONE)
-                                            brushOverlay.hideCircle()
                                         }
-                                        mosaicOverlay.invalidate()
                                     }, modifier = Modifier.weight(1f)) {
                                         Text(if (locked) "解除" else "固定")
                                     }
@@ -275,13 +241,10 @@ class ImageEditActivity : BaseActivity() {
                 }
             }
         }
-        // setup methods are invoked inside AndroidView factory
+        // Compose-only rendering and interaction
 
         if (savedInstanceState != null) {
             isLocked = savedInstanceState.getBoolean("lock_state", false)
-            if (::imageView.isInitialized) {
-                imageView.setTransformLocked(isLocked)
-            }
             // Compose controls handle lock UI state
         }
 
@@ -301,14 +264,8 @@ class ImageEditActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     if (isFinishing) return@withContext
                     viewModel.setPreparedEngine(bmp, engine)
-                    if (::imageView.isInitialized) {
-                        imageView.setImageBitmap(viewModel.sourceBitmap!!)
-                    }
-                    if (::mosaicOverlay.isInitialized) {
-                        mosaicOverlay.zoomImageView = imageView
-                        mosaicOverlay.engine = viewModel.editingEngine
-                        mosaicOverlay.invalidate()
-                    }
+                    editorBitmapState.value = bmp
+                    // Compose canvas reads source/engine directly
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -320,50 +277,6 @@ class ImageEditActivity : BaseActivity() {
 
     private fun applyTool(tool: Tool) {
         currentTool = tool
-        if (::brushOverlay.isInitialized) brushOverlay.hideCircle()
-    }
-
-
-    private fun setupTouchListener() {
-        imageView.setOnTouchListener { _, event ->
-            val handledZoom = imageView.onTouchEvent(event)
-            val canDraw = isLocked && currentTool != Tool.NONE && event.pointerCount == 1
-            if (!canDraw) {
-                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                    brushOverlay.hideCircle()
-                } else {
-                    brushOverlay.hideCircle()
-                }
-                return@setOnTouchListener handledZoom
-            }
-
-            var handledDraw = false
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    imageView.viewPointToImage(event.x, event.y)?.let { p ->
-                        val diameterImagePx = currentBrushSizePx.toFloat()
-                        when (currentTool) {
-                            Tool.MOSAIC -> {
-                                viewModel.editingEngine?.applyMosaic(p.x, p.y, diameterImagePx)
-                                handledDraw = true
-                            }
-                            Tool.ERASER -> {
-                                viewModel.editingEngine?.eraseMosaic(p.x, p.y, diameterImagePx)
-                                handledDraw = true
-                            }
-                            else -> {}
-                        }
-                        mosaicOverlay.invalidateLayer()
-                        val radiusViewPx = imageView.imageLengthToView(diameterImagePx) / 2f
-                        brushOverlay.showCircle(event.x, event.y, radiusViewPx)
-                    }
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    brushOverlay.hideCircle()
-                }
-            }
-            handledZoom || handledDraw
-        }
     }
 
     // Legacy save/lock/button setup methods removed (Compose handles UI)
