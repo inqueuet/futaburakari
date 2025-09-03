@@ -50,7 +50,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private lateinit var imageAdapter: ImageAdapter
     private var currentSelectedUrl: String? = null
     private var allItems: List<ImageItem> = emptyList()
-    private var currentQuery: String? = null
+    // Compose検索クエリ状態
+    private val queryState = mutableStateOf("")
     private var lastIsLoading: Boolean = false
     private var autoIndicatorShown: Boolean = false
 
@@ -150,8 +151,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
                     items = itemsState.value,
                     isLoading = isLoadingState.value,
                     spanCount = spanCountState.intValue,
-                    query = currentQuery.orEmpty(),
-                    onQueryChange = { q -> currentQuery = q },
+                    query = queryState.value,
+                    onQueryChange = { q -> queryState.value = q },
                     onReload = {
                         cancelAutoUpdate()
                         fetchDataForCurrentUrl()
@@ -577,24 +578,8 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     }
 
     override fun onQueryTextChange(newText: String?): Boolean {
-        currentQuery = newText
-        filterImages(currentQuery)
+        queryState.value = newText.orEmpty()
         return true
-    }
-
-    private fun filterImages(query: String?) {
-        // タイトルNG適用 → 検索クエリ適用 の順。
-        val rules = ngStore.getRules().filter { it.type == RuleType.TITLE }
-        val titleFiltered = if (rules.isEmpty()) allItems else allItems.filter { item ->
-            val title = item.title.orEmpty()
-            !rules.any { r -> matchTitle(title, r) }
-        }
-        val filteredList = if (query.isNullOrEmpty()) {
-            titleFiltered
-        } else {
-            titleFiltered.filter { it.title.contains(query, ignoreCase = true) }
-        }
-        imageAdapter.submitList(filteredList)
     }
 
     private fun matchTitle(title: String, rule: NgRule): Boolean {
