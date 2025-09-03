@@ -150,13 +150,12 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     binding = binding,
                     title = toolbarTitleText,
                     onBack = {
-                        saveScroll()
                         onBackPressedDispatcher.onBackPressed()
                     },
                     onReply = { launchReplyActivity("") },
                     onReload = { reloadDetails() },
                     onOpenNg = { openNgManager() },
-                    onOpenMedia = { showMediaList() },
+                    onOpenMedia = { },
                     onSodaneClick = { resNum -> viewModel.postSodaNe(resNum) },
                     onDeletePost = { resNum, onlyImage ->
                         val threadUrl = currentUrl ?: return@DetailScreenScaffold
@@ -218,7 +217,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     onAddNgFromBody = { _ -> },
                     onThreadEndTimeClick = { reloadDetails() },
                     onImageLoaded = {
-                        applyPendingScroll()
                         detailSearchManager.realignToCurrentHitIfActive()
                     },
                     isRefreshingLive = viewModel.isLoading,
@@ -406,11 +404,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         })
 
         // 引用（> / >> / >>> ...）タップ → ポップアップ表示
-        detailAdapter.onQuoteClickListener = { token ->
-            val levelRaw = token.takeWhile { it == '>' }.length
-            val quoteLevel = if (levelRaw <= 0) 1 else levelRaw
-            val core = token.drop(levelRaw).trim()
-            showQuotePopup(core, quoteLevel)
+        detailAdapter.onQuoteClickListener = { _ ->
+            // レガシー経路は非対応（Composeへ移行済み）
         }
 
         // ID タップ → メニュー（同一ID表示 / NG追加）
@@ -419,7 +414,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             AlertDialog.Builder(this)
                 .setItems(items) { _, which ->
                     when (which) {
-                        0 -> showIdPostsPopup(id)
+                        0 -> {
+                            // レガシー経路は非対応（Composeへ移行済み）
+                        }
                         1 -> {
                             val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
                             ngStore.addRule(RuleType.ID, id, MatchType.EXACT, sourceKey = source, ephemeral = true)
@@ -679,9 +676,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         if (::binding.isInitialized && binding.detailRecyclerView.isVisible) {
             binding.adView.pause()
         }
-        // 最終的な既読反映（現在の可視範囲から）
-        runCatching { markViewedByCurrentScroll() }
-        saveScroll()
+        // スクロール保存はCompose側で行う
     }
 
     override fun onResume() {
@@ -768,8 +763,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     // ===== SearchManagerCallback 実装 =====
     override fun getDetailContent(): List<DetailContent>? = viewModel.detailContent.value
-    override fun getDetailAdapter(): DetailAdapter = detailAdapter
-    override fun getLayoutManager(): LinearLayoutManager = layoutManager
     override fun showToast(message: String, duration: Int) { Toast.makeText(this, message, duration).show() }
     override fun getStringResource(resId: Int): String = getString(resId)
     override fun getStringResource(resId: Int, vararg formatArgs: Any): String = getString(resId, *formatArgs)
@@ -810,199 +803,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     // =========================================================
 
     // 引用ポップアップ：> / >> / >>> など多段対応（複数候補にも対応）
-    private fun showQuotePopup(quotedText: String, quoteLevel: Int) {
-        val all = viewModel.detailContent.value ?: return
-
-        // 1) 本文に needle を含む「全Textインデックス」を集める
-        val needle = quotedText.trim().replace(Regex("\\s+"), " ")
-        val textIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text &&
-                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
-                        .toString()
-                        .replace(Regex("\\s+"), " ")
-                        .contains(needle, ignoreCase = true)
-        }.map { it.index }
-
-        if (textIndexes.isEmpty()) {
-            showToastOnUiThread("引用先が見つかりませんでした", Toast.LENGTH_SHORT)
-            return
-        }
-
-        // 2) 直後の画像/動画も同梱して収集
-        val result = mutableListOf<DetailContent>()
-        for (i in textIndexes) {
-            result += all[i]
-            var j = i + 1
-            while (j < all.size) {
-                when (val c = all[j]) {
-                    is DetailContent.Image, is DetailContent.Video -> { result += c; j++ }
-                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
-                }
-            }
-        }
-
-        val ordered = result
-            .distinctBy { it.id }
-            .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
-        showContentListBottomSheet(ordered)
-    }
-
-    // IDポップアップ：同一IDの投稿一覧（テキスト＋直後の画像/動画も同梱）
-    private fun showIdPostsPopup(id: String) {
-        val all = viewModel.detailContent.value ?: return
-        val key = "ID:$id"
-
-        // IDを含むテキストのインデックス
-        val textIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text &&
-                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(key)
-        }.map { it.index }
-
-        if (textIndexes.isEmpty()) {
-            showToastOnUiThread("同じIDの投稿が見つかりませんでした", Toast.LENGTH_SHORT)
-            return
-        }
-
-        val result = mutableListOf<DetailContent>()
-        for (i in textIndexes) {
-            result += all[i] // テキスト本体
-
-            // 直後のメディア（次の Text/ThreadEndTime まで）を同梱
-            var j = i + 1
-            while (j < all.size) {
-                when (val c = all[j]) {
-                    is DetailContent.Image,
-                    is DetailContent.Video -> { result += c; j++ }
-                    is DetailContent.Text,
-                    is DetailContent.ThreadEndTime -> break
-                }
-            }
-        }
-
-        val ordered = result
-            .distinctBy { it.id }
-            .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
-        showContentListBottomSheet(ordered)
-    }
+    // showQuotePopup/showIdPostsPopup はComposeへ移行済み
 
     // BottomSheet に DetailAdapter で並べる（遷移は無効化）
-    private fun showContentListBottomSheet(items: List<DetailContent>) {
-        val dialog = BottomSheetDialog(this)
-        val popupAdapter = DetailAdapter().apply {
-            onQuoteClickListener = null
-            onIdClickListener = null
-            onSodaNeClickListener = null
-            onResNumClickListener = null
-            onThreadEndTimeClickListener = null
-            getSodaNeState = { false }
-            submitList(items)
-        }
-
-        val recycler = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@DetailActivity)
-            adapter = popupAdapter
-            // Draw dividers only at end of a block (same as other popups)
-            addItemDecoration(
-                BlockDividerDecoration(popupAdapter, context, paddingStartDp = 0, paddingEndDp = 0)
-            )
-        }
-        dialog.setContentView(recycler)
-        dialog.show()
-    }
-
-    // メディア一覧（画像のみ・3列）のシートを表示し、選択でそのレス位置へスクロール
-    private fun showMediaList() {
-        val current = detailAdapter.currentList
-        if (current.isEmpty()) {
-            Toast.makeText(this, "コンテンツがありません", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        data class ImageEntry(
-            val imageAdapterPosition: Int, // 画像アイテムの位置
-            val parentTextPosition: Int,   // 直前のレス(Text)の位置（スクロール先）
-            val url: String
-        )
-
-        fun findParentTextPosition(from: Int): Int {
-            for (i in from downTo 0) {
-                if (current[i] is DetailContent.Text) return i
-            }
-            return from
-        }
-
-        val images = mutableListOf<ImageEntry>()
-        current.withIndex().forEach { (i, c) ->
-            when (c) {
-                is DetailContent.Image -> {
-                    val parent = findParentTextPosition(i)
-                    images += ImageEntry(i, parent, c.imageUrl)
-                }
-                is DetailContent.Video -> {
-                    // 動画もグリッドに含める（CoilのVideoFrameDecoderで代表フレームを表示）
-                    val parent = findParentTextPosition(i)
-                    images += ImageEntry(i, parent, c.videoUrl)
-                }
-                else -> {}
-            }
-        }
-
-        if (images.isEmpty()) {
-            Toast.makeText(this, "画像はありません", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val dialog = BottomSheetDialog(this)
-
-        // グリッド（3列）のサムネイルアダプタ（画像のみ）
-        class ImageGridAdapter(
-            private val data: List<ImageEntry>,
-            private val onClick: (ImageEntry) -> Unit
-        ) : RecyclerView.Adapter<ImageGridAdapter.VH>() {
-            inner class VH(val iv: android.widget.ImageView) : RecyclerView.ViewHolder(iv)
-
-            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-                val ctx = parent.context
-                val density = ctx.resources.displayMetrics.density
-                val sizeDp = 110
-                val sizePx = (sizeDp * density).toInt()
-                val iv = android.widget.ImageView(ctx).apply {
-                    layoutParams = ViewGroup.MarginLayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        sizePx
-                    ).apply {
-                        val m = (4 * density).toInt()
-                        setMargins(m, m, m, m)
-                    }
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                    setBackgroundColor(0xFF222222.toInt())
-                }
-                return VH(iv)
-            }
-
-            override fun onBindViewHolder(holder: VH, position: Int) {
-                val item = data[position]
-                holder.iv.load(item.url)
-                holder.iv.setOnClickListener { onClick(item) }
-            }
-
-            override fun getItemCount(): Int = data.size
-        }
-
-        val rv = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@DetailActivity, 3)
-            setHasFixedSize(true)
-        }
-        val adapter = ImageGridAdapter(images) { entry ->
-            dialog.dismiss()
-            // そのレス位置まで移動（Text位置を優先）
-            val target = entry.parentTextPosition.takeIf { it >= 0 } ?: entry.imageAdapterPosition
-            layoutManager.scrollToPositionWithOffset(target, 0)
-        }
-        rv.adapter = adapter
-        dialog.setContentView(rv)
-        dialog.show()
-    }
+    // 旧Viewベースのシート表示やメディア一覧はComposeへ移行済み
 
     // 現在のスクロール位置から「見えた最大の投稿序数」を算出して既読更新
     private fun markViewedByCurrentScroll() {
@@ -1257,7 +1061,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 })
                 .flatten()
 
-            withContext(kotlinx.coroutines.Dispatchers.Main) { showContentListBottomSheet(ordered) }
+            // Compose側の参照一覧シートに統合済み（ここではUI遷移は行わない）
+            withContext(kotlinx.coroutines.Dispatchers.Main) { }
         }
     }
 

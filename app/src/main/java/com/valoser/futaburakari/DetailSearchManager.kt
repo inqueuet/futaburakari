@@ -8,23 +8,19 @@ import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import androidx.appcompat.widget.SearchView
-import androidx.recyclerview.widget.LinearLayoutManager
-import com.valoser.futaburakari.databinding.ActivityDetailBinding // Bindingクラス名は実際のプロジェクトに合わせてください
+import com.valoser.futaburakari.databinding.ActivityDetailBinding
 
 // DetailActivityが実装するコールバックインターフェース
 interface SearchManagerCallback {
     fun getDetailContent(): List<DetailContent>?
-    fun getDetailAdapter(): DetailAdapter // DetailAdapterにsetSearchQueryとitemCountがある前提
-    fun getLayoutManager(): LinearLayoutManager
     fun showToast(message: String, duration: Int)
     fun getStringResource(resId: Int): String
     fun getStringResource(resId: Int, vararg formatArgs: Any): String
     fun onSearchCleared() // 検索がクリアされたときにDetailActivityに通知
-    fun isBindingInitialized(): Boolean // bindingが初期化済みか確認
+    fun isBindingInitialized(): Boolean // bindingが初期化済みか確認（将来削除予定）
 }
 
 class DetailSearchManager(
-    // private val activity: DetailActivity, // Activityへの直接参照の代わりにCallbackを使用
     private val binding: ActivityDetailBinding,
     private val callback: SearchManagerCallback
 ) {
@@ -78,8 +74,7 @@ class DetailSearchManager(
 
         currentSearchQuery = query
         _currentQueryFlow.value = query
-        // DetailAdapterに検索クエリを渡してハイライトなどを処理させることを想定
-        callback.getDetailAdapter().setSearchQuery(query)
+        // Compose側でハイライトするため、Adapterへの伝播は不要
         searchResultPositions.clear()
         currentSearchHitIndex = -1
 
@@ -111,7 +106,7 @@ class DetailSearchManager(
         val searchWasActive = currentSearchQuery != null
         currentSearchQuery = null
         _currentQueryFlow.value = null
-        callback.getDetailAdapter().setSearchQuery(null) // Adapterの検索状態もクリア
+        // Compose側のハイライトはFlowで制御するため、特別なクリアは不要
         searchResultPositions.clear()
         currentSearchHitIndex = -1
         
