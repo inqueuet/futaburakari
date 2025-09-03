@@ -1,210 +1,144 @@
 package com.valoser.futaburakari
 
-import android.content.Intent
 import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import android.content.Context
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
+import androidx.activity.compose.setContent
 import androidx.appcompat.app.AlertDialog
-// import androidx.appcompat.app.AppCompatActivity
-import androidx.recyclerview.widget.ItemTouchHelper
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.valoser.futaburakari.databinding.ActivityHistoryBinding
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.preference.PreferenceManager
+import com.valoser.futaburakari.ui.compose.HistoryScreen
+import com.valoser.futaburakari.ui.compose.HistorySortMode
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
 class HistoryActivity : BaseActivity() {
 
-    private lateinit var binding: ActivityHistoryBinding
-    private lateinit var adapter: HistoryAdapter
-    private var showUnreadOnly: Boolean = false
-    private var sortMode: SortMode = SortMode.MIXED
-
-    private enum class SortMode { MIXED, UPDATED, VIEWED, UNREAD }
-
-    private val historyReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context?, intent: Intent?) {
-            if (intent?.action == HistoryManager.ACTION_HISTORY_CHANGED) {
-                refresh()
-            }
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityHistoryBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        supportActionBar?.title = getString(R.string.history_title)
-
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                WindowInsetsCompat.CONSUMED
-            }
+        val uiPrefs = getSharedPreferences("com.valoser.futaburakari.history.ui", MODE_PRIVATE)
+        val initialUnreadOnly = uiPrefs.getBoolean("unread_only", false)
+        val initialSort = when (uiPrefs.getString("sort_mode", HistorySortMode.MIXED.name)) {
+            HistorySortMode.UPDATED.name -> HistorySortMode.UPDATED
+            HistorySortMode.VIEWED.name -> HistorySortMode.VIEWED
+            HistorySortMode.UNREAD.name -> HistorySortMode.UNREAD
+            else -> HistorySortMode.MIXED
         }
 
-        adapter = HistoryAdapter { entry ->
-            val intent = Intent(this, DetailActivity::class.java).apply {
-                putExtra(DetailActivity.EXTRA_URL, entry.url)
-                putExtra(DetailActivity.EXTRA_TITLE, entry.title)
-            }
-            startActivity(intent)
-        }
-        binding.recyclerView.layoutManager = LinearLayoutManager(this)
-        binding.recyclerView.adapter = adapter
+        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_color_mode", "green")
 
-        // Pad bottom for gesture nav/system bars
-        val rv = binding.recyclerView
-        val origBottom = rv.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(rv) { v, insets ->
-            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, origBottom + sys.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
+        setContent {
+            FutaburakariTheme(colorMode = colorModePref) {
+                var showUnreadOnly by remember { mutableStateOf(initialUnreadOnly) }
+                var sortMode by remember { mutableStateOf(initialSort) }
+                var entries by remember { mutableStateOf(listOf<HistoryEntry>()) }
 
-        // swipe to delete
-        val touchHelper = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
-            override fun onMove(
-                recyclerView: RecyclerView,
-                viewHolder: RecyclerView.ViewHolder,
-                target: RecyclerView.ViewHolder
-            ): Boolean = false
-
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
-                val pos = viewHolder.bindingAdapterPosition
-                val item = adapter.currentList.getOrNull(pos) ?: return
-                HistoryManager.delete(this@HistoryActivity, item.key)
-                // 監視も停止
-                com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
-                // キャッシュ/アーカイブも削除
-                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).apply {
-                    invalidateCache(item.url)
-                    clearArchiveForUrl(item.url)
+                fun computeAndSet() {
+                    val base = HistoryManager.getAll(this@HistoryActivity)
+                    // 自動クリーンアップ
+                    runCatching {
+                        val p = PreferenceManager.getDefaultSharedPreferences(this@HistoryActivity)
+                        val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
+                        if (mb > 0) {
+                            val limitBytes = mb * 1024L * 1024L
+                            val cm = com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity)
+                            cm.enforceLimit(limitBytes, base) { entry ->
+                                HistoryManager.clearThumbnail(this@HistoryActivity, entry.url)
+                            }
+                        }
+                    }
+                    val filtered = if (showUnreadOnly) base.filter { it.unreadCount > 0 } else base
+                    val list = when (sortMode) {
+                        HistorySortMode.MIXED -> filtered.sortedWith(
+                            compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount > 0 }
+                                .thenByDescending { if (it.unreadCount > 0) it.lastUpdatedAt else it.lastViewedAt }
+                                .thenByDescending { it.lastViewedAt }
+                        )
+                        HistorySortMode.UPDATED -> filtered.sortedByDescending { it.lastUpdatedAt }
+                        HistorySortMode.VIEWED -> filtered.sortedByDescending { it.lastViewedAt }
+                        HistorySortMode.UNREAD -> filtered.sortedWith(
+                            compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount }
+                                .thenByDescending { it.lastUpdatedAt }
+                        )
+                    }
+                    entries = list
                 }
-                refresh()
-            }
-        })
-        touchHelper.attachToRecyclerView(binding.recyclerView)
 
-        loadPrefs()
-        refresh()
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.history_menu, menu)
-        // メニューの状態反映
-        val unreadItem = menu.findItem(R.id.action_toggle_unread_only)
-        unreadItem.title = if (showUnreadOnly) "未読のみ表示（ON）" else "未読のみ表示（OFF）"
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
-        R.id.action_clear_history -> {
-            AlertDialog.Builder(this)
-                .setMessage(getString(R.string.confirm_clear_history))
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    HistoryManager.clear(this)
-                    // 監視を全停止
-                    com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this)
-                    // すべてのキャッシュ/アーカイブも削除
-                    com.valoser.futaburakari.cache.DetailCacheManager(this).clearAllCache()
-                    refresh()
+                LaunchedEffect(showUnreadOnly, sortMode) {
+                    computeAndSet()
+                    // 保存
+                    uiPrefs.edit()
+                        .putBoolean("unread_only", showUnreadOnly)
+                        .putString("sort_mode", sortMode.name)
+                        .apply()
                 }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-            true
-        }
-        R.id.action_toggle_unread_only -> {
-            showUnreadOnly = !showUnreadOnly
-            savePrefs()
-            invalidateOptionsMenu()
-            refresh()
-            true
-        }
-        R.id.sort_mixed -> { sortMode = SortMode.MIXED; savePrefs(); refresh(); true }
-        R.id.sort_updated -> { sortMode = SortMode.UPDATED; savePrefs(); refresh(); true }
-        R.id.sort_viewed -> { sortMode = SortMode.VIEWED; savePrefs(); refresh(); true }
-        R.id.sort_unread -> { sortMode = SortMode.UNREAD; savePrefs(); refresh(); true }
-        else -> super.onOptionsItemSelected(item)
-    }
 
-    private fun refresh() {
-        val base = HistoryManager.getAll(this)
-
-        // 自動クリーンアップ（設定値に基づき媒体と詳細キャッシュを間引き）
-        runCatching {
-            val p = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-            val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
-            if (mb > 0) {
-                val limitBytes = mb * 1024L * 1024L
-                val cm = com.valoser.futaburakari.cache.DetailCacheManager(this)
-                cm.enforceLimit(limitBytes, base) { entry ->
-                    // サムネイルは無効化（存在しないローカルURIを避ける）
-                    HistoryManager.clearThumbnail(this, entry.url)
+                // 変更ブロードキャスト受信で再読込
+                DisposableEffect(Unit) {
+                    val receiver = object : BroadcastReceiver() {
+                        override fun onReceive(context: Context?, intent: Intent?) {
+                            if (intent?.action == HistoryManager.ACTION_HISTORY_CHANGED) {
+                                computeAndSet()
+                            }
+                        }
+                    }
+                    val filter = IntentFilter(HistoryManager.ACTION_HISTORY_CHANGED)
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        registerReceiver(receiver, filter)
+                    }
+                    onDispose { runCatching { unregisterReceiver(receiver) } }
                 }
+
+                HistoryScreen(
+                    title = getString(R.string.history_title),
+                    entries = entries,
+                    showUnreadOnly = showUnreadOnly,
+                    sortMode = sortMode,
+                    onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
+                    onSelectSort = { sort -> sortMode = sort },
+                    onClearAll = {
+                        AlertDialog.Builder(this@HistoryActivity)
+                            .setMessage(getString(R.string.confirm_clear_history))
+                            .setPositiveButton(android.R.string.ok) { _, _ ->
+                                HistoryManager.clear(this@HistoryActivity)
+                                com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
+                                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).clearAllCache()
+                                computeAndSet()
+                            }
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show()
+                    },
+                    onClickItem = { entry ->
+                        val intent = Intent(this@HistoryActivity, DetailActivity::class.java).apply {
+                            putExtra(DetailActivity.EXTRA_URL, entry.url)
+                            putExtra(DetailActivity.EXTRA_TITLE, entry.title)
+                        }
+                        startActivity(intent)
+                    },
+                    onDeleteItem = { item ->
+                        HistoryManager.delete(this@HistoryActivity, item.key)
+                        com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
+                        com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).apply {
+                            invalidateCache(item.url)
+                            clearArchiveForUrl(item.url)
+                        }
+                        computeAndSet()
+                    }
+                )
             }
         }
-        val filtered = if (showUnreadOnly) base.filter { it.unreadCount > 0 } else base
-        val list = when (sortMode) {
-            SortMode.MIXED -> filtered.sortedWith(compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount > 0 }
-                .thenByDescending { if (it.unreadCount > 0) it.lastUpdatedAt else it.lastViewedAt }
-                .thenByDescending { it.lastViewedAt })
-            SortMode.UPDATED -> filtered.sortedByDescending { it.lastUpdatedAt }
-            SortMode.VIEWED -> filtered.sortedByDescending { it.lastViewedAt }
-            SortMode.UNREAD -> filtered.sortedWith(compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount }
-                .thenByDescending { it.lastUpdatedAt })
-        }
-        binding.emptyView.text = getString(R.string.no_history)
-        binding.emptyView.visibility = if (list.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
-        adapter.submitList(list)
-    }
-
-    private fun loadPrefs() {
-        val p = getSharedPreferences("com.valoser.futaburakari.history.ui", MODE_PRIVATE)
-        showUnreadOnly = p.getBoolean("unread_only", false)
-        sortMode = when (p.getString("sort_mode", SortMode.MIXED.name)) {
-            SortMode.UPDATED.name -> SortMode.UPDATED
-            SortMode.VIEWED.name -> SortMode.VIEWED
-            SortMode.UNREAD.name -> SortMode.UNREAD
-            else -> SortMode.MIXED
-        }
-    }
-
-    private fun savePrefs() {
-        val p = getSharedPreferences("com.valoser.futaburakari.history.ui", MODE_PRIVATE)
-        p.edit().putBoolean("unread_only", showUnreadOnly)
-            .putString("sort_mode", sortMode.name)
-            .apply()
-    }
-
-    override fun onStart() {
-        super.onStart()
-        // 再表示時に最新状態へ
-        refresh()
-        // レシーバ登録（Android 13+ は exported 指定が必須）
-        val filter = IntentFilter(HistoryManager.ACTION_HISTORY_CHANGED)
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(historyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(historyReceiver, filter)
-        }
-    }
-
-    override fun onStop() {
-        runCatching { unregisterReceiver(historyReceiver) }
-        super.onStop()
     }
 }
