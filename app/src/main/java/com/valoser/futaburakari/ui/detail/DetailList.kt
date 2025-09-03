@@ -49,6 +49,7 @@ import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.Column
 
 @Composable
 fun DetailListCompose(
@@ -245,22 +246,44 @@ fun DetailListCompose(
 
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
-                    AsyncImage(
-                        model = item.imageUrl,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
-                                    putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
-                                    putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
-                                    putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
-                                }
-                                ctx.startActivity(i)
-                            },
-                        contentScale = ContentScale.Fit,
-                        onSuccess = { adapter.onImageLoaded?.invoke() }
-                    )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        AsyncImage(
+                            model = item.imageUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
+                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
+                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
+                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
+                                    }
+                                    ctx.startActivity(i)
+                                },
+                            contentScale = ContentScale.Fit,
+                            onSuccess = { adapter.onImageLoaded?.invoke() }
+                        )
+                        // プロンプトはHTMLをプレーンにして表示。なければファイル名を後補。
+                        val promptPlain = run {
+                            val raw = item.prompt
+                            val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
+                            when {
+                                !plain.isNullOrBlank() -> plain
+                                !item.fileName.isNullOrBlank() -> item.fileName
+                                else -> null
+                            }
+                        }
+                        if (!promptPlain.isNullOrBlank()) {
+                            androidx.compose.material3.Text(
+                                text = promptPlain,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                 }
 
                 is DetailContent.Video -> {

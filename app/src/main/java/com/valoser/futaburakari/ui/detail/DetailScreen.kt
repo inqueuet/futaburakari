@@ -467,63 +467,42 @@ fun DetailScreenScaffold(
                     onDismissRequest = { openMediaSheet = false },
                     sheetState = sheetState
                 ) {
-                    // Build grid via AndroidView RecyclerView to reuse coil.load
-                    val data = remember(items) {
-                        // Build image entries with parent text index
-                        data class ImageEntry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
-                        val list = mutableListOf<ImageEntry>()
+                    // Compose純正のグリッドで表示
+                    val images = remember(items) {
+                        data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
                         fun findParentTextPosition(from: Int): Int {
                             for (i in from downTo 0) if (items[i] is com.valoser.futaburakari.DetailContent.Text) return i
                             return from
                         }
-                        items.withIndex().forEach { (i, c) ->
+                        items.mapIndexedNotNull { i, c ->
                             when (c) {
-                                is com.valoser.futaburakari.DetailContent.Image -> list += ImageEntry(i, findParentTextPosition(i), c.imageUrl)
-                                is com.valoser.futaburakari.DetailContent.Video -> list += ImageEntry(i, findParentTextPosition(i), c.videoUrl)
-                                else -> {}
+                                is com.valoser.futaburakari.DetailContent.Image -> Entry(i, findParentTextPosition(i), c.imageUrl)
+                                is com.valoser.futaburakari.DetailContent.Video -> Entry(i, findParentTextPosition(i), c.videoUrl)
+                                else -> null
                             }
                         }
-                        list
                     }
-                    AndroidView(factory = { ctx ->
-                        val rv = androidx.recyclerview.widget.RecyclerView(ctx).apply {
-                            layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 3)
-                            setHasFixedSize(true)
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                        contentPadding = PaddingValues(8.dp)
+                    ) {
+                        items(images.size) { idx ->
+                            val e = images[idx]
+                            coil.compose.AsyncImage(
+                                model = e.url,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .padding(4.dp)
+                                    .fillMaxWidth()
+                                    .height(110.dp)
+                                    .clickable {
+                                        scope.launch { listState.scrollToItem(e.parentTextIdx) }
+                                        openMediaSheet = false
+                                    },
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
                         }
-                        class ImageGridAdapter(
-                            private val data: List<Pair<String, Int>>,
-                            private val onClick: (Int) -> Unit
-                        ) : androidx.recyclerview.widget.RecyclerView.Adapter<ImageGridAdapter.VH>() {
-                            inner class VH(val iv: android.widget.ImageView) : androidx.recyclerview.widget.RecyclerView.ViewHolder(iv)
-                            override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH {
-                                val d = parent.resources.displayMetrics.density
-                                val sizePx = (110 * d).toInt()
-                                val iv = android.widget.ImageView(parent.context).apply {
-                                    layoutParams = android.view.ViewGroup.MarginLayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, sizePx).apply {
-                                        val m = (4 * d).toInt(); setMargins(m, m, m, m)
-                                    }
-                                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                                    setBackgroundColor(0xFF222222.toInt())
-                                }
-                                return VH(iv)
-                            }
-                            override fun onBindViewHolder(holder: VH, position: Int) {
-                                val (url, _) = data[position]
-                                holder.iv.load(url)
-                                holder.iv.setOnClickListener { onClick(position) }
-                            }
-                            override fun getItemCount(): Int = data.size
-                        }
-                        val pairs = data.map { it.url to it.parentTextIdx }
-                        val adapter = ImageGridAdapter(pairs) { idx ->
-                            val target = pairs[idx].second
-                            // scroll and dismiss
-                            scope.launch { listState.scrollToItem(target) }
-                            openMediaSheet = false
-                        }
-                        rv.adapter = adapter
-                        rv
-                    })
+                    }
                 }
             }
 

@@ -198,13 +198,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     itemsLive = viewModel.detailContent,
                     currentQueryFlow = detailSearchManager.currentQueryFlow,
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
-                    onQuoteClick = { token ->
-                        // Same as adapter wiring
-                        val levelRaw = token.takeWhile { it == '>' }.length
-                        val quoteLevel = if (levelRaw <= 0) 1 else levelRaw
-                        val core = token.drop(levelRaw).trim()
-                        QuotePopupFragment.showForQuote(supportFragmentManager, core, quoteLevel)
-                    },
+                    // Compose側で引用一覧を表示するため、ここでは何もしない
+                    onQuoteClick = null,
                     onResNumClick = { resNum, resBody ->
                         if (resBody.isEmpty()) confirmAndDelete(resNum) else launchReplyActivity(resBody)
                     },
@@ -219,7 +214,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                         viewModel.deletePost(postUrl, url, resNum, pwd ?: "", onlyImage = false)
                     },
                     onBodyClick = { quotedBody -> launchReplyActivity(quotedBody) },
-                    onAddNgFromBody = { bodyText -> showAddNgDialog(RuleType.BODY, bodyText) },
+                    // Compose側でNG追加ダイアログを表示するため、ここでは何もしない
+                    onAddNgFromBody = { _ -> },
                     onThreadEndTimeClick = { reloadDetails() },
                     onImageLoaded = {
                         applyPendingScroll()
@@ -411,11 +407,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
         // 引用（> / >> / >>> ...）タップ → ポップアップ表示
         detailAdapter.onQuoteClickListener = { token ->
-            // 先頭の '>' 個数を引用レベルに
             val levelRaw = token.takeWhile { it == '>' }.length
             val quoteLevel = if (levelRaw <= 0) 1 else levelRaw
             val core = token.drop(levelRaw).trim()
-            QuotePopupFragment.showForQuote(supportFragmentManager, core, quoteLevel)
+            showQuotePopup(core, quoteLevel)
         }
 
         // ID タップ → メニュー（同一ID表示 / NG追加）
@@ -424,8 +419,13 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             AlertDialog.Builder(this)
                 .setItems(items) { _, which ->
                     when (which) {
-                        0 -> QuotePopupFragment.showForId(supportFragmentManager, id)
-                        1 -> showAddNgDialog(type = RuleType.ID, prefill = id)
+                        0 -> showIdPostsPopup(id)
+                        1 -> {
+                            val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
+                            ngStore.addRule(RuleType.ID, id, MatchType.EXACT, sourceKey = source, ephemeral = true)
+                            viewModel.reapplyNgFilter()
+                            Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
                 .show()
@@ -462,7 +462,13 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
         // 本文長押し → NG追加
         detailAdapter.onAddNgFromBodyListener = { bodyText ->
-            showAddNgDialog(type = RuleType.BODY, prefill = bodyText)
+            val pat = bodyText.trim()
+            if (pat.isNotEmpty()) {
+                val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
+                ngStore.addRule(RuleType.BODY, pat, MatchType.SUBSTRING, sourceKey = source, ephemeral = true)
+                viewModel.reapplyNgFilter()
+                Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // setupRecyclerView() 内に追記
@@ -797,63 +803,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         )
     }
 
-    private fun showAddNgDialog(type: RuleType, prefill: String) {
-        if (type == RuleType.ID) {
-            AlertDialog.Builder(this)
-                .setTitle("IDをNGに追加")
-                .setMessage("ID: $prefill をNGにしますか？")
-                .setPositiveButton("追加") { _, _ ->
-                    val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
-                    ngStore.addRule(RuleType.ID, prefill, MatchType.EXACT, sourceKey = source, ephemeral = true)
-                    viewModel.reapplyNgFilter()
-                    Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("キャンセル", null)
-                .show()
-            return
-        }
-
-        // BODY: 入力 + マッチ方法選択
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(32, 16, 32, 0)
-        }
-        val input = android.widget.EditText(this).apply {
-            hint = "含めたくない語句（例: スパム語）"
-            setText(prefill)
-        }
-        val radio: android.widget.RadioGroup
-        val idSub = android.view.View.generateViewId()
-        val idPre = android.view.View.generateViewId()
-        val idRe  = android.view.View.generateViewId()
-        radio = android.widget.RadioGroup(this).apply {
-            val optSub = android.widget.RadioButton(context).apply { text = "部分一致"; id = idSub; isChecked = true }
-            val optPre = android.widget.RadioButton(context).apply { text = "前方一致"; id = idPre }
-            val optRe  = android.widget.RadioButton(context).apply { text = "正規表現"; id = idRe }
-            addView(optSub); addView(optPre); addView(optRe)
-        }
-        container.addView(input)
-        container.addView(radio)
-
-        AlertDialog.Builder(this)
-            .setTitle("本文でNG追加")
-            .setView(container)
-            .setPositiveButton("追加") { _, _ ->
-                val pat = input.text?.toString()?.trim().orEmpty()
-                if (pat.isEmpty()) return@setPositiveButton
-                val mt = when (radio.checkedRadioButtonId) {
-                    idPre -> MatchType.PREFIX
-                    idRe -> MatchType.REGEX
-                    else -> MatchType.SUBSTRING
-                }
-                val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
-                ngStore.addRule(RuleType.BODY, pat, mt, sourceKey = source, ephemeral = true)
-                viewModel.reapplyNgFilter()
-                Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("キャンセル", null)
-            .show()
-    }
+    // showAddNgDialog はComposeに移行済みのため削除しました
 
     // =========================================================
     // ここから：ポップアップ表示（引用 / ID）と検索ヘルパー
