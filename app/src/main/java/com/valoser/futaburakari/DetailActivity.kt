@@ -677,7 +677,12 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     private fun openNgManager() {
-        ngManagerLauncher.launch(Intent(this, NgManagerActivity::class.java))
+        ngManagerLauncher.launch(
+            Intent(this, NgManagerActivity::class.java).apply {
+                // DetailActivityからの起動時はスレタイNGは不要
+                putExtra(NgManagerActivity.EXTRA_HIDE_TITLE, true)
+            }
+        )
     }
 
     private fun showAddNgDialog(type: RuleType, prefill: String) {
