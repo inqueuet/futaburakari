@@ -37,7 +37,8 @@ import com.google.android.gms.ads.LoadAdError
 
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
-import com.valoser.futaburakari.ui.detail.DetailScreenHybrid
+import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
 @AndroidEntryPoint
 class DetailActivity : BaseActivity(), SearchManagerCallback {
@@ -102,33 +103,45 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         viewModel.reapplyNgFilter()
     }
 
+    private var toolbarTitleText: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityDetailBinding.inflate(layoutInflater)
-        // Switch to Compose container; embed the legacy XML via AndroidView
-        setContent { DetailScreenHybrid(binding) }
+        // Title for Compose TopBar and history
+        toolbarTitleText = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        // Hide legacy toolbar (Compose TopBar を使用)
+        binding.toolbar.isVisible = false
+        // Switch to Compose container with Scaffold TopBar; legacy content is hosted inside
+        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_color_mode", "green")
+        setContent {
+            FutaburakariTheme(colorMode = colorModePref) {
+                DetailScreenScaffold(
+                    binding = binding,
+                    title = toolbarTitleText,
+                    onBack = {
+                        saveScroll()
+                        onBackPressedDispatcher.onBackPressed()
+                    },
+                    onReply = { launchReplyActivity("") },
+                    onReload = { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails() },
+                    onOpenNg = { openNgManager() },
+                    onOpenMedia = { showMediaList() },
+                    onSubmitSearch = { q -> detailSearchManager.performSearch(q) },
+                    onClearSearch = { detailSearchManager.clearSearch() },
+                )
+            }
+        }
 
         // ★ ここですぐに初期化
         scrollStore = ScrollPositionStore(this)
-
-        setSupportActionBar(binding.toolbar)
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                androidx.core.view.WindowInsetsCompat.CONSUMED
-            }
-        }
-        supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
         // Hilt により viewModel は注入済み（by viewModels()）
         // SharedPreferences 準備（設定変更のリッスンに使用）
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         currentUrl = intent.getStringExtra(EXTRA_URL)
-        binding.toolbarTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        binding.toolbarTitle.text = toolbarTitleText
 
         // 履歴に記録（タイトルがない場合はURL末尾などで代替も可）
         currentUrl?.let { url ->
@@ -168,10 +181,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         })
 
         binding.swipeRefreshLayout.setOnRefreshListener { reloadDetails() }
-        binding.backButton.setOnClickListener {
-            saveScroll()
-            onBackPressedDispatcher.onBackPressed()
-        }
 
         // Ensure bottom container sits above navigation bar
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.bottomContainer) { v, insets ->
@@ -611,37 +620,13 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.detail_menu, menu)
-        detailSearchManager.setupSearch(menu) // 検索メニューの初期化
-        // メディア一覧（ID参照に依存せずタイトルでバインド）
-        for (i in 0 until menu.size()) {
-            val mi = menu.getItem(i)
-            if (mi.title?.toString() == "メディア一覧") {
-                mi.setOnMenuItemClickListener {
-                    showMediaList()
-                    true
-                }
-                break
-            }
-        }
-        return true
+        // Top bar is now Compose. Keep menu unused for now.
+        return false
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
         R.id.action_reply -> {
-            currentUrl?.let { url ->
-                val threadId = url.substringAfterLast("/").substringBefore(".htm")
-                val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
-                val boardPostUrl = boardBasePath + "futaba.php"
-                val intent = Intent(this, ReplyActivity::class.java).apply {
-                    putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
-                    putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
-                    putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
-                    putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, "")
-                }
-                //replyActivityResultLauncher.launch(intent)
-            }
             launchReplyActivity("")
             true
         }
@@ -671,7 +656,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             val boardPostUrl = boardBasePath + "futaba.php"
             val intent = Intent(this, ReplyActivity::class.java).apply {
                 putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
-                putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+                putExtra(ReplyActivity.EXTRA_THREAD_TITLE, toolbarTitleText)
                 putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
                 putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, quote)
             }
