@@ -14,14 +14,32 @@ import android.widget.Button
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-// import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.valoser.futaburakari.ui.BrushOverlayView
 import com.valoser.futaburakari.ui.MosaicOverlayView
 import com.valoser.futaburakari.ui.ZoomImageView
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,23 +85,9 @@ class ImageEditActivity : BaseActivity() {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_image_edit)
-
-        // (findViewByIdは変更なし)
-        imageView = findViewById(R.id.imageView)
-        brushOverlay = findViewById(R.id.brushOverlay)
-        mosaicOverlay = findViewById(R.id.mosaicOverlay)
-        seekBrushSize = findViewById(R.id.seekBrushSize)
-        textBrushSizeValue = findViewById(R.id.textBrushSizeValue)
-        seekMosaicAlpha = findViewById(R.id.seekMosaicAlpha)
-        textMosaicAlphaValue = findViewById(R.id.textMosaicAlphaValue)
-        buttonMosaic = findViewById(R.id.buttonMosaic)
-        buttonErase = findViewById(R.id.buttonErase)
-        buttonSave = findViewById(R.id.buttonSave)
-        buttonLock = findViewById(R.id.buttonLock)
-
 
         imageUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_IMAGE_URI, Uri::class.java)
@@ -98,37 +102,80 @@ class ImageEditActivity : BaseActivity() {
             return
         }
 
-        try {
-            if (viewModel.editingEngine == null) {
-                val sourceBitmap: Bitmap? = contentResolver.openInputStream(imageUri!!).use { inputStream ->
-                    BitmapFactory.decodeStream(inputStream)
+        val colorModePref = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_color_mode", "green")
+
+        setContent {
+            FutaburakariTheme(colorMode = colorModePref) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text(text = getString(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            navigationIcon = {
+                                IconButton(onClick = { onBackPressedDispatcher.onBackPressed() }) {
+                                    Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                                }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                                navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        )
+                    }
+                ) { inner ->
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize().padding(inner),
+                        factory = { ctx ->
+                            val root = layoutInflater.inflate(R.layout.activity_image_edit, null)
+
+                            // bind views
+                            imageView = root.findViewById(R.id.imageView)
+                            brushOverlay = root.findViewById(R.id.brushOverlay)
+                            mosaicOverlay = root.findViewById(R.id.mosaicOverlay)
+                            seekBrushSize = root.findViewById(R.id.seekBrushSize)
+                            textBrushSizeValue = root.findViewById(R.id.textBrushSizeValue)
+                            seekMosaicAlpha = root.findViewById(R.id.seekMosaicAlpha)
+                            textMosaicAlphaValue = root.findViewById(R.id.textMosaicAlphaValue)
+                            buttonMosaic = root.findViewById(R.id.buttonMosaic)
+                            buttonErase = root.findViewById(R.id.buttonErase)
+                            buttonSave = root.findViewById(R.id.buttonSave)
+                            buttonLock = root.findViewById(R.id.buttonLock)
+
+                            // initialize engine and views
+                            try {
+                                if (viewModel.editingEngine == null) {
+                                    val sourceBitmap: Bitmap? = contentResolver.openInputStream(imageUri!!).use { inputStream ->
+                                        BitmapFactory.decodeStream(inputStream)
+                                    }
+                                    if (sourceBitmap == null) throw Exception("ビットマップのデコードに失敗")
+                                    viewModel.initializeEngine(sourceBitmap)
+                                }
+                                imageView.setImageBitmap(viewModel.sourceBitmap!!)
+                                mosaicOverlay.zoomImageView = imageView
+                                mosaicOverlay.engine = viewModel.editingEngine!!
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                Toast.makeText(this, "画像の読み込みに失敗: ${e.message}", Toast.LENGTH_LONG).show()
+                                finish()
+                            }
+
+                            // setup controls
+                            setupBrushSizeControls()
+                            setupMosaicAlphaControls()
+                            setupToolButtons()
+                            setupTouchListener()
+                            setupSaveButton()
+                            setupLockButton()
+
+                            root
+                        }
+                    )
                 }
-                if (sourceBitmap == null) {
-                    throw Exception("ビットマップのデコードに失敗")
-                }
-                viewModel.initializeEngine(sourceBitmap)
             }
-
-            // ★★★ ここを修正 ★★★
-            // editingEngineの中ではなく、ViewModelが直接持つsourceBitmapを参照する
-            imageView.setImageBitmap(viewModel.sourceBitmap!!)
-            mosaicOverlay.zoomImageView = imageView
-            mosaicOverlay.engine = viewModel.editingEngine!!
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "画像の読み込みに失敗: ${e.message}", Toast.LENGTH_LONG).show()
-            finish()
-            return
         }
-
-        // (setupメソッド群の呼び出しは変更なし)
-        setupBrushSizeControls()
-        setupMosaicAlphaControls()
-        setupToolButtons()
-        setupTouchListener()
-        setupSaveButton()
-        setupLockButton()
+        // setup methods are invoked inside AndroidView factory
 
         if (savedInstanceState != null) {
             isLocked = savedInstanceState.getBoolean("lock_state", false)
