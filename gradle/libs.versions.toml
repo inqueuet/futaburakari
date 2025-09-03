@@ -29,7 +29,6 @@ preferenceKtx = "1.2.1"
 playServicesAds = "24.5.0"
 workManager = "2.10.3"
 firebaseBom = "34.2.0"
-mp4parser = "1.9.56"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -77,7 +76,7 @@ androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", vers
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
 androidx-startup-runtime = { group = "androidx.startup", name = "startup-runtime", version.ref = "startup" }
-mp4parser-isoparser = { group = "org.mp4parser", name = "isoparser", version.ref = "mp4parser" }
+ 
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -151,11 +151,7 @@ object MetadataExtractor {
         return null
     }
 
-    // ====== MP4: 同時接続数制限付きストリーミング処理 ======
-    private suspend fun extractMp4PromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
-        // 動画のプロンプト取得は廃止
-        return null
-    }
+    // 動画のプロンプト取得は廃止のため、動画解析用メソッドは削除済み
 
     // ====== 接続管理用のユーティリティ関数 ======
 
@@ -205,10 +201,7 @@ object MetadataExtractor {
 
     
 
-    // ====== WebM: 動画のプロンプト取得は廃止 ======
-    private suspend fun extractWebmPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
-        return null
-    }
+    // WebM についても同様に取得処理は廃止
 
     
 

@@ -795,8 +795,16 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
             thumb.adjustViewBounds = false
 
+            val dm = thumb.resources.displayMetrics
+            val target = (dm.widthPixels * 1.25f).toInt().coerceAtMost(2048)
+
             thumb.load(item.videoUrl) {
                 crossfade(true)
+                // 高精細サムネイルを要求（アスペクト比維持で最大 target 四方）
+                size(target, target)
+                precision(coil.size.Precision.INEXACT)
+                scale(coil.size.Scale.FIT)
+                allowHardware(true)
                 listener(
                     onStart = {
                         spinner?.visibility = View.VISIBLE
