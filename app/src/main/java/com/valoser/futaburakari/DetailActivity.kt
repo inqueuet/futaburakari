@@ -144,6 +144,20 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     onReload = { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails() },
                     onOpenNg = { openNgManager() },
                     onOpenMedia = { showMediaList() },
+                    onSodaneClick = { resNum -> viewModel.postSodaNe(resNum) },
+                    onDeletePost = { resNum, onlyImage ->
+                        val threadUrl = currentUrl ?: return@DetailScreenScaffold
+                        val boardBasePath = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                        val postUrl = boardBasePath + "futaba.php?guid=on"
+                        val pwd = AppPreferences.getPwd(this)
+                        viewModel.deletePost(
+                            postUrl = postUrl,
+                            referer = threadUrl,
+                            resNum = resNum,
+                            pwd = pwd ?: "",
+                            onlyImage = onlyImage,
+                        )
+                    },
                     onSubmitSearch = { q ->
                         recentSearchStore.add(q)
                         detailSearchManager.performSearch(q)

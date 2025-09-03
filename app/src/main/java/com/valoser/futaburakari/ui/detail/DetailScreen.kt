@@ -47,8 +47,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.databinding.ActivityDetailBinding
 import com.valoser.futaburakari.ui.detail.FastScroller
+import coil.load
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import android.text.Html
+import com.valoser.futaburakari.BlockDividerDecoration
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import com.valoser.futaburakari.ui.detail.buildIdPostsItems
+import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 
 /**
  * Hybrid container for gradual Compose migration.
@@ -69,6 +76,8 @@ fun DetailScreenScaffold(
     onReload: () -> Unit,
     onOpenNg: () -> Unit,
     onOpenMedia: () -> Unit,
+    onSodaneClick: ((String) -> Unit)? = null,
+    onDeletePost: (resNum: String, onlyImage: Boolean) -> Unit,
     onSubmitSearch: (String) -> Unit,
     onDebouncedSearch: (String) -> Unit,
     onClearSearch: () -> Unit,
@@ -104,6 +113,12 @@ fun DetailScreenScaffold(
         { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
     }
 
+    // Hoisted UI states for dialogs/sheets so both topBar and content can access
+    var openMediaSheet by remember { mutableStateOf(false) }
+            var idMenuTarget by remember { mutableStateOf<String?>(null) }
+            var idSheetItems by remember { mutableStateOf<List<DetailContent>?>(null) }
+            var resRefItems by remember { mutableStateOf<List<DetailContent>?>(null) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -126,7 +141,8 @@ fun DetailScreenScaffold(
                     IconButton(onClick = onOpenNg) {
                         Icon(Icons.Filled.Block, contentDescription = "NG Manage")
                     }
-                    IconButton(onClick = onOpenMedia) {
+                    // Prefer Compose sheet; keep callback available if needed
+                    IconButton(onClick = { openMediaSheet = true }) {
                         Icon(Icons.Filled.Image, contentDescription = "Media List")
                     }
                 },
@@ -151,31 +167,44 @@ fun DetailScreenScaffold(
                 update = { /* no-op */ }
             )
 
+            // Hoist items/listState so they are visible to dialogs/sheets below
+            val items = itemsLive?.observeAsState(emptyList())?.value ?: emptyList()
+            // Share list state between list and fast scroller
+            val listState = rememberLazyListState(
+                initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
+                initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
+            )
             if (useComposeList && itemsLive != null) {
-                val items = itemsLive.observeAsState(emptyList()).value
                 val searchQuery = currentQueryFlow?.collectAsState(initial = null)?.value
                 val refreshing = isRefreshingLive?.observeAsState(false)?.value ?: false
                 val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
-                // Share list state between list and fast scroller
-                val listState = rememberLazyListState(
-                    initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
-                    initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
-                )
                 var fastScrollActive by remember { mutableStateOf(false) }
                 // Bottom padding so content and scroller don't overlap bottom container
                 val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
                 val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
+                var deleteTarget by remember { mutableStateOf<String?>(null) }
                 SwipeRefresh(state = swipeState, onRefresh = onReload) {
                     val endPadding = DefaultFastScrollerWidth + 8.dp
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
                         onQuoteClick = onQuoteClick,
-                        onSodaneClick = null,
+                        onSodaneClick = onSodaneClick,
                         onThreadEndTimeClick = onThreadEndTimeClick,
-                        onResNumClick = onResNumClick,
-                        onResNumConfirmClick = onResNumConfirmClick,
+                        onResNumClick = { resNum, resBody ->
+                            if (resBody.isEmpty()) deleteTarget = resNum else onResNumClick?.invoke(resNum, resBody)
+                        },
+                        onResNumConfirmClick = { resNum ->
+                            val list = buildResReferencesItems(items, resNum)
+                            if (list.isNotEmpty()) {
+                                resRefItems = list
+                            } else {
+                                // fallback to original if needed
+                                onResNumConfirmClick?.invoke(resNum)
+                            }
+                        },
                         onResNumDelClick = onResNumDelClick,
+                        onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
                         onAddNgFromBody = onAddNgFromBody,
                         getSodaneState = getSodaneState,
@@ -186,6 +215,30 @@ fun DetailScreenScaffold(
                         initialScrollOffset = initialScrollOffset,
                         onSaveScroll = onSaveScroll,
                         contentPadding = PaddingValues(end = endPadding, bottom = bottomDp)
+                    )
+                }
+                // Delete confirmation (Compose)
+                val pendingDelete = deleteTarget
+                if (pendingDelete != null) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { deleteTarget = null },
+                        title = { Text(text = "No.$pendingDelete の削除") },
+                        text = { Text(text = "削除方法を選択してください") },
+                        confirmButton = {
+                            Row {
+                                androidx.compose.material3.TextButton(onClick = {
+                                    onDeletePost(pendingDelete, true)
+                                    deleteTarget = null
+                                }) { Text("画像のみ削除") }
+                                androidx.compose.material3.TextButton(onClick = {
+                                    onDeletePost(pendingDelete, false)
+                                    deleteTarget = null
+                                }) { Text("レスごと削除") }
+                            }
+                        },
+                        dismissButton = {
+                            androidx.compose.material3.TextButton(onClick = { deleteTarget = null }) { Text("キャンセル") }
+                        }
                     )
                 }
                 // Compose FastScroller overlay (right edge)
@@ -199,6 +252,166 @@ fun DetailScreenScaffold(
                     onDragActiveChange = { active -> fastScrollActive = active }
                 )
                 // Accompanist SwipeRefresh draws its own indicator inside SwipeRefresh
+            }
+
+            // IDメニュー（Composeダイアログ）
+            val idTarget = idMenuTarget
+            if (idTarget != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { idMenuTarget = null },
+                    title = { Text("ID: $idTarget") },
+                    text = { Text("操作を選択してください") },
+                    confirmButton = {
+                        Row {
+                            androidx.compose.material3.TextButton(onClick = {
+                                // 同一IDの投稿一覧を作成し、シートを開く
+                                val list = buildIdPostsItems(items, idTarget)
+                                idMenuTarget = null
+                                idSheetItems = list
+                            }) { Text("同一IDの投稿") }
+                            androidx.compose.material3.TextButton(onClick = {
+                                // 同一ID投稿一覧: 既存のViewシートの代わりに今はNG追加のみ提供（必要なら後続でComposeシート実装）
+                                onOpenNg()
+                                idMenuTarget = null
+                            }) { Text("NGに追加") }
+                        }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { idMenuTarget = null }) { Text("キャンセル") }
+                    }
+                )
+            }
+
+            // 同一ID投稿一覧のシート
+            val idItems = idSheetItems
+            if (idItems != null) {
+                val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                androidx.compose.material3.ModalBottomSheet(
+                    onDismissRequest = { idSheetItems = null },
+                    sheetState = sheetState
+                ) {
+                    AndroidView(factory = { ctx ->
+                        val rv = androidx.recyclerview.widget.RecyclerView(ctx).apply {
+                            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
+                        }
+                        val adapter = com.valoser.futaburakari.DetailAdapter().apply {
+                            onQuoteClickListener = null
+                            onIdClickListener = null
+                            onSodaNeClickListener = null
+                            onResNumClickListener = null
+                            onResNumConfirmClickListener = null
+                            onResNumDelClickListener = null
+                            getSodaNeState = { false }
+                            submitList(idItems)
+                        }
+                        rv.adapter = adapter
+                        rv.addItemDecoration(
+                            BlockDividerDecoration(adapter, ctx, paddingStartDp = 0, paddingEndDp = 0)
+                        )
+                        rv
+                    })
+                }
+            }
+
+            // 引用/No.参照一覧のシート
+            val refItems = resRefItems
+            if (refItems != null) {
+                val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                androidx.compose.material3.ModalBottomSheet(
+                    onDismissRequest = { resRefItems = null },
+                    sheetState = sheetState
+                ) {
+                    AndroidView(factory = { ctx ->
+                        val rv = androidx.recyclerview.widget.RecyclerView(ctx).apply {
+                            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
+                        }
+                        val adapter = com.valoser.futaburakari.DetailAdapter().apply {
+                            onQuoteClickListener = null
+                            onIdClickListener = null
+                            onSodaNeClickListener = null
+                            onResNumClickListener = null
+                            onResNumConfirmClickListener = null
+                            onResNumDelClickListener = null
+                            getSodaNeState = { false }
+                            submitList(refItems)
+                        }
+                        rv.adapter = adapter
+                        rv.addItemDecoration(
+                            BlockDividerDecoration(adapter, ctx, paddingStartDp = 0, paddingEndDp = 0)
+                        )
+                        rv
+                    })
+                }
+            }
+
+            // Helper はファイル末尾の top-level 定義を利用
+
+            // メディア一覧（Compose ModalBottomSheet）
+            if (openMediaSheet) {
+                val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                val scope = rememberCoroutineScope()
+                androidx.compose.material3.ModalBottomSheet(
+                    onDismissRequest = { openMediaSheet = false },
+                    sheetState = sheetState
+                ) {
+                    // Build grid via AndroidView RecyclerView to reuse coil.load
+                    val data = remember(items) {
+                        // Build image entries with parent text index
+                        data class ImageEntry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
+                        val list = mutableListOf<ImageEntry>()
+                        fun findParentTextPosition(from: Int): Int {
+                            for (i in from downTo 0) if (items[i] is com.valoser.futaburakari.DetailContent.Text) return i
+                            return from
+                        }
+                        items.withIndex().forEach { (i, c) ->
+                            when (c) {
+                                is com.valoser.futaburakari.DetailContent.Image -> list += ImageEntry(i, findParentTextPosition(i), c.imageUrl)
+                                is com.valoser.futaburakari.DetailContent.Video -> list += ImageEntry(i, findParentTextPosition(i), c.videoUrl)
+                                else -> {}
+                            }
+                        }
+                        list
+                    }
+                    AndroidView(factory = { ctx ->
+                        val rv = androidx.recyclerview.widget.RecyclerView(ctx).apply {
+                            layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 3)
+                            setHasFixedSize(true)
+                        }
+                        class ImageGridAdapter(
+                            private val data: List<Pair<String, Int>>,
+                            private val onClick: (Int) -> Unit
+                        ) : androidx.recyclerview.widget.RecyclerView.Adapter<ImageGridAdapter.VH>() {
+                            inner class VH(val iv: android.widget.ImageView) : androidx.recyclerview.widget.RecyclerView.ViewHolder(iv)
+                            override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH {
+                                val d = parent.resources.displayMetrics.density
+                                val sizePx = (110 * d).toInt()
+                                val iv = android.widget.ImageView(parent.context).apply {
+                                    layoutParams = android.view.ViewGroup.MarginLayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, sizePx).apply {
+                                        val m = (4 * d).toInt(); setMargins(m, m, m, m)
+                                    }
+                                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                                    setBackgroundColor(0xFF222222.toInt())
+                                }
+                                return VH(iv)
+                            }
+                            override fun onBindViewHolder(holder: VH, position: Int) {
+                                val (url, _) = data[position]
+                                holder.iv.load(url)
+                                holder.iv.setOnClickListener { onClick(position) }
+                            }
+                            override fun getItemCount(): Int = data.size
+                        }
+                        val pairs = data.map { it.url to it.parentTextIdx }
+                        val adapter = ImageGridAdapter(pairs) { idx ->
+                            val target = pairs[idx].second
+                            // scroll and dismiss
+                            scope.launch { listState.scrollToItem(target) }
+                            openMediaSheet = false
+                        }
+                        rv.adapter = adapter
+                        rv
+                    })
+                }
             }
 
             // Compose検索バー（DockedSearchBar）: 虫眼鏡で表示/非表示をトグル
