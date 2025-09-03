@@ -15,6 +15,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
@@ -231,7 +232,10 @@ fun MainCatalogScreen(
             state = pullState,
             isRefreshing = isLoading,
             onRefresh = onReload,
+            // トップのインジケータは使わず、中央に独自インジケータを重ねる
+            indicator = {}
         ) {
+            // グリッド本体
             LazyVerticalGrid(
                 modifier = Modifier.fillMaxSize(),
                 state = gridState,
@@ -241,6 +245,11 @@ fun MainCatalogScreen(
                 items(filtered, key = { it.detailUrl }) { item ->
                     CatalogCard(item = item, onClick = { onItemClick(item) })
                 }
+            }
+
+            // 中央インジケータ（ぐるぐる）
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
         }
     }
@@ -274,53 +283,76 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
             .padding(4.dp),
         onClick = onClick
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.fillMaxWidth()) {
-                AsyncImage(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f),
-                    model = item.fullImageUrl ?: item.previewUrl,
-                    contentDescription = item.title
-                )
-                val isVideo = (item.fullImageUrl ?: item.previewUrl).let { url ->
-                    url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
-                }
-                if (isVideo) {
-                    Surface(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .align(Alignment.Center),
-                        color = Color.Black.copy(alpha = 0.2f),
-                        shape = MaterialTheme.shapes.small
-                    ) {}
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Square thumbnail ensures uniform item height
+            AsyncImage(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // Rectangular aspect to unify item size (width : height = 3 : 4)
+                    .aspectRatio(3f / 4f),
+                model = item.fullImageUrl ?: item.previewUrl,
+                contentDescription = item.title
+            )
 
-                if (!item.replyCount.isNullOrBlank()) {
-                    Text(
-                        text = item.replyCount,
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(4.dp)
-                            .background(Color.Black.copy(alpha = 0.5f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
+            // Center play indicator for videos
+            val isVideo = (item.fullImageUrl ?: item.previewUrl).let { url ->
+                url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
             }
+            if (isVideo) {
+                Surface(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .align(Alignment.Center),
+                    color = Color.Black.copy(alpha = 0.2f),
+                    shape = MaterialTheme.shapes.small
+                ) {}
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+
+            // Reply count badge (bottom end)
+            if (!item.replyCount.isNullOrBlank()) {
+                Text(
+                    text = item.replyCount,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+
+            // Title overlay (fixed height) to keep grid uniform
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    // Taller overlay to support two title lines
+                    .height(56.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.55f),
+                                Color.Black.copy(alpha = 0.0f)
+                            )
+                        )
+                    )
+            )
             Text(
                 text = item.title,
+                color = Color.White,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(6.dp)
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 6.dp, end = 6.dp, bottom = 8.dp)
             )
         }
     }

@@ -75,6 +75,9 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             "ng_rules_json" -> {
                 ngRulesState.value = ngStore.getRules()
             }
+            "pref_key_color_mode" -> {
+                colorModeState.value = getColorModePref()
+            }
         }
     }
 
@@ -105,6 +108,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
     private val isLoadingState = mutableStateOf(false)
     private val itemsState = mutableStateOf<List<ImageItem>>(emptyList())
     private val ngRulesState = mutableStateOf<List<NgRule>>(emptyList())
+    private val colorModeState = mutableStateOf<String?>(null)
 
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -135,10 +139,11 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         // Compose用初期化
         spanCountState.intValue = getGridSpanCount()
         ngRulesState.value = ngStore.getRules()
+        colorModeState.value = getColorModePref()
 
         // Compose UI
         setContent {
-            FutaburakariTheme {
+            FutaburakariTheme(colorMode = colorModeState.value) {
                 MainCatalogScreen(
                     title = getString(R.string.app_name),
                     subtitle = toolbarSubtitleState.value,
@@ -194,31 +199,7 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         ngRulesState.value = ngStore.getRules()
     }
 
-    private fun configureSwipeRefreshIndicatorPosition() {
-        val srl = binding.swipeRefreshLayout
-        // 初期レイアウト後に中央へ配置
-        srl.post {
-            val h = srl.height.takeIf { it > 0 } ?: return@post
-            val target = h / 2
-            try {
-                srl.setProgressViewEndTarget(true, target)
-            } catch (_: Throwable) {
-                // 一部端末でsetProgressViewEndTargetが不安定な場合はオフセット指定にフォールバック
-                val dm = resources.displayMetrics
-                val circle = (40 * dm.density).toInt() // おおよその直径
-                val start = (target - circle).coerceAtLeast(0)
-                val end = (target + circle).coerceAtMost(h)
-                try { srl.setProgressViewOffset(true, start, end) } catch (_: Throwable) {}
-            }
-        }
-        // レイアウト変化（回転等）でも再調整
-        srl.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-            val h = v.height
-            if (h > 0) {
-                try { srl.setProgressViewEndTarget(true, h / 2) } catch (_: Throwable) {}
-            }
-        }
-    }
+    private fun configureSwipeRefreshIndicatorPosition() { /* no-op in Compose */ }
 
     // 自動更新機能のセットアップ（改良版）
     private fun setupAutoUpdateScroll() {
@@ -433,13 +414,11 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
 
     private fun setAutoUpdateIndicator(show: Boolean) {
         autoIndicatorShown = show
-        syncLoadingUi()
+        // Compose側でローディングを制御するため、ここではUI更新は不要
     }
 
     private fun syncLoadingUi() {
-        val refreshing = binding.swipeRefreshLayout.isRefreshing
-        binding.progressBar.isVisible = (lastIsLoading || autoIndicatorShown) && !refreshing
-        binding.recyclerView.isVisible = !lastIsLoading || refreshing
+        // Compose移行により、従来のView更新は不要
     }
 
     private fun fetchDataForCurrentUrl() {
@@ -550,8 +529,6 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
         return when (item.itemId) {
             R.id.action_reload -> {
                 cancelAutoUpdate()
-                binding.swipeRefreshLayout.isRefreshing = true
-                syncLoadingUi()
                 fetchDataForCurrentUrl()
                 Toast.makeText(this, getString(R.string.reloading), Toast.LENGTH_SHORT).show()
                 true
@@ -837,5 +814,10 @@ class MainActivity : BaseActivity(), SearchView.OnQueryTextListener {
             putExtra(DetailActivity.EXTRA_TITLE, item.title)
         }
         startActivity(intent)
+    }
+
+    private fun getColorModePref(): String? {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        return prefs.getString("pref_key_color_mode", "green")
     }
 }
