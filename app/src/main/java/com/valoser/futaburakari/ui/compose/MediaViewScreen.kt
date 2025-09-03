@@ -20,6 +20,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +50,7 @@ import coil.load
 import com.valoser.futaburakari.widget.ZoomableImageView
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +65,8 @@ fun MediaViewScreen(
     onSaveVideo: (() -> Unit)? = null
 ) {
     val ctx = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf(initialText) }
 
     // Extract prompt/metadata for images in background
@@ -81,12 +87,12 @@ fun MediaViewScreen(
                     ctx.contentResolver.openOutputStream(outUri)?.use { os ->
                         os.write(t.toByteArray())
                     }
-                    android.widget.Toast.makeText(ctx, "テキストを保存しました", android.widget.Toast.LENGTH_SHORT).show()
+                    scope.launch { snackbarHostState.showSnackbar("テキストを保存しました") }
                 }.onFailure { e ->
-                    android.widget.Toast.makeText(ctx, "テキストの保存に失敗しました: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                    scope.launch { snackbarHostState.showSnackbar("テキストの保存に失敗しました: ${e.message}") }
                 }
             } else {
-                android.widget.Toast.makeText(ctx, "保存するテキストがありません", android.widget.Toast.LENGTH_SHORT).show()
+                scope.launch { snackbarHostState.showSnackbar("保存するテキストがありません") }
             }
         }
     }
@@ -95,6 +101,7 @@ fun MediaViewScreen(
     val canShowSaveMedia = (type == "image" && onSaveImage != null) || (type == "video" && onSaveVideo != null)
 
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -108,9 +115,9 @@ fun MediaViewScreen(
                             val content = text ?: ""
                             if (content.isNotEmpty()) {
                                 cm.setPrimaryClip(ClipData.newPlainText("text", content))
-                                android.widget.Toast.makeText(ctx, "テキストをコピーしました", android.widget.Toast.LENGTH_SHORT).show()
+                                scope.launch { snackbarHostState.showSnackbar("テキストをコピーしました") }
                             } else {
-                                android.widget.Toast.makeText(ctx, "コピーするテキストがありません", android.widget.Toast.LENGTH_SHORT).show()
+                                scope.launch { snackbarHostState.showSnackbar("コピーするテキストがありません") }
                             }
                         }) { Icon(Icons.Default.ContentCopy, contentDescription = "コピー") }
 
@@ -122,8 +129,8 @@ fun MediaViewScreen(
                     if (canShowSaveMedia) {
                         IconButton(onClick = {
                             when (type) {
-                                "image" -> onSaveImage?.invoke()
-                                "video" -> onSaveVideo?.invoke()
+                                "image" -> if (!url.isNullOrBlank()) onSaveImage?.invoke() else scope.launch { snackbarHostState.showSnackbar("画像URLがありません") }
+                                "video" -> if (!url.isNullOrBlank()) onSaveVideo?.invoke() else scope.launch { snackbarHostState.showSnackbar("動画URLがありません") }
                             }
                         }) { Icon(Icons.Default.Save, contentDescription = "メディア保存") }
                     }

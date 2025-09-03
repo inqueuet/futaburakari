@@ -84,7 +84,7 @@ class MediaViewActivity : BaseActivity() {
             lifecycleScope.launch {
                 MediaSaver.saveImage(this@MediaViewActivity, url, networkClient)
             }
-        } ?: Toast.makeText(this, "画像URLがありません", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun saveVideo() {
@@ -106,7 +106,6 @@ class MediaViewActivity : BaseActivity() {
             lifecycleScope.launch {
                 MediaSaver.saveVideo(this@MediaViewActivity, url, networkClient)
             }
-        } ?: Toast.makeText(this, "動画URLがありません", Toast.LENGTH_SHORT).show()
+        }
     }
 }
-

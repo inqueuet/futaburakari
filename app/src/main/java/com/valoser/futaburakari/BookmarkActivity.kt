@@ -1,8 +1,14 @@
 package com.valoser.futaburakari
 
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -10,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.ui.compose.BookmarkScreen
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import kotlinx.coroutines.launch
 
 class BookmarkActivity : BaseActivity() {
 
@@ -21,47 +28,52 @@ class BookmarkActivity : BaseActivity() {
 
         setContent {
             FutaburakariTheme(colorMode = colorModePref) {
+                val snackbarHostState = remember { SnackbarHostState() }
+                val scope = rememberCoroutineScope()
                 var bookmarks by remember { mutableStateOf(BookmarkManager.getBookmarks(this@BookmarkActivity)) }
 
-                BookmarkScreen(
-                    title = getString(R.string.bookmark_management_title),
-                    bookmarks = bookmarks,
-                    onBack = { onBackPressedDispatcher.onBackPressed() },
-                    onAddBookmark = { name, url ->
-                        if (name.isBlank() || url.isBlank()) {
-                            Toast.makeText(this@BookmarkActivity, "名前とURLを入力してください", Toast.LENGTH_SHORT).show()
-                        } else {
-                            BookmarkManager.addBookmark(this@BookmarkActivity, Bookmark(name, url))
-                            Toast.makeText(this@BookmarkActivity, "ブックマークを追加しました", Toast.LENGTH_SHORT).show()
-                            bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
-                        }
-                    },
-                    onUpdateBookmark = { oldUrl, name, url ->
-                        if (name.isBlank() || url.isBlank()) {
-                            Toast.makeText(this@BookmarkActivity, "名前とURLを入力してください", Toast.LENGTH_SHORT).show()
-                        } else {
-                            BookmarkManager.updateBookmark(this@BookmarkActivity, oldUrl, Bookmark(name, url))
-                            if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == oldUrl) {
-                                BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, url)
+                Box {
+                    BookmarkScreen(
+                        title = getString(R.string.bookmark_management_title),
+                        bookmarks = bookmarks,
+                        onBack = { onBackPressedDispatcher.onBackPressed() },
+                        onAddBookmark = { name, url ->
+                            if (name.isBlank() || url.isBlank()) {
+                                scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
+                            } else {
+                                BookmarkManager.addBookmark(this@BookmarkActivity, Bookmark(name, url))
+                                scope.launch { snackbarHostState.showSnackbar("ブックマークを追加しました") }
+                                bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
                             }
-                            Toast.makeText(this@BookmarkActivity, "ブックマークを更新しました", Toast.LENGTH_SHORT).show()
+                        },
+                        onUpdateBookmark = { oldUrl, name, url ->
+                            if (name.isBlank() || url.isBlank()) {
+                                scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
+                            } else {
+                                BookmarkManager.updateBookmark(this@BookmarkActivity, oldUrl, Bookmark(name, url))
+                                if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == oldUrl) {
+                                    BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, url)
+                                }
+                                scope.launch { snackbarHostState.showSnackbar("ブックマークを更新しました") }
+                                bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
+                            }
+                        },
+                        onDeleteBookmark = { bookmark ->
+                            BookmarkManager.deleteBookmark(this@BookmarkActivity, bookmark)
+                            if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == bookmark.url) {
+                                BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, null)
+                            }
+                            scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を削除しました") }
                             bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
+                        },
+                        onSelectBookmark = { bookmark ->
+                            BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, bookmark.url)
+                            scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を選択しました") }
+                            finish()
                         }
-                    },
-                    onDeleteBookmark = { bookmark ->
-                        BookmarkManager.deleteBookmark(this@BookmarkActivity, bookmark)
-                        if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == bookmark.url) {
-                            BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, null)
-                        }
-                        Toast.makeText(this@BookmarkActivity, "「${bookmark.name}」を削除しました", Toast.LENGTH_SHORT).show()
-                        bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
-                    },
-                    onSelectBookmark = { bookmark ->
-                        BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, bookmark.url)
-                        Toast.makeText(this@BookmarkActivity, "「${bookmark.name}」を選択しました", Toast.LENGTH_SHORT).show()
-                        finish()
-                    }
-                )
+                    )
+                    SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
+                }
             }
         }
     }

@@ -101,6 +101,8 @@ class HistoryActivity : BaseActivity() {
                     onDispose { runCatching { unregisterReceiver(receiver) } }
                 }
 
+                var showConfirm by remember { mutableStateOf(false) }
+
                 HistoryScreen(
                     title = getString(R.string.history_title),
                     entries = entries,
@@ -110,16 +112,7 @@ class HistoryActivity : BaseActivity() {
                     onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
                     onSelectSort = { sort -> sortMode = sort },
                     onClearAll = {
-                        AlertDialog.Builder(this@HistoryActivity)
-                            .setMessage(getString(R.string.confirm_clear_history))
-                            .setPositiveButton(android.R.string.ok) { _, _ ->
-                                HistoryManager.clear(this@HistoryActivity)
-                                com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
-                                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).clearAllCache()
-                                computeAndSet()
-                            }
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show()
+                        showConfirm = true
                     },
                     onClickItem = { entry ->
                         val intent = Intent(this@HistoryActivity, DetailActivity::class.java).apply {
@@ -138,6 +131,26 @@ class HistoryActivity : BaseActivity() {
                         computeAndSet()
                     }
                 )
+
+                if (showConfirm) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showConfirm = false },
+                        title = { androidx.compose.material3.Text(text = getString(R.string.history_title)) },
+                        text = { androidx.compose.material3.Text(text = getString(R.string.confirm_clear_history)) },
+                        confirmButton = {
+                            androidx.compose.material3.TextButton(onClick = {
+                                showConfirm = false
+                                HistoryManager.clear(this@HistoryActivity)
+                                com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
+                                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).clearAllCache()
+                                computeAndSet()
+                            }) { androidx.compose.material3.Text(text = getString(android.R.string.ok)) }
+                        },
+                        dismissButton = {
+                            androidx.compose.material3.TextButton(onClick = { showConfirm = false }) { androidx.compose.material3.Text(text = getString(android.R.string.cancel)) }
+                        }
+                    )
+                }
             }
         }
     }

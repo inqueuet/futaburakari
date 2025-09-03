@@ -14,6 +14,28 @@ import androidx.preference.PreferenceManager
 import coil.imageLoader
 import coil.request.ImageRequest
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import com.valoser.futaburakari.ui.compose.MainCatalogScreen
@@ -114,31 +136,84 @@ class MainActivity : BaseActivity() {
         // Compose UI
         setContent {
             FutaburakariTheme(colorMode = colorModeState.value) {
-                MainCatalogScreen(
-                    title = getString(R.string.app_name),
-                    subtitle = toolbarSubtitleState.value,
-                    items = itemsState.value,
-                    isLoading = isLoadingState.value,
-                    spanCount = spanCountState.intValue,
-                    query = queryState.value,
-                    onQueryChange = { q -> queryState.value = q },
-                    onReload = {
-                        cancelAutoUpdate()
-                        fetchDataForCurrentUrl()
-                        Toast.makeText(this, getString(R.string.reloading), Toast.LENGTH_SHORT).show()
+                val snackbarHostState = remember { SnackbarHostState() }
+                val scope = rememberCoroutineScope()
+                val errorMessage by viewModel.error.observeAsState()
+                var showBookmarkDialog by rememberSaveable { mutableStateOf(currentSelectedUrl.isNullOrBlank()) }
+
+                LaunchedEffect(errorMessage) {
+                    val msg = errorMessage
+                    if (!msg.isNullOrBlank()) snackbarHostState.showSnackbar(msg)
+                }
+
+                Box {
+                    MainCatalogScreen(
+                        title = getString(R.string.app_name),
+                        subtitle = toolbarSubtitleState.value,
+                        items = itemsState.value,
+                        isLoading = isLoadingState.value,
+                        spanCount = spanCountState.intValue,
+                        query = queryState.value,
+                        onQueryChange = { q -> queryState.value = q },
+                        onReload = {
+                            cancelAutoUpdate()
+                            fetchDataForCurrentUrl()
+                            scope.launch { snackbarHostState.showSnackbar(getString(R.string.reloading)) }
+                        },
+                    onSelectBookmark = {
+                        val bms = BookmarkManager.getBookmarks(this@MainActivity)
+                        if (bms.isEmpty()) {
+                            scope.launch { snackbarHostState.showSnackbar("ブックマークがありません。まずはブックマークを登録してください。") }
+                            val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
+                            bookmarkActivityResultLauncher.launch(intent)
+                        } else {
+                            showBookmarkDialog = true
+                        }
                     },
-                    onSelectBookmark = { showBookmarkSelectionDialog() },
                     onManageBookmarks = {
-                        val intent = Intent(this, BookmarkActivity::class.java)
+                        val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
                         bookmarkActivityResultLauncher.launch(intent)
                     },
-                    onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
-                    onOpenHistory = { startActivity(Intent(this, HistoryActivity::class.java)) },
-                    onImageEdit = { startActivity(Intent(this, ImagePickerActivity::class.java)) },
+                    onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                    onOpenHistory = { startActivity(Intent(this@MainActivity, HistoryActivity::class.java)) },
+                    onImageEdit = { startActivity(Intent(this@MainActivity, ImagePickerActivity::class.java)) },
                     onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
                     onItemClick = { item -> handleItemClick(item) },
                     ngRules = ngRulesState.value,
-                )
+                    )
+
+                    SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
+
+                    if (showBookmarkDialog) {
+                        val bookmarks = remember { BookmarkManager.getBookmarks(this@MainActivity) }
+                        AlertDialog(
+                            onDismissRequest = { showBookmarkDialog = false },
+                            title = { androidx.compose.material3.Text("ブックマークを選択") },
+                            text = {
+                                LazyColumn {
+                                    items(bookmarks) { b ->
+                                        androidx.compose.material3.Text(
+                                            text = b.name,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    currentSelectedUrl = b.url
+                                                    toolbarSubtitleState.value = b.name
+                                                    BookmarkManager.saveSelectedBookmarkUrl(this@MainActivity, b.url)
+                                                    showBookmarkDialog = false
+                                                    fetchDataForCurrentUrl()
+                                                }
+                                                .padding(vertical = 12.dp)
+                                        )
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = { showBookmarkDialog = false }) { androidx.compose.material3.Text("閉じる") }
+                            }
+                        )
+                    }
+                }
             }
         }
 
@@ -229,10 +304,7 @@ class MainActivity : BaseActivity() {
 
     private fun fetchDataForCurrentUrl() {
         val url = currentSelectedUrl
-        if (url.isNullOrBlank()) {
-            showBookmarkSelectionDialog()
-            return
-        }
+        if (url.isNullOrBlank()) return
         viewModel.fetchImagesFromUrl(url)
 
         // Apply catalog settings asynchronously after first frame; if newly applied, refetch once
@@ -317,9 +389,8 @@ class MainActivity : BaseActivity() {
             itemsState.value = items
         }
 
-        viewModel.error.observe(this) { errorMessage ->
+        viewModel.error.observe(this) { _ ->
             setAutoUpdateIndicator(false)
-            Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -332,29 +403,7 @@ class MainActivity : BaseActivity() {
         return bookmarks.find { it.url == currentSelectedUrl }?.name ?: "ブックマーク未選択"
     }
 
-    private fun showBookmarkSelectionDialog() {
-        val bookmarks = BookmarkManager.getBookmarks(this)
-        val names = bookmarks.map { it.name }.toTypedArray()
-        if (names.isEmpty()) {
-            Toast.makeText(this, "ブックマークがありません。まずはブックマークを登録してください。", Toast.LENGTH_LONG).show()
-            val intent = Intent(this, BookmarkActivity::class.java)
-            bookmarkActivityResultLauncher.launch(intent)
-            return
-        }
-        val adapter = ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, names)
-        AlertDialog.Builder(this)
-            .setTitle("ブックマークを選択")
-            .setAdapter(adapter) { dialog, which ->
-                val selected = bookmarks[which]
-                currentSelectedUrl = selected.url
-                toolbarSubtitleState.value = selected.name
-                BookmarkManager.saveSelectedBookmarkUrl(this, selected.url)
-                fetchDataForCurrentUrl()
-                dialog.dismiss()
-            }
-            .setNegativeButton("キャンセル", null)
-            .show()
-    }
+    // Legacy dialog removed in favor of Compose AlertDialog inside setContent
 
     // endregion
 
