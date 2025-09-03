@@ -78,6 +78,9 @@ fun DetailScreenScaffold(
     onSearchActiveChange: ((Boolean) -> Unit)? = null,
     recentSearchesFlow: StateFlow<List<String>>? = null,
     useComposeList: Boolean = false,
+    initialScrollIndex: Int = 0,
+    initialScrollOffset: Int = 0,
+    onSaveScroll: ((Int, Int) -> Unit)? = null,
     itemsLive: androidx.lifecycle.LiveData<List<DetailContent>>? = null,
     currentQueryFlow: StateFlow<String?>? = null,
     getSodaneState: ((String) -> Boolean)? = null,
@@ -166,6 +169,9 @@ fun DetailScreenScaffold(
                         getSodaneState = getSodaneState,
                         onImageLoaded = onImageLoaded,
                         onVisibleMaxOrdinal = onVisibleMaxOrdinal,
+                        initialScrollIndex = initialScrollIndex,
+                        initialScrollOffset = initialScrollOffset,
+                        onSaveScroll = onSaveScroll,
                     )
                 }
                 // Accompanist SwipeRefresh draws its own indicator inside SwipeRefresh

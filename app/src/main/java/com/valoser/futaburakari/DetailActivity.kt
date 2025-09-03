@@ -118,6 +118,13 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         binding = ActivityDetailBinding.inflate(layoutInflater)
         // Title for Compose TopBar and history
         toolbarTitleText = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        currentUrl = intent.getStringExtra(EXTRA_URL)
+        // Initialize scroll store early to provide initial state for Compose list
+        scrollStore = ScrollPositionStore(this)
+        val initialScroll: Pair<Int, Int> = currentUrl?.let { url ->
+            val key = UrlNormalizer.threadKey(url)
+            scrollStore.getScrollState(key)
+        } ?: (0 to 0)
         // Hide legacy toolbar (Compose TopBar を使用)
         binding.toolbar.isVisible = false
         // Switch to Compose container with Scaffold TopBar; legacy content is hosted inside
@@ -151,6 +158,14 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
                     recentSearchesFlow = recentSearchStore.items,
                     useComposeList = useComposeList,
+                    // Compose list scroll state persistence
+                    initialScrollIndex = initialScroll.first,
+                    initialScrollOffset = initialScroll.second,
+                    onSaveScroll = { pos, off ->
+                        val url = currentUrl ?: return@DetailScreenScaffold
+                        val key = UrlNormalizer.threadKey(url)
+                        scrollStore.saveScrollState(key, pos, off)
+                    },
                     itemsLive = viewModel.detailContent,
                     currentQueryFlow = detailSearchManager.currentQueryFlow,
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
@@ -187,13 +202,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             }
         }
 
-        // ★ ここですぐに初期化
-        scrollStore = ScrollPositionStore(this)
-
         // Hilt により viewModel は注入済み（by viewModels()）
         // SharedPreferences 準備（設定変更のリッスンに使用）
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        currentUrl = intent.getStringExtra(EXTRA_URL)
         binding.toolbarTitle.text = toolbarTitleText
 
         // 履歴に記録（タイトルがない場合はURL末尾などで代替も可）
@@ -634,6 +645,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     private fun saveScroll() {
+        // When using Compose list, RecyclerView is hidden; skip legacy save
+        if (::binding.isInitialized && !binding.detailRecyclerView.isVisible) return
         val first = layoutManager.findFirstVisibleItemPosition()
         if (first != RecyclerView.NO_POSITION) {
             val v = layoutManager.findViewByPosition(first)

@@ -5,6 +5,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -41,6 +42,9 @@ fun DetailListCompose(
     getSodaneState: ((String) -> Boolean)? = null,
     onImageLoaded: (() -> Unit)? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
+    initialScrollIndex: Int = 0,
+    initialScrollOffset: Int = 0,
+    onSaveScroll: ((Int, Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // Reuse adapter utilities by creating a lightweight adapter instance configured with callbacks
@@ -59,7 +63,12 @@ fun DetailListCompose(
         }
     }
 
-    val listState = rememberLazyListState()
+    val safeIndex = if (initialScrollIndex >= 0) initialScrollIndex else 0
+    val safeOffset = if (initialScrollOffset >= 0) initialScrollOffset else 0
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = safeIndex,
+        initialFirstVisibleItemScrollOffset = safeOffset
+    )
 
     // Report max visible ordinal (50%以上見えているText単位の最大序数)
     LaunchedEffect(items, listState) {
@@ -94,11 +103,18 @@ fun DetailListCompose(
             .collectLatest { ord -> if (ord > 0) onVisibleMaxOrdinal?.invoke(ord) }
     }
 
+    // Persist scroll position changes (index + offset)
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .distinctUntilChanged()
+            .collectLatest { (pos, off) -> onSaveScroll?.invoke(pos, off) }
+    }
+
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
         itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
             when (item) {
                 is DetailContent.Text ->
-                    AndroidView(factory = { ctx ->
+                    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { ctx ->
                         // Inflate the existing layout and bind via ViewHolder to reuse spans/clicks
                         val v = LayoutInflater.from(ctx).inflate(R.layout.detail_item_text, null, false)
                         // Store holder in tag to reuse
@@ -121,7 +137,7 @@ fun DetailListCompose(
                     })
 
                 is DetailContent.Image ->
-                    AndroidView(factory = { ctx ->
+                    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { ctx ->
                         val v = LayoutInflater.from(ctx).inflate(R.layout.detail_item_image, null, false)
                         val holder = DetailAdapter.ImageViewHolder(
                             v,
@@ -137,7 +153,7 @@ fun DetailListCompose(
                     })
 
                 is DetailContent.Video ->
-                    AndroidView(factory = { ctx ->
+                    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { ctx ->
                         val v = LayoutInflater.from(ctx).inflate(R.layout.detail_item_video, null, false)
                         val holder = DetailAdapter.VideoViewHolder(
                             v,
@@ -153,7 +169,7 @@ fun DetailListCompose(
                     })
 
                 is DetailContent.ThreadEndTime ->
-                    AndroidView(factory = { ctx ->
+                    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { ctx ->
                         val v = LayoutInflater.from(ctx).inflate(R.layout.detail_item_thread_end_time, null, false)
                         val holder = DetailAdapter.ThreadEndTimeViewHolder(v, adapter.onThreadEndTimeClickListener)
                         v.tag = holder

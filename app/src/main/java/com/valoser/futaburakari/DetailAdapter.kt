@@ -659,15 +659,23 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
             spinner?.visibility = View.VISIBLE
             image.visibility = View.INVISIBLE
 
+            // Prefer natural aspect from the start to avoid small interim size
             image.layoutParams = image.layoutParams.apply {
                 width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = (image.resources.displayMetrics.density * 100).toInt() // 100dp
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
             }
-            image.scaleType = ImageView.ScaleType.CENTER_CROP
-            image.adjustViewBounds = false
+            image.adjustViewBounds = true
+            image.scaleType = ImageView.ScaleType.FIT_CENTER
 
+            val dm = image.resources.displayMetrics
+            // Request a sufficiently large decode so image is not tiny/blurry
+            val target = (dm.widthPixels * 1.25f).toInt().coerceAtMost(2048)
             image.load(item.imageUrl) {
                 crossfade(true)
+                size(target, target)
+                precision(coil.size.Precision.INEXACT)
+                scale(coil.size.Scale.FIT)
+                allowHardware(true)
                 listener(
                     onStart = {
                         spinner?.visibility = View.VISIBLE
@@ -683,6 +691,8 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
                         spinner?.visibility = View.GONE
                         image.visibility = View.VISIBLE
+                        // Ensure Compose/RecyclerView remeasures container after height change
+                        itemView.requestLayout()
                         onImageLoaded?.invoke()
                     },
                     onError = { _, _ ->
@@ -790,10 +800,10 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
             thumb.layoutParams = thumb.layoutParams.apply {
                 width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = (thumb.resources.displayMetrics.density * 100).toInt() // 100dp
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
             }
-            thumb.scaleType = ImageView.ScaleType.CENTER_CROP
-            thumb.adjustViewBounds = false
+            thumb.adjustViewBounds = true
+            thumb.scaleType = ImageView.ScaleType.FIT_CENTER
 
             val dm = thumb.resources.displayMetrics
             val target = (dm.widthPixels * 1.25f).toInt().coerceAtMost(2048)
@@ -820,6 +830,7 @@ class DetailAdapter : ListAdapter<DetailContent, RecyclerView.ViewHolder>(Detail
 
                         spinner?.visibility = View.GONE
                         thumb.visibility = View.VISIBLE
+                        itemView.requestLayout()
                         onImageLoaded?.invoke()
                     },
                     onError = { _, _ ->
