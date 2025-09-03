@@ -6,13 +6,14 @@ import java.nio.charset.Charset
 import android.os.Bundle
 import android.view.MenuItem
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-// import androidx.appcompat.app.AppCompatActivity
-import com.valoser.futaburakari.databinding.ActivityReplyNativeBinding
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.activity.compose.setContent
+import androidx.preference.PreferenceManager
 import dagger.hilt.android.AndroidEntryPoint
+import com.valoser.futaburakari.ui.compose.ReplyScreen
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.livedata.observeAsState
 
 /**
  * 完全ネイティブUIの返信画面。
@@ -30,49 +31,12 @@ class ReplyActivity : BaseActivity() {
         const val EXTRA_QUOTE_TEXT = "extra_quote_text"     // 引用本文（必要なら本文に差し込むなど）
     }
 
-    private lateinit var binding: ActivityReplyNativeBinding
     private val viewModel: ReplyViewModel by viewModels()
-
     private var pickedUri: Uri? = null
-
-    private val pickFileLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            pickedUri = uri
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-            binding.textPickedFile.text = uri.lastPathSegment ?: uri.toString()
-            binding.checkTextOnly.isChecked = false
-        } else {
-            binding.textPickedFile.text = "ファイルが選択されていません"
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityReplyNativeBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-
-        // 独自の戻るボタンにクリックリスナーを付ける
-        binding.backButton.setOnClickListener {
-            finish()
-        }
-
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                WindowInsetsCompat.CONSUMED
-            }
-        }
 
         // 不可視 WebView ワーカーをアタッチして TokenProvider をセット
         val tag = "reply_token_worker"
@@ -91,100 +55,63 @@ class ReplyActivity : BaseActivity() {
         val boardUrl = intent.getStringExtra(EXTRA_BOARD_URL) ?: "" // .../futaba.php
         val quote = intent.getStringExtra(EXTRA_QUOTE_TEXT).orEmpty()
 
-        // Toolbar タイトルに表示（layout に textThreadTitle は無い設計）
-        supportActionBar?.title = if (threadTitle.isNotBlank()) threadTitle else "レスを投稿"
-
-        // コメント欄に引用を初期挿入（必要な場合）
-        if (quote.isNotBlank()) {
-            val current = binding.inputComment.text?.toString().orEmpty()
-            val inserted = if (current.isBlank()) quote else current + "\n" + quote
-            binding.inputComment.setText(inserted)
-            binding.inputComment.setSelection(binding.inputComment.text?.length ?: 0)
-        }
-
-        // ▼ 設定で保存した削除キー（パスワード）を自動セット
+        // コメント欄 初期引用
         val savedPwd = AppPreferences.getPwd(this)
-        if (!savedPwd.isNullOrBlank()) {
-            binding.inputPassword.setText(savedPwd)
+
+        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_color_mode", "green")
+
+        setContent {
+            FutaburakariTheme(colorMode = colorModePref) {
+                val uiState by viewModel.uiState.observeAsState(ReplyViewModel.UiState.Idle)
+                ReplyScreen(
+                    title = threadTitle,
+                    initialQuote = quote,
+                    initialPassword = savedPwd,
+                    uiState = uiState,
+                    onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onSubmit = { name, email, sub, com, pwd, upfile, textOnly ->
+                        val comment = sanitizeComment(com)
+                        if (boardUrl.isBlank() || threadId.isBlank()) {
+                            Toast.makeText(this, "投稿先URLが不正です", Toast.LENGTH_SHORT).show()
+                            return@ReplyScreen
+                        }
+                        if (comment.isBlank() && (textOnly || upfile == null)) {
+                            Toast.makeText(this, "本文が空です", Toast.LENGTH_SHORT).show()
+                            return@ReplyScreen
+                        }
+                        pickedUri = upfile
+                        val postPageUrl = "$boardUrl?mode=post&res=$threadId"
+                        viewModel.submit(
+                            context = this,
+                            boardUrl = boardUrl,
+                            resto = threadId,
+                            name = name,
+                            email = email,
+                            sub = sub,
+                            com = comment,
+                            inputPwd = pwd ?: AppPreferences.getPwd(this),
+                            upfileUri = if (textOnly) null else upfile,
+                            textOnly = textOnly,
+                            postPageUrlForToken = postPageUrl
+                        )
+                    }
+                )
+            }
         }
 
-        binding.buttonPickFile.setOnClickListener {
-            pickFileLauncher.launch(arrayOf("*/*"))
-        }
-
-        binding.buttonSubmit.setOnClickListener {
-            val name = binding.inputName.text?.toString()
-            val email = binding.inputEmail.text?.toString()
-            val sub = binding.inputSub.text?.toString()
-            val rawCom = binding.inputComment.text?.toString().orEmpty()
-            val com = sanitizeComment(rawCom) // ← 改行・不可視文字を正規化してから送る
-
-            // 入力欄に値があればそれを優先、空なら保存済みを再適用
-            val inputPwdField = binding.inputPassword.text?.toString()
-            val effectivePwd = if (inputPwdField.isNullOrBlank()) {
-                AppPreferences.getPwd(this)
-            } else {
-                inputPwdField
-            }
-
-            val textOnly = binding.checkTextOnly.isChecked
-
-            if (boardUrl.isBlank() || threadId.isBlank()) {
-                Toast.makeText(this, "投稿先URLが不正です", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            if (com.isBlank() && (textOnly || pickedUri == null)) {
-                Toast.makeText(this, "本文が空です", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            // トークン取得用の投稿ページURLを組み立て（.../futaba.php?mode=post&res=xxx）
-            val postPageUrl = "$boardUrl?mode=post&res=$threadId"
-
-            viewModel.submit(
-                context = this,
-                boardUrl = boardUrl, // guid 等の付与はリポジトリ側で一元管理
-                resto = threadId,
-                name = name,
-                email = email,
-                sub = sub,
-                com = com,
-                inputPwd = effectivePwd,
-                upfileUri = if (textOnly) null else pickedUri,
-                textOnly = textOnly,
-                postPageUrlForToken = postPageUrl
-            )
-        }
-
+        // Success/Error ハンドリングはActivity側で継続
         viewModel.uiState.observe(this) { st ->
             when (st) {
-                is ReplyViewModel.UiState.Idle -> {
-                    binding.progressBar.visibility = android.view.View.GONE
-                }
-                is ReplyViewModel.UiState.Loading -> {
-                    binding.progressBar.visibility = android.view.View.VISIBLE
-                }
                 is ReplyViewModel.UiState.Success -> {
-                    binding.progressBar.visibility = android.view.View.GONE
                     Toast.makeText(this, "投稿に成功しました", Toast.LENGTH_SHORT).show()
                     setResult(RESULT_OK)
                     finish()
                 }
                 is ReplyViewModel.UiState.Error -> {
-                    binding.progressBar.visibility = android.view.View.GONE
                     Toast.makeText(this, st.message, Toast.LENGTH_LONG).show()
                 }
-            }
-        }
-
-        // Pad scroll container for bottom system bars
-        run {
-            val sc = binding.scroll
-            val origBottom = sc.paddingBottom
-            ViewCompat.setOnApplyWindowInsetsListener(sc) { v, insets ->
-                val bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, origBottom + bottom)
-                WindowInsetsCompat.CONSUMED
+                else -> {}
             }
         }
     }

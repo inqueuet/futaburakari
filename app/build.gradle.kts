@@ -81,6 +81,8 @@ dependencies {
     implementation(libs.jsoup)
     // Lifecycle-aware state collection
     implementation(libs.androidx.lifecycle.runtime.compose)
+    // LiveData -> Compose State
+    implementation("androidx.compose.runtime:runtime-livedata")
 
     // Unified dependencies from catalog
     implementation(libs.androidx.constraintlayout)
