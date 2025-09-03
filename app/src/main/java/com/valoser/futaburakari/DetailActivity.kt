@@ -219,6 +219,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         if (useComposeList) {
             binding.detailRecyclerView.isVisible = false
             binding.swipeRefreshLayout.isEnabled = false
+            // Hide legacy fast scroller views when using Compose list
+            binding.fastScrollTrack.visibility = View.GONE
+            binding.fastScrollThumb.visibility = View.GONE
         }
 
         // DetailSearchManager は (binding, callback) で生成

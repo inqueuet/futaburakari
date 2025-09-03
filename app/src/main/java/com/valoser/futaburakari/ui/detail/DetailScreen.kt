@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.databinding.ActivityDetailBinding
+import com.valoser.futaburakari.ui.detail.FastScroller
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 
@@ -154,7 +156,17 @@ fun DetailScreenScaffold(
                 val searchQuery = currentQueryFlow?.collectAsState(initial = null)?.value
                 val refreshing = isRefreshingLive?.observeAsState(false)?.value ?: false
                 val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
+                // Share list state between list and fast scroller
+                val listState = rememberLazyListState(
+                    initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
+                    initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
+                )
+                var fastScrollActive by remember { mutableStateOf(false) }
+                // Bottom padding so content and scroller don't overlap bottom container
+                val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
+                val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
                 SwipeRefresh(state = swipeState, onRefresh = onReload) {
+                    val endPadding = DefaultFastScrollerWidth + 8.dp
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
@@ -169,11 +181,23 @@ fun DetailScreenScaffold(
                         getSodaneState = getSodaneState,
                         onImageLoaded = onImageLoaded,
                         onVisibleMaxOrdinal = onVisibleMaxOrdinal,
+                        listState = listState,
                         initialScrollIndex = initialScrollIndex,
                         initialScrollOffset = initialScrollOffset,
                         onSaveScroll = onSaveScroll,
+                        contentPadding = PaddingValues(end = endPadding, bottom = bottomDp)
                     )
                 }
+                // Compose FastScroller overlay (right edge)
+                FastScroller(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 4.dp),
+                    listState = listState,
+                    itemsCount = items.size,
+                    bottomPadding = bottomDp,
+                    onDragActiveChange = { active -> fastScrollActive = active }
+                )
                 // Accompanist SwipeRefresh draws its own indicator inside SwipeRefresh
             }
 

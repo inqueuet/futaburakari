@@ -5,8 +5,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Divider
@@ -42,9 +44,11 @@ fun DetailListCompose(
     getSodaneState: ((String) -> Boolean)? = null,
     onImageLoaded: (() -> Unit)? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
+    listState: LazyListState? = null,
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val context = LocalContext.current
     // Reuse adapter utilities by creating a lightweight adapter instance configured with callbacks
@@ -65,14 +69,14 @@ fun DetailListCompose(
 
     val safeIndex = if (initialScrollIndex >= 0) initialScrollIndex else 0
     val safeOffset = if (initialScrollOffset >= 0) initialScrollOffset else 0
-    val listState = rememberLazyListState(
+    val internalState = listState ?: rememberLazyListState(
         initialFirstVisibleItemIndex = safeIndex,
         initialFirstVisibleItemScrollOffset = safeOffset
     )
 
     // Report max visible ordinal (50%以上見えているText単位の最大序数)
-    LaunchedEffect(items, listState) {
-        snapshotFlow { listState.layoutInfo }
+    LaunchedEffect(items, internalState) {
+        snapshotFlow { internalState.layoutInfo }
             .map { info ->
                 val vpStart = info.viewportStartOffset
                 val vpEnd = info.viewportEndOffset
@@ -104,13 +108,13 @@ fun DetailListCompose(
     }
 
     // Persist scroll position changes (index + offset)
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+    LaunchedEffect(internalState) {
+        snapshotFlow { internalState.firstVisibleItemIndex to internalState.firstVisibleItemScrollOffset }
             .distinctUntilChanged()
             .collectLatest { (pos, off) -> onSaveScroll?.invoke(pos, off) }
     }
 
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+    LazyColumn(state = internalState, modifier = Modifier.fillMaxSize(), contentPadding = contentPadding) {
         itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
             when (item) {
                 is DetailContent.Text ->
