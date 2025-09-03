@@ -7,6 +7,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Block
@@ -26,13 +35,16 @@ import androidx.compose.material3.DockedSearchBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.TextFieldValue
+// import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.databinding.ActivityDetailBinding
 import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.delay
 
 /**
  * Hybrid container for gradual Compose migration.
@@ -54,14 +66,22 @@ fun DetailScreenScaffold(
     onOpenNg: () -> Unit,
     onOpenMedia: () -> Unit,
     onSubmitSearch: (String) -> Unit,
+    onDebouncedSearch: (String) -> Unit,
     onClearSearch: () -> Unit,
     searchStateFlow: StateFlow<com.valoser.futaburakari.DetailSearchManager.SearchState>? = null,
     onSearchPrev: (() -> Unit)? = null,
     onSearchNext: (() -> Unit)? = null,
     bottomOffsetPxFlow: StateFlow<Int>? = null,
+    searchActiveFlow: StateFlow<Boolean>? = null,
+    onSearchActiveChange: ((Boolean) -> Unit)? = null,
+    recentSearchesFlow: StateFlow<List<String>>? = null,
 ) {
     var query by remember { mutableStateOf("") }
-    var searchActive by remember { mutableStateOf(false) }
+    val localSearchActive = remember { mutableStateOf(false) }
+    val searchActive: Boolean = searchActiveFlow?.collectAsState(initial = false)?.value ?: localSearchActive.value
+    val setSearchActive = remember(onSearchActiveChange) {
+        { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
+    }
 
     Scaffold(
         topBar = {
@@ -79,7 +99,7 @@ fun DetailScreenScaffold(
                     IconButton(onClick = onReload) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Reload")
                     }
-                    IconButton(onClick = { searchActive = !searchActive }) {
+                    IconButton(onClick = { setSearchActive(!searchActive) }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search")
                     }
                     IconButton(onClick = onOpenNg) {
@@ -121,10 +141,10 @@ fun DetailScreenScaffold(
                     onSearch = {
                         val q = query.trim()
                         if (q.isNotEmpty()) onSubmitSearch(q) else onClearSearch()
-                        searchActive = false
+                        setSearchActive(false)
                     },
                     active = true,
-                    onActiveChange = { active -> searchActive = active },
+                    onActiveChange = { active -> setSearchActive(active) },
                     placeholder = { Text("検索キーワード") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Filled.Search, contentDescription = null)
@@ -153,7 +173,64 @@ fun DetailScreenScaffold(
                         )
                     )
                 ) {
-                    // Suggestion content: なし（必要なら最近の検索語等を表示可能）
+                    // 候補表示: クイックフィルタ + 最近の検索
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // 入力のライブ検索（デバウンス）
+                        LaunchedEffect(query, searchActive) {
+                            if (searchActive) {
+                                val q = query.trim()
+                                if (q.isNotEmpty()) {
+                                    delay(300)
+                                    onDebouncedSearch(q)
+                                } else {
+                                    onClearSearch()
+                                }
+                            }
+                        }
+                        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            QuickFilterChip(label = "画像", onClick = {
+                                query = "画像"
+                                onDebouncedSearch("画像")
+                            })
+                            Spacer(Modifier.width(8.dp))
+                            QuickFilterChip(label = "動画", onClick = {
+                                query = "動画"
+                                onDebouncedSearch("動画")
+                            })
+                            Spacer(Modifier.width(8.dp))
+                            QuickFilterChip(label = "No.", onClick = {
+                                query = "No."
+                            })
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        val recent = recentSearchesFlow?.collectAsState(initial = emptyList())?.value ?: emptyList()
+                        if (recent.isNotEmpty()) {
+                            Text(
+                                text = "最近の検索",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                            LazyColumn {
+                                items(recent) { item ->
+                                    androidx.compose.material3.ListItem(
+                                        headlineContent = { Text(item) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                query = item
+                                                onSubmitSearch(item)
+                                                setSearchActive(false)
+                                            }
+                                            .padding(horizontal = 4.dp),
+                                        leadingContent = {
+                                            Icon(Icons.Filled.Search, contentDescription = null)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -161,7 +238,7 @@ fun DetailScreenScaffold(
             if (searchStateFlow != null) {
                 val s by searchStateFlow.collectAsState()
                 if (s.active) {
-                    val bottomPx by (bottomOffsetPxFlow ?: remember { mutableStateOf(0) }).collectAsState(initial = 0)
+                    val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
                     val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
                     SearchNavigationBar(
                         modifier = Modifier
@@ -212,4 +289,16 @@ private fun SearchNavigationBar(
             }
         }
     }
+}
+
+@Composable
+private fun QuickFilterChip(label: String, onClick: () -> Unit) {
+    AssistChip(
+        onClick = onClick,
+        label = { Text(label) },
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    )
 }

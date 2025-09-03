@@ -41,6 +41,7 @@ import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.valoser.futaburakari.search.RecentSearchStore
 
 @AndroidEntryPoint
 class DetailActivity : BaseActivity(), SearchManagerCallback {
@@ -108,6 +109,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private var toolbarTitleText: String = ""
     private val bottomOffsetFlowInternal = MutableStateFlow(0)
     private val bottomOffsetFlow = bottomOffsetFlowInternal.asStateFlow()
+    private val searchBarActiveFlowInternal = MutableStateFlow(false)
+    private val searchBarActiveFlow = searchBarActiveFlowInternal.asStateFlow()
+    private val recentSearchStore by lazy { RecentSearchStore(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -132,12 +136,19 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     onReload = { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails() },
                     onOpenNg = { openNgManager() },
                     onOpenMedia = { showMediaList() },
-                    onSubmitSearch = { q -> detailSearchManager.performSearch(q) },
+                    onSubmitSearch = { q ->
+                        recentSearchStore.add(q)
+                        detailSearchManager.performSearch(q)
+                    },
+                    onDebouncedSearch = { q -> detailSearchManager.performSearch(q) },
                     onClearSearch = { detailSearchManager.clearSearch() },
                     searchStateFlow = detailSearchManager.searchState,
                     onSearchPrev = { detailSearchManager.navigateToPrevHit() },
                     onSearchNext = { detailSearchManager.navigateToNextHit() },
                     bottomOffsetPxFlow = bottomOffsetFlow,
+                    searchActiveFlow = searchBarActiveFlow,
+                    onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
+                    recentSearchesFlow = recentSearchStore.items,
                 )
             }
         }
@@ -163,10 +174,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
         // DetailSearchManager は (binding, callback) で生成
         detailSearchManager = DetailSearchManager(binding, this)
-        // 旧ナビUIはレイアウト高さ確保のみ使い、表示はComposeに置換
-        binding.searchUpButton.apply { alpha = 0f; isEnabled = false; isClickable = false }
-        binding.searchDownButton.apply { alpha = 0f; isEnabled = false; isClickable = false }
-        binding.searchResultsCountText.apply { alpha = 0f }
 
         // bottom_container（検索ナビ + 広告）の高さ変化に追従してRecyclerViewの下パディングを更新
         binding.bottomContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -183,6 +190,11 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // 端末戻る：検索展開中は閉じる
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                // Compose検索バーが開いていれば先に閉じる
+                if (searchBarActiveFlowInternal.value) {
+                    searchBarActiveFlowInternal.value = false
+                    return
+                }
                 if (detailSearchManager.handleOnBackPressed()) return
                 // ★ ここでスクロール位置を保存
                 saveScroll()
@@ -655,8 +667,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     override fun getStringResource(resId: Int): String = getString(resId)
     override fun getStringResource(resId: Int, vararg formatArgs: Any): String = getString(resId, *formatArgs)
     override fun onSearchCleared() {
-        // 検索クリア時のUIを必要に応じて更新
-        binding.searchNavigationControls.isVisible = false
+        // Compose 検索ナビに移行済みのため特にUI更新不要
     }
     override fun isBindingInitialized(): Boolean = ::binding.isInitialized
 

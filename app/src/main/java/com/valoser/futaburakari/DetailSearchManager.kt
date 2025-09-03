@@ -63,13 +63,7 @@ class DetailSearchManager(
             }
         })
         searchItem?.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
-            override fun onMenuItemActionExpand(item: MenuItem): Boolean {
-                if (callback.isBindingInitialized()) {
-                    binding.searchNavigationControls.visibility = View.VISIBLE
-                }
-                return true
-            }
-
+            override fun onMenuItemActionExpand(item: MenuItem): Boolean = true
             override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
                 clearSearch() // SearchViewが閉じられたら検索状態をクリア
                 return true
@@ -102,10 +96,8 @@ class DetailSearchManager(
         if (searchResultPositions.isNotEmpty()) {
             currentSearchHitIndex = 0
             navigateToCurrentHit()
-            binding.searchNavigationControls.visibility = View.VISIBLE
         } else {
             callback.showToast(callback.getStringResource(R.string.no_results_found), Toast.LENGTH_SHORT) // R.string.no_results_found を使用
-            binding.searchNavigationControls.visibility = View.GONE
         }
         updateSearchResultsCount()
     }
@@ -119,10 +111,7 @@ class DetailSearchManager(
         searchResultPositions.clear()
         currentSearchHitIndex = -1
         
-        if (callback.isBindingInitialized()) {
-            binding.searchNavigationControls.visibility = View.GONE
-            updateSearchResultsCount() // UI更新
-        }
+        updateSearchResultsCount() // UI更新（Composeに反映）
 
         // SearchViewの状態もリセット（これが onMenuItemActionCollapse をトリガーしないように注意）
         if (searchView?.isIconified == false && searchView?.query?.isNotEmpty() == true) {
@@ -167,43 +156,13 @@ class DetailSearchManager(
         }
     }
 
-    fun setupSearchNavigation() {
-        if (!callback.isBindingInitialized()) return
-
-        binding.searchUpButton.setOnClickListener {
-            if (searchResultPositions.isNotEmpty()) {
-                currentSearchHitIndex--
-                if (currentSearchHitIndex < 0) {
-                    currentSearchHitIndex = searchResultPositions.size - 1
-                }
-                navigateToCurrentHit()
-            }
-        }
-        binding.searchDownButton.setOnClickListener {
-            if (searchResultPositions.isNotEmpty()) {
-                currentSearchHitIndex++
-                if (currentSearchHitIndex >= searchResultPositions.size) {
-                    currentSearchHitIndex = 0
-                }
-                navigateToCurrentHit()
-            }
-        }
-    }
+    // 旧Viewベースの検索ナビは廃止（Compose化）
 
     private fun updateSearchResultsCount() {
-        if (!callback.isBindingInitialized()) return
-
-        val countText = if (searchResultPositions.isNotEmpty() && currentSearchHitIndex != -1) {
-            callback.getStringResource(R.string.search_results_format, currentSearchHitIndex + 1, searchResultPositions.size) // R.string.search_results_format を使用
-        } else if (currentSearchQuery != null && searchResultPositions.isEmpty()) {
-            callback.getStringResource(R.string.no_results_found) // R.string.no_results_found を使用
-        } else {
-            ""
-        }
-        binding.searchResultsCountText.text = countText
+        // 画面のテキストUIはCompose側で表示
 
         // Flow にも反映（Compose用）
-        val active = searchResultPositions.isNotEmpty() && currentSearchQuery != null
+        val active = (currentSearchQuery != null) && (searchResultPositions.isNotEmpty())
         val currentDisp = if (active && currentSearchHitIndex in searchResultPositions.indices) currentSearchHitIndex + 1 else 0
         val total = searchResultPositions.size
         _searchState.value = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)

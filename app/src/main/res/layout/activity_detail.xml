@@ -116,42 +116,6 @@
         android:orientation="vertical"
         android:elevation="4dp">
 
-        <LinearLayout
-            android:id="@+id/search_navigation_controls"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="?android:attr/windowBackground"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="8dp"
-            android:visibility="gone"
-            tools:visibility="visible">
-
-            <ImageButton
-                android:id="@+id/search_up_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:contentDescription="Previous Match"
-                android:src="@android:drawable/ic_media_previous" />
-
-            <TextView
-                android:id="@+id/search_results_count_text"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_marginEnd="8dp"
-                android:layout_weight="1"
-                android:gravity="center_horizontal"
-                tools:text="10/20" />
-
-            <ImageButton
-                android:id="@+id/search_down_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:contentDescription="Next Match"
-                android:src="@android:drawable/ic_media_next" />
-        </LinearLayout>
-
         <!-- AdMob Banner (fixed at bottom) -->
         <com.google.android.gms.ads.AdView
             android:id="@+id/adView"
