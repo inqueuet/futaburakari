@@ -105,6 +105,7 @@ fun DetailScreenScaffold(
     onNearListEnd: (() -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf("") }
+    var reportTarget by remember { mutableStateOf<String?>(null) }
     val localSearchActive = remember { mutableStateOf(false) }
     val searchActive: Boolean = searchActiveFlow?.collectAsState(initial = false)?.value ?: localSearchActive.value
     val setSearchActive = remember(onSearchActiveChange) {
@@ -242,7 +243,7 @@ fun DetailScreenScaffold(
                                 onResNumConfirmClick?.invoke(resNum)
                             }
                         },
-                        onResNumDelClick = onResNumDelClick,
+                        onResNumDelClick = { resNum -> reportTarget = resNum },
                         onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
                         onAddNgFromBody = { body -> pendingNgBody = body },
@@ -655,6 +656,7 @@ private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
                 viewTreeObserver.addOnGlobalLayoutListener {
                     onHeightChanged(measuredHeight)
                 }
+                
             }
         },
         update = { v: com.google.android.gms.ads.AdView -> onHeightChanged(v.measuredHeight) }

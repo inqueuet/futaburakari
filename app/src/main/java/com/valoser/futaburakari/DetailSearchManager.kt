@@ -1,13 +1,11 @@
 package com.valoser.futaburakari
 
 import android.text.Html
-import android.view.Menu
-import android.view.MenuItem
-import android.view.View
+ 
 import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import androidx.appcompat.widget.SearchView
+ 
 
 // DetailActivityが実装するコールバックインターフェース
 interface SearchManagerCallback {
@@ -21,8 +19,6 @@ interface SearchManagerCallback {
 class DetailSearchManager(
     private val callback: SearchManagerCallback
 ) {
-
-    private var searchView: SearchView? = null
     private var currentSearchQuery: String? = null
     private val _currentQueryFlow = MutableStateFlow<String?>(null)
     val currentQueryFlow: StateFlow<String?> = _currentQueryFlow
@@ -38,33 +34,7 @@ class DetailSearchManager(
     private val _searchState = MutableStateFlow(SearchState(active = false, currentIndexDisplay = 0, total = 0))
     val searchState: StateFlow<SearchState> = _searchState
 
-    fun setupSearch(menu: Menu) {
-        val searchItem = menu.findItem(R.id.action_search)
-        searchView = searchItem?.actionView as? SearchView
-        searchView?.queryHint = callback.getStringResource(R.string.search_hint) // R.string.search_hint を使用
-        searchView?.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
-            override fun onQueryTextSubmit(query: String?): Boolean {
-                query?.let { performSearch(it) }
-                searchView?.clearFocus()
-                return true
-            }
-
-            override fun onQueryTextChange(newText: String?): Boolean {
-                // ユーザーがテキストをクリアした場合、即座に検索をクリアする
-                if (newText.isNullOrEmpty() && !currentSearchQuery.isNullOrEmpty()) {
-                    clearSearch()
-                }
-                return true
-            }
-        })
-        searchItem?.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
-            override fun onMenuItemActionExpand(item: MenuItem): Boolean = true
-            override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
-                clearSearch() // SearchViewが閉じられたら検索状態をクリア
-                return true
-            }
-        })
-    }
+    // setupSearch(Menu/SearchView) はCompose移行により廃止
 
     fun performSearch(query: String) {
         currentSearchQuery = query
@@ -105,15 +75,6 @@ class DetailSearchManager(
         
         updateSearchResultsCount() // UI更新（Composeに反映）
 
-        // SearchViewの状態もリセット（これが onMenuItemActionCollapse をトリガーしないように注意）
-        if (searchView?.isIconified == false && searchView?.query?.isNotEmpty() == true) {
-            searchView?.setQuery("", false) // クエリをクリア
-        }
-        if (searchView?.isIconified == false) {
-             // searchView?.isIconified = true // これが onMenuItemActionCollapse をトリガーする可能性
-        }
-
-
         if (searchWasActive) {
             callback.onSearchCleared() // DetailActivityに通知して必要なUI更新を行わせる
         }
@@ -143,12 +104,13 @@ class DetailSearchManager(
     }
 
     fun isSearchActive(): Boolean {
-        // SearchViewが展開されていて、かつ検索クエリがある場合を「検索中」とみなす
-        return searchView?.isIconified == false && !currentSearchQuery.isNullOrEmpty()
+        // Compose側: クエリが空でなければ検索中とみなす
+        return !currentSearchQuery.isNullOrEmpty()
     }
     
     fun isSearchViewExpanded(): Boolean {
-        return searchView?.isIconified == false
+        // Compose側ではSearchViewを使わない
+        return false
     }
 
     fun getCurrentSearchQuery(): String? {
@@ -157,11 +119,8 @@ class DetailSearchManager(
 
     // DetailActivityのonBackPressedDispatcher.addCallbackから呼び出される
     fun handleOnBackPressed(): Boolean {
-        if (isSearchViewExpanded()) { // まずSearchViewが開いているか確認
-            searchView?.isIconified = true // SearchViewを閉じる (これによりonMenuItemActionCollapseが呼ばれ、clearSearchが実行される)
-            return true // バックキーイベントを消費したことを示す
-        }
-        return false // SearchViewが閉じていれば、通常のバックキー処理
+        // Compose側では戻るキーでの閉じ処理はアクティビティで状態を下げる
+        return false
     }
 
     // ---- Compose用ナビゲーションAPI ----

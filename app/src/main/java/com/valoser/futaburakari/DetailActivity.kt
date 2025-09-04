@@ -5,28 +5,25 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.Html
-import android.view.Menu
-import android.view.MenuItem
-import android.view.View
-import android.view.ViewGroup
+ 
+ 
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 // import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.isVisible
+ 
 import androidx.activity.viewModels
 import androidx.lifecycle.Observer
  
  
 import androidx.activity.compose.setContent
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import androidx.appcompat.app.AlertDialog
+ 
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.Normalizer
+ 
 import androidx.preference.PreferenceManager
  
 
@@ -47,15 +44,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private lateinit var detailSearchManager: DetailSearchManager
     private lateinit var scrollStore: ScrollPositionStore
 
-    private var pendingScrollPosition: Pair<Int, Int>? = null
-
     private var currentUrl: String? = null
 
     private var isRequestingMore = false   // 追加：多重呼び出し防止
-
-    private var isInitialLoad = true // ★クラスのプロパティとして初期化
-
-    private var isFastScrolling = false // 追加
+    private var isInitialLoad = true // ★（未使用）将来削除可
 
     // メインスレッドハンドラ / 既読更新デバウンス
     private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -73,7 +65,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         const val EXTRA_TITLE = "extra_title"
     }
 
-    private var suppressNextRestore: Boolean = false
+    private var suppressNextRestore: Boolean = false // （未使用化）
 
     private lateinit var prefs: SharedPreferences
     private val adsEnabledFlowInternal = MutableStateFlow(false)
@@ -185,10 +177,10 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
                     // Compose側で引用一覧を表示するため、ここでは何もしない
                     onQuoteClick = null,
-                    onResNumClick = { resNum, resBody ->
-                        if (resBody.isEmpty()) confirmAndDelete(resNum) else launchReplyActivity(resBody)
+                    onResNumClick = { _, resBody ->
+                        if (resBody.isNotEmpty()) launchReplyActivity(resBody)
                     },
-                    onResNumConfirmClick = { resNum -> showResReferencesPopup(resNum) },
+                    onResNumConfirmClick = { _ -> },
                     onResNumDelClick = { resNum ->
                         // keep same as adapter behavior
                         val url = currentUrl ?: return@DetailScreenScaffold
@@ -297,12 +289,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     private fun observeViewModel() {
         viewModel.detailContent.observe(this, Observer { list ->
 
-            // ★ ここで ThreadEndTime を最後の1件に絞る
-            val normalized = normalizeThreadEndTime(list)
-
             // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
             runCatching {
-                val latestReplyNo = normalized.count { it is DetailContent.Text }
+                val latestReplyNo = list.count { it is DetailContent.Text }
                 val threadUrl = currentUrl
                 if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
                     HistoryManager.applyFetchResult(this, threadUrl, latestReplyNo)
@@ -311,7 +300,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
             // 履歴のサムネイル更新（最初のメディアを採用）
             runCatching {
-                val media = normalized.firstOrNull {
+                val media = list.firstOrNull {
                     it is DetailContent.Image || it is DetailContent.Video
                 }
                 val url = when (media) {
@@ -330,7 +319,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             // プレーンテキストキャッシュをバックグラウンドで構築
             buildPlainCacheJob?.cancel()
             buildPlainCacheJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-                val cache = normalized.asSequence()
+                val cache = list.asSequence()
                     .filterIsInstance<DetailContent.Text>()
                     .associate { t ->
                         val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT)
@@ -370,21 +359,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     // スクロール保存/復元は Compose 側の onSaveScroll と initialScrollIndex/Offset で処理
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        // Top bar is now Compose. Keep menu unused for now.
-        return false
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
-        R.id.action_reply -> {
-            launchReplyActivity("")
-            true
-        }
-        R.id.action_reload -> { reloadDetails(); true }
-        R.id.action_ng_manage -> { openNgManager(); true }
-        else -> super.onOptionsItemSelected(item)
-    }
+    // メニューはCompose TopBarで提供するため未使用
 
     // ===== SearchManagerCallback 実装 =====
     override fun getDetailContent(): List<DetailContent>? = viewModel.detailContent.value
@@ -504,67 +479,11 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         runOnUiThread { Toast.makeText(this, message, duration).show() }
     }
 
-    private fun confirmAndDelete(resNum: String) {
-        val pwd = AppPreferences.getPwd(this) ?: ""
-        val threadUrl = currentUrl ?: return
-        val boardBase = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
-        val postUrl = boardBase + "futaba.php?guid=on"
-
-        // 削除方法を選択するダイアログ
-        AlertDialog.Builder(this)
-            .setTitle("No.$resNum の削除")
-            .setMessage("削除方法を選択してください")
-            .setPositiveButton("画像のみ削除") { _, _ ->
-                viewModel.deletePost(
-                    postUrl = postUrl,
-                    referer = threadUrl,
-                    resNum = resNum,
-                    pwd = pwd,
-                    onlyImage = true,
-                )
-            }
-            .setNeutralButton("レスごと削除") { _, _ ->
-                viewModel.deletePost(
-                    postUrl = postUrl,
-                    referer = threadUrl,
-                    resNum = resNum,
-                    pwd = pwd,
-                    onlyImage = false,
-                )
-            }
-            .setNegativeButton("キャンセル", null)
-            .show()
-    }
-
-    private fun extractResNo(c: DetailContent): Int? = when (c) {
-        is DetailContent.Text -> {
-            val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-            Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
-        }
-        else -> null
-    }
+    // 削除確認ダイアログはCompose側に統一
 
     // RecyclerView末尾探索は不要
 
-    // 末尾の ThreadEndTime を1件だけ残す
-    private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent> {
-        val endIndexes = src.withIndex()
-            .filter { it.value is DetailContent.ThreadEndTime }
-            .map { it.index }
-
-        if (endIndexes.isEmpty()) return src
-        val keepIndex = endIndexes.last()
-
-        val out = ArrayList<DetailContent>(src.size - (endIndexes.size - 1))
-        for ((i, item) in src.withIndex()) {
-            if (item is DetailContent.ThreadEndTime) {
-                if (i == keepIndex) out += item
-            } else {
-                out += item
-            }
-        }
-        return out
-    }
+    // ThreadEndTime の表示正規化は Compose 側に統一
 
     // レス数（Text/Image/Video の件数）を返す
     private fun countPostItems(): Int {
@@ -572,92 +491,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         return list.count { it is DetailContent.Text || it is DetailContent.Image || it is DetailContent.Video }
     }
 
-    // 追加：No の参照（引用）を一覧表示
-    private fun showResReferencesPopup(resNum: String) {
-        val all = viewModel.detailContent.value ?: return
-        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-            val hitIndexes = all.withIndex().filter { (_, c) ->
-                c is DetailContent.Text && matchesResRefCached(c, resNum)
-            }.map { it.index }
-
-            if (hitIndexes.isEmpty()) {
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    Toast.makeText(this@DetailActivity, "No.$resNum の引用は見つかりませんでした", Toast.LENGTH_SHORT).show()
-                }
-                return@launch
-            }
-
-            val groups = mutableListOf<List<DetailContent>>()
-            for (i in hitIndexes) {
-                val group = mutableListOf<DetailContent>()
-                group += all[i]
-                var j = i + 1
-                while (j < all.size) {
-                    when (val c = all[j]) {
-                        is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
-                        is DetailContent.Text, is DetailContent.ThreadEndTime -> break
-                    }
-                }
-                groups += group
-            }
-
-            val distinctGroups = groups.distinctBy { it.firstOrNull()?.id }
-
-            // レス番号順に整序
-            val ordered = distinctGroups
-                .sortedWith(compareBy<List<DetailContent>> { grp ->
-                    val head = grp.firstOrNull()
-                    when (head) {
-                        null -> Int.MAX_VALUE
-                        else -> extractResNo(head) ?: Int.MAX_VALUE
-                    }
-                })
-                .flatten()
-
-            // Compose側の参照一覧シートに統合済み（ここではUI遷移は行わない）
-            withContext(kotlinx.coroutines.Dispatchers.Main) { }
-        }
-    }
+    // 参照一覧のUIはComposeに統一（Activity側UIなし）
 
     // 追加: 共通のマッチ関数
-    private fun matchesResRefCached(text: DetailContent.Text, resNum: String): Boolean {
-        val plain = plainTextCache[text.id] ?: Html.fromHtml(text.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-
-        // 見た目の差異を吸収（ZWSP, 全角, 記号類）
-        val norm = Normalizer.normalize(
-            plain
-                .replace("\u200B", "")  // ZWSP除去
-                .replace('　', ' ')      // 全角空白→半角
-                .replace('＞', '>')      // 全角> → >
-                .replace('≫', '>')      // ≫    → >
-            , Normalizer.Form.NFKC
-        )
-
-        val esc = Regex.escape(resNum)
-
-        val textPatterns = listOf(
-            // 1) No. の直接表記: "No.1234", "No 1234", "no.1234"
-            Regex("""\bNo\.?\s*$esc\b""", RegexOption.IGNORE_CASE),
-
-            // 2) 引用表記（行頭に '>' が1つ以上）
-            //    ">No.1234", ">>1234", ">>> No.1234" など
-            Regex("""^>+\s*(?:No\.?\s*)?$esc\b""",
-                setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE)),
-
-            // 3) 行頭以外でも ">>1234" / ">> No.1234" を拾う（安全側）
-            Regex("""\B>+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE),
-
-            // 4) 裸の数字（前後が数字じゃない）—必要な場合のみ残す
-            Regex("""(?<!\d)$esc(?!\d)""")
-        )
-        if (textPatterns.any { it.containsMatchIn(norm) }) return true
-
-        // HTML実体化や属性での参照（保険）
-        val htmlPatterns = listOf(
-            Regex("""data-res\s*=\s*["']\s*$esc\s*["']""", RegexOption.IGNORE_CASE),
-            Regex("""&gt;+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE) // &gt;&gt;No.1234
-        )
-        return htmlPatterns.any { it.containsMatchIn(text.htmlContent) }
-    }
+    // 引用参照の一致判定はCompose側で実施（ここでは未使用）
 
 }

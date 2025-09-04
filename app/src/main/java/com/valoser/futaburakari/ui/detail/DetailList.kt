@@ -1,9 +1,4 @@
 package com.valoser.futaburakari.ui.detail
-
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,7 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.viewinterop.AndroidView
+ 
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.ui.text.AnnotatedString
