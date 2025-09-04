@@ -50,6 +50,7 @@ import com.valoser.futaburakari.RuleType
  * - 検索欄の表示切替、ブックマーク選択/管理、履歴、設定などのメニュー操作を提供。
  * - NG タイトルルールとクエリで一覧をフィルタし、グリッド表示します。
  * - 可視範囲＋先読み分の軽量プリフェッチでスクロール体験を滑らかにします。
+ * - グリッドの各カードでは、下部のグラデーションオーバーレイ上にタイトルを表示し、返信数は右下のバッジとしてタイトルよりレイヤーが上に重ねて表示します。
  */
 fun MainCatalogScreen(
     modifier: Modifier = Modifier,
@@ -296,6 +297,10 @@ private fun MoreMenu(
 }
 
 @Composable
+/**
+ * カタログアイテムのカード表示。
+ * 下部のグラデーションオーバーレイにタイトルを表示し、返信数は右下のバッジとしてオーバーレイよりレイヤーが上に重ねて表示します。
+ */
 private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier
@@ -333,20 +338,6 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                 )
             }
 
-            // 返信数バッジ（右下）
-            if (!item.replyCount.isNullOrBlank()) {
-                Text(
-                    text = item.replyCount,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(4.dp)
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-
             // タイトル用のオーバーレイ（固定高さでレイアウトを安定化）
             Box(
                 modifier = Modifier
@@ -373,6 +364,20 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                     .align(Alignment.BottomStart)
                     .padding(start = 6.dp, end = 6.dp, bottom = 8.dp)
             )
+
+            // 返信数バッジ（右下）。タイトル/オーバーレイの後に描画し、レイヤー的に上に重ねる
+            if (!item.replyCount.isNullOrBlank()) {
+                Text(
+                    text = item.replyCount,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
         }
     }
 }
