@@ -35,9 +35,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 
-// Expose default width so callers can add right padding to content
+/**
+ * Default width of the fast scroller track, so callers can reserve matching
+ * end padding on the list content to avoid overlap.
+ */
 val DefaultFastScrollerWidth: Dp = 20.dp
 
+/**
+ * Lightweight vertical fast scroller for long `LazyColumn`s.
+ * - Renders only when `itemsCount` exceeds `visibleThreshold`.
+ * - Positions a draggable thumb within a full-height track aligned to the top.
+ * - Maps thumb position to `LazyListState.scrollToItem(targetIndex)` linearly by index
+ *   (approximate: ignores per-item heights and scroll offset).
+ * - While dragging, slightly tints the track and invokes `onDragActiveChange(true/false)`.
+ * - `bottomPadding` reserves space (e.g., for a banner) so the track does not overlap it.
+ */
 @Composable
 fun FastScroller(
     modifier: Modifier = Modifier,
@@ -84,7 +96,7 @@ fun FastScroller(
         // Thumb
         var thumbOffsetYPx by remember { mutableStateOf(0f) }
 
-        // Update thumb position when list scrolls (approximate)
+        // Keep thumb roughly in sync with list scroll (index-based approximation)
         LaunchedEffect(listState.firstVisibleItemIndex, itemsCount) {
             if (!dragging && itemsCount > 0 && trackHeightPx > 0f) {
                 val ratio = (listState.firstVisibleItemIndex.coerceAtLeast(0)).toFloat() / (itemsCount - 1).coerceAtLeast(1)
@@ -107,6 +119,7 @@ fun FastScroller(
                         onDragEnd = { dragging = false },
                         onDragCancel = { dragging = false },
                     ) { change, dragAmount ->
+                        // Consume the gesture and map thumb delta to list index
                         change.consume()
                         if (trackHeightPx <= 0f || itemsCount <= 0) return@detectDragGestures
                         val travel = trackHeightPx - with(density) { thumbHeight.toPx() }

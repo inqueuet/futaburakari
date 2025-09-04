@@ -3,8 +3,23 @@ package com.valoser.futaburakari.ui.detail
 import android.text.Html
 import com.valoser.futaburakari.DetailContent
 
+/**
+ * 指定した ID に紐づく投稿群を抽出して並べ替えるヘルパー。
+ *
+ * 挙動:
+ * - `DetailContent.Text` のプレーンテキストに `"ID:<id>"` を含む行を起点として拾う。
+ * - 各起点テキストの直後に連続する `Image` / `Video` を同一グループとして束ね、
+ *   次の `Text` または `ThreadEndTime` が現れた時点でそのグループを確定する。
+ * - グループの先頭要素（通常は Text）の `id` で重複排除する。
+ * - 可能ならテキスト内の投稿番号（例: `No.123456`）をパースして昇順に並べ替える。
+ * - 最後にグループをフラット化し、[Text, 画像..., 動画...] の並びで返す。
+ *
+ * 注意:
+ * - HTML は `Html.fromHtml(..., FROM_HTML_MODE_COMPACT)` でプレーンテキスト化して検索する。
+ */
 // Build list: same-ID posts (Text + immediate following media until next Text/End)
 internal fun buildIdPostsItems(all: List<DetailContent>, id: String): List<DetailContent> {
+    // 対象IDを含むテキスト要素のインデックスを抽出
     val textIndexes = all.withIndex().filter { (_, c) ->
         c is DetailContent.Text &&
                 Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
@@ -16,16 +31,19 @@ internal fun buildIdPostsItems(all: List<DetailContent>, id: String): List<Detai
     val groups = mutableListOf<List<DetailContent>>()
     for (i in textIndexes) {
         val group = mutableListOf<DetailContent>()
+        // 起点テキストを追加し、直後に続くメディアを収集
         group += all[i]
         var j = i + 1
         while (j < all.size) {
             when (val c = all[j]) {
                 is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
+                // 次のテキスト or スレ終端が来たら1グループ終了
                 is DetailContent.Text, is DetailContent.ThreadEndTime -> break
             }
         }
         groups += group
     }
+    // 先頭要素の id で重複排除し、投稿番号（No.xxx）が取れる場合はその数値で昇順ソート
     val ordered = groups
         .distinctBy { it.firstOrNull()?.id }
         .sortedWith(compareBy<List<DetailContent>> { grp ->
@@ -43,4 +61,3 @@ internal fun buildIdPostsItems(all: List<DetailContent>, id: String): List<Detai
         .flatten()
     return ordered
 }
-

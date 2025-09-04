@@ -1,4 +1,18 @@
 package com.valoser.futaburakari.ui.detail
+
+/**
+ * スレ詳細のコンテンツを表示するCompose版リスト。
+ *
+ * 概要:
+ * - 表示要素は `DetailContent` の列（Text / Image / Video / ThreadEndTime）。
+ * - ブロック構造: 1つの Text に続く Image/Video を同一ブロックとして扱い、ブロック末尾のみ区切り線を描画。
+ * - 検索: `searchQuery` にマッチする要素のインデックスを算出し、`onProvideSearchNavigator` で Prev/Next 関数を渡す。
+ * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> or ＞)、`ID:xxxx`、URL、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
+ *   - そうだねは引用行を除外し、同じ行に `No.` が含まれる場合のみ有効。
+ *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
+ * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
+ * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
+ */
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -119,7 +133,7 @@ fun DetailListCompose(
     }
     val density = LocalDensity.current
     LaunchedEffect(hitPositions) {
-        // 上位にハンドラを提供（Prev/Next）
+        // 上位にハンドラを提供（Prev/Next）。クリック時に該当箇所へアニメーションスクロール。
         onProvideSearchNavigator?.invoke(
             {
                 if (hitPositions.isEmpty()) return@invoke
@@ -171,7 +185,7 @@ fun DetailListCompose(
             .collectLatest { ord -> if (ord > 0) onVisibleMaxOrdinal?.invoke(ord) }
     }
 
-    // Persist scroll position changes (index + offset)
+    // スクロール位置の変化を親へ保存通知（index + offset）
     LaunchedEffect(internalState) {
         snapshotFlow { internalState.firstVisibleItemIndex to internalState.firstVisibleItemScrollOffset }
             .distinctUntilChanged()
@@ -187,9 +201,11 @@ fun DetailListCompose(
                         Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)
                     }
                     // Recompute when optimistic overrides change by keying on a snapshot of entries
+                    // 表示用にトークン周りの空白を補正し、そうだねの楽観カウントを適用
                     val displayText = remember(plain, sodaneCounts.toList()) {
                         applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts)
                     }
+                    // クリック可能領域（No./引用/ID/URL/そうだね/検索ハイライト）を付与
                     val annotated = remember(displayText, searchQuery, threadTitle) { buildAnnotatedFromText(displayText, searchQuery, threadTitle) }
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
@@ -262,7 +278,7 @@ fun DetailListCompose(
                             contentScale = ContentScale.Fit,
                             onSuccess = { onImageLoaded?.invoke() }
                         )
-                        // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。
+                        // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。長文はタップで展開/折りたたみ。
                         val promptPlain = run {
                             val raw = item.prompt
                             val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
@@ -306,6 +322,7 @@ fun DetailListCompose(
                             contentScale = ContentScale.Fit,
                             onSuccess = { onImageLoaded?.invoke() }
                         )
+                        // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
                         val promptPlain = run {
                             val raw = item.prompt
                             val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
@@ -356,7 +373,7 @@ fun DetailListCompose(
         }
     }
 
-    // No. アクションダイアログ（返信/削除/確認/del）
+    // No. アクションダイアログ（返信/削除/確認/del）。`resNumForDialog` がセットされたときに表示。
     val resDialog = resNumForDialog
     if (resDialog != null) {
         AlertDialog(
@@ -392,6 +409,7 @@ fun DetailListCompose(
     }
 }
 
+// indexまでに現れたText要素の個数（=序数）を求める
 private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
     var ord = 0
     var i = 0
@@ -402,7 +420,9 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
     return ord
 }
 
-// Build AnnotatedString with clickable No.xxxx and quote lines (> or >>)
+// 本文用の AnnotatedString を構築。
+// - クリック可能: No.xxxx, 引用行(> または 全角＞), スレタイ行, ID:xxxx, URL, そうだねトークン。
+// - 検索語は背景色でハイライト。
 private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle: String?): AnnotatedString = buildAnnotatedString {
     append(text)
     // No.1234 pattern
@@ -412,7 +432,7 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
         addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
     }
-    // Quote lines: allow leading spaces and full-width ＞, and normalize token before passing
+    // 引用行: 行頭の空白や全角＞を許容し、タグには正規化したトークンを渡す
     val lineRegex = Regex("^(?:[\\t \\u3000])*[>＞]+[^\\n]*", RegexOption.MULTILINE)
     lineRegex.findAll(text).forEach { m ->
         val tokenRaw = m.value
@@ -422,7 +442,7 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), start, end)
         addStringAnnotation(tag = "quote", annotation = token, start = start, end = end)
     }
-    // Title line as quote: if a line equals the thread title (ignoring spaces/width variants), annotate as a quote too
+    // タイトル行: スレタイと一致する行（空白/全角差を無視）は引用としてもクリック可能にする
     if (!threadTitle.isNullOrBlank()) {
         fun normalize(s: String): String = java.text.Normalizer.normalize(
             s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
@@ -456,14 +476,14 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
         addStringAnnotation(tag = "id", annotation = id, start = m.range.first, end = m.range.last + 1)
     }
-    // search highlight
+    // 検索ハイライト
     if (!highlight.isNullOrBlank()) {
         val pat = Regex(Regex.escape(highlight), RegexOption.IGNORE_CASE)
         pat.findAll(text).forEach { f ->
             addStyle(SpanStyle(background = Color.Yellow), f.range.first, f.range.last + 1)
         }
     }
-    // URL clickable
+    // URL: クリック可能にする
     val urlRegex = Patterns.WEB_URL.toRegex()
     urlRegex.findAll(text).forEach { m ->
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
@@ -492,7 +512,8 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     }
 }
 
-// Insert visible spaces between tokens that tend to stick together in the plain text (ID / No / + / そうだね)
+// プレーンテキスト上で詰まりやすいトークン（ID / No / + / そうだね）の間に空白を補い、
+// No. を含む非引用行の末尾に そうだね トークンが存在しない場合は付与する。
 private fun padTokensForSpacing(src: String): String {
     var t = src.replace("\u200B", "")
     // Ensure a space between ID:xxxx and No.xxxx regardless of order
@@ -523,9 +544,7 @@ private fun padTokensForSpacing(src: String): String {
     return sb.toString()
 }
 
-// (no-op)
-
-// Apply optimistic overrides: replace token with そうだねxN on No.行
+// Apply optimistic overrides: そうだねトークンを そうだねxN に置換（No. 行のみ対象）
 private fun applySodaneDisplay(text: String, overrides: Map<String, Int>): String {
     if (overrides.isEmpty()) return text
     val sb = StringBuilder()

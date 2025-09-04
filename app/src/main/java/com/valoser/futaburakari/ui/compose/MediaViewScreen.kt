@@ -59,6 +59,15 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * 画像/動画/テキストを表示する汎用メディア画面。
+ * - `type` が `image` の場合はピンチ/ダブルタップズーム対応の画像ビュー。
+ * - `type` が `video` の場合は ExoPlayer による動画再生ビュー。
+ * - その他はテキスト表示ビュー（スクロール可能）。
+ * - テキスト（プロンプト）が利用可能な場合はトップバーからコピー/保存が可能。
+ * - 画像時は必要に応じてメタデータ抽出（`MetadataExtractor`）を行い `text` を補完。
+ * - 画像/動画の保存はコールバック（`onSaveImage`/`onSaveVideo`）が提供されている時のみ表示。
+ */
 fun MediaViewScreen(
     title: String,
     type: String,
@@ -74,14 +83,14 @@ fun MediaViewScreen(
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf(initialText) }
 
-    // Extract prompt/metadata for images in background
+    // 画像の場合、プロンプト/メタデータをバックグラウンドで抽出して `text` を補完
     LaunchedEffect(type, url) {
         if (type == "image" && !url.isNullOrBlank() && text.isNullOrBlank()) {
             text = MetadataExtractor.extract(ctx, url, networkClient)
         }
     }
 
-    // CreateDocument launcher for saving text
+    // テキスト保存用の CreateDocument ランチャー
     val createTextFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri: Uri? ->
@@ -102,7 +111,9 @@ fun MediaViewScreen(
         }
     }
 
+    // テキスト操作（コピー/保存）を表示できるか: テキスト画面 or メタデータ取得済み
     val canShowTextActions = (type == "text") || (!text.isNullOrBlank())
+    // メディア保存ボタンを表示できるか: 対応タイプ かつ コールバックが提供されている
     val canShowSaveMedia = (type == "image" && onSaveImage != null) || (type == "video" && onSaveVideo != null)
 
     Scaffold(
@@ -114,6 +125,7 @@ fun MediaViewScreen(
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "戻る") }
                 },
                 actions = {
+                    // テキストがある場合はコピー/保存アクションを表示
                     if (canShowTextActions) {
                         IconButton(onClick = {
                             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -131,6 +143,7 @@ fun MediaViewScreen(
                             createTextFileLauncher.launch("$suggested.txt")
                         }) { Icon(Icons.Default.Save, contentDescription = "テキスト保存") }
                     }
+                    // 対応するメディアの保存（URL が空ならスナックバーで通知）
                     if (canShowSaveMedia) {
                         IconButton(onClick = {
                             when (type) {
@@ -158,6 +171,9 @@ fun MediaViewScreen(
 }
 
 @Composable
+/**
+ * ズーム可能な画像表示。1:1 のエリアに収め、ピンチやダブルタップで拡大縮小可。
+ */
 private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(12.dp)) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
@@ -172,6 +188,10 @@ private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
 }
 
 @Composable
+/**
+ * ExoPlayer を用いた動画表示。URL から `MediaItem` をセットして再生準備。
+ * `DisposableEffect` でライフサイクルに合わせてプレイヤーを解放します。
+ */
 private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var player: ExoPlayer? by remember { mutableStateOf(null) }
@@ -205,6 +225,9 @@ private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
 }
 
 @Composable
+/**
+ * スクロール可能なテキスト表示。
+ */
 private fun TextContent(text: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(16.dp)) {
         Text(
@@ -224,6 +247,12 @@ private fun buildDefaultFileName(text: String?): String {
 }
 
 @Composable
+/**
+ * ピンチ/ドラッグ/ダブルタップに対応したズーム可能な画像コンポーネント。
+ * - ピンチで倍率を `minScale..maxScale` にクランプ。
+ * - ドラッグでパン（ここでは制限なし）。
+ * - ダブルタップで中間倍率と 1x をトグルし、オフセットをリセット。
+ */
 private fun ZoomableAsyncImage(
     model: Any?,
     modifier: Modifier = Modifier,

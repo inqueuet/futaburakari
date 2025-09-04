@@ -1,5 +1,12 @@
 package com.valoser.futaburakari.ui.compose
 
+/**
+ * NGルール管理画面。
+ * - NG ID / NGワード(本文) / スレタイNG の一覧表示・追加・編集・削除を行う。
+ * - 右下のFABから追加。`limitType` が指定されている場合は種類選択をスキップし、その種類の編集ダイアログを直接表示する。
+ * - ルールは `rules` の内容を表示し、各行のメニューから編集/削除が可能。
+ */
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -80,9 +87,10 @@ fun NgManagerScreen(
             )
         },
         floatingActionButton = {
+            // 追加ボタン。種類固定の場合は直接編集ダイアログ、未指定の場合は種類選択ダイアログを表示
             FloatingActionButton(onClick = {
                 if (limitType != null) {
-                    // ダイレクトに編集ダイアログ
+                    // 種類が固定されているため、空の初期値で編集ダイアログを直ちに開く
                     editTarget = NgRule("", limitType, pattern = "", match = defaultMatchFor(limitType))
                 } else {
                     showTypePicker = true
@@ -114,6 +122,7 @@ fun NgManagerScreen(
                             .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        // 空状態のガイダンス
                         Text("NGがありません")
                         Spacer(Modifier.height(8.dp))
                         Text("右下の＋から追加できます")
@@ -135,6 +144,7 @@ fun NgManagerScreen(
         )
     }
 
+    // 追加/編集ダイアログの表示制御。`id` が空なら新規追加、そうでなければ更新
     editTarget?.let { tgt ->
         RuleEditDialog(
             initial = tgt,
@@ -151,6 +161,7 @@ fun NgManagerScreen(
         )
     }
 
+    // 削除確認ダイアログの表示制御
     deleteTarget?.let { tgt ->
         ConfirmDeleteDialog(
             rule = tgt,
@@ -169,6 +180,7 @@ private fun RuleItem(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    // 1行分のNGルール表示。カードのクリックまたは右端メニューから編集/削除を実行
     var menu by remember { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier
@@ -188,6 +200,7 @@ private fun RuleItem(
                     RuleType.BODY -> "本文"
                     RuleType.TITLE -> "タイトル"
                 }
+                // `match` が null の場合は種類に応じた既定値で表示
                 val mt = rule.match ?: when (rule.type) {
                     RuleType.ID -> MatchType.EXACT
                     RuleType.BODY -> MatchType.SUBSTRING
@@ -228,6 +241,7 @@ private fun TypePickerDialog(
     onPick: (RuleType) -> Unit,
     hideTitleOption: Boolean
 ) {
+    // 追加時の種類選択ダイアログ。`hideTitleOption` が true の場合はスレタイNGを非表示
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("NGの種類") },
@@ -260,6 +274,10 @@ private fun RuleEditDialog(
     onDismiss: () -> Unit,
     onConfirm: (pattern: String, match: MatchType?) -> Unit
 ) {
+    // ルールの追加/編集ダイアログ。
+    // - 入力欄ラベルは種類に応じて変化。
+    // - IDの場合は常に完全一致に固定し、マッチ種別は選択不可。
+    // - 確定時はトリムし、空文字の場合は何もせず閉じる。
     var pattern by remember { mutableStateOf(initial.pattern) }
     var match by remember { mutableStateOf(initial.match ?: defaultMatchFor(initial.type)) }
 
@@ -278,6 +296,7 @@ private fun RuleEditDialog(
                 if (initial.type != RuleType.ID) {
                     MatchTypeSelector(selected = match, onChange = { match = it })
                 } else {
+                    // IDはマッチ方法を固定（完全一致）
                     match = MatchType.EXACT
                 }
             }
@@ -297,6 +316,8 @@ private fun RuleEditDialog(
 
 @Composable
 private fun MatchTypeSelector(selected: MatchType?, onChange: (MatchType) -> Unit) {
+    // 本文/スレタイ用のマッチ方法選択（部分一致/前方一致/正規表現）。
+    // 選択がnullの場合はUI上は部分一致が選択されたものとして扱う。
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("マッチ方法", style = MaterialTheme.typography.labelLarge)
         RadioRow(
@@ -319,6 +340,7 @@ private fun MatchTypeSelector(selected: MatchType?, onChange: (MatchType) -> Uni
 
 @Composable
 private fun RadioRow(label: String, checked: Boolean, onClick: () -> Unit) {
+    // ラジオボタンとテキストの1行
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -334,6 +356,7 @@ private fun RadioRow(label: String, checked: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun ConfirmDeleteDialog(rule: NgRule, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    // 削除確認ダイアログ。対象のパターン文字列を表示して確認を促す
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("削除") },
@@ -343,18 +366,25 @@ private fun ConfirmDeleteDialog(rule: NgRule, onDismiss: () -> Unit, onConfirm: 
     )
 }
 
+/**
+ * 種類ごとの既定マッチ方法。
+ * - ID: 完全一致
+ * - 本文/スレタイ: 部分一致
+ */
 private fun defaultMatchFor(type: RuleType): MatchType =
     when (type) {
         RuleType.ID -> MatchType.EXACT
         RuleType.BODY, RuleType.TITLE -> MatchType.SUBSTRING
     }
 
+/** ダイアログタイトル（新規追加時） */
 private fun labelForNewTitle(type: RuleType): String = when (type) {
     RuleType.ID -> "NG IDを追加"
     RuleType.BODY -> "NGワードを追加"
     RuleType.TITLE -> "スレタイNGを追加"
 }
 
+/** ダイアログタイトル（編集時） */
 private fun labelForEditTitle(type: RuleType): String = when (type) {
     RuleType.ID -> "NG IDを編集"
     RuleType.BODY -> "NGワードを編集"

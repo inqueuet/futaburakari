@@ -5,8 +5,16 @@ import com.valoser.futaburakari.DetailContent
 import java.text.Normalizer
 
 /**
- * Build list of posts that reference the given res number, including the text row and any
- * immediately following media until the next Text/ThreadEndTime.
+ * Build items that reference the given res number.
+ * - Normalizes plain text (removes ZWSP, converts full‑width space and ＞/≫ to '>', applies NFKC).
+ * - A hit is any Text whose plain body contains:
+ *   - case‑insensitive "No. <num>", or
+ *   - a quote line starting with '>' optionally containing "No. <num>", or
+ *   - the bare number not adjacent to other digits.
+ * - For each hit, includes the Text row and any immediately following Image/Video
+ *   until the next Text or ThreadEndTime.
+ * - De‑duplicates by the first item's id, sorts groups by extracted `No.<n>` ascending
+ *   when available, then flattens.
  */
 internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): List<DetailContent> {
     if (resNum.isBlank()) return emptyList()
@@ -62,10 +70,19 @@ internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): 
 }
 
 /**
- * Build list of posts that quote the given source Text's body lines (first-level quote content),
- * matching quote lines that are exactly equal to any normalized candidate.
- * If `extraCandidates` is provided, also allow exact matches against plain body lines (non-'>' lines).
- * Includes the matched text row and any immediately following media until the next Text/ThreadEndTime.
+ * Build items that quote the given source Text's body content.
+ * - Candidates are derived from the source's plain lines after normalization, excluding
+ *   header‑like lines such as "No." and "ID:", and requiring length ≥ 2. `extraCandidates`
+ *   are normalized and added to this set.
+ * - A post matches if any quote line (leading '>' removed, regardless of nesting level)
+ *   is exactly equal to a candidate. When `extraCandidates` is non‑empty, exact matches
+ *   in non‑quote plain lines are also allowed.
+ * - Normalization removes ZWSP, converts full‑width space and ＞/≫ to '>', applies NFKC,
+ *   collapses consecutive whitespace, and trims.
+ * - For each match, includes the Text row and any immediately following Image/Video
+ *   until the next Text or ThreadEndTime.
+ * - De‑duplicates by the first item's id, sorts groups by extracted `No.<n>` ascending
+ *   when available, then flattens.
  */
 internal fun buildBackReferencesByContent(
     all: List<DetailContent>,
@@ -101,7 +118,7 @@ internal fun buildBackReferencesByContent(
             .toSet()
         if (quoteLines.any { it in candidates }) return@filter true
 
-        // 2. extraCandidates がある場合、レス本文の各行が完全に一致するかを検索
+        // If extraCandidates are present, also allow exact matches in plain body lines
         if (extraCandidates.isNotEmpty()) {
             val plainLines = plain.lines().map { normalize(it) }.filter { it.isNotBlank() }
             if (plainLines.any { it in candidates }) {
@@ -144,6 +161,9 @@ internal fun buildBackReferencesByContent(
 
 /**
  * Combine the source Text (and its following media) with all posts that quote it (and their media).
+ * - Builds the source group (Text + following media), then appends groups from
+ *   `buildBackReferencesByContent`.
+ * - De‑duplicates by the first item's id and flattens while keeping unique items by id.
  */
 internal fun buildSelfAndBackrefItems(
     all: List<DetailContent>,
@@ -192,8 +212,12 @@ internal fun buildSelfAndBackrefItems(
 }
 
 /**
- * Build list of posts that contain the given free-text query in their plain text,
- * including the text row and any immediately following media until the next Text/ThreadEndTime.
+ * Build items whose normalized plain text contains the given free‑text query (case‑insensitive).
+ * - Normalizes plain text (removes ZWSP, converts full‑width space and ＞/≫ to '>', applies NFKC).
+ * - For each hit, includes the Text row and any immediately following Image/Video
+ *   until the next Text or ThreadEndTime.
+ * - De‑duplicates by the first item's id, sorts groups by extracted `No.<n>` ascending
+ *   (handles ASCII and full‑width variants), then flattens.
  */
 internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List<DetailContent> {
     val q = query.trim()

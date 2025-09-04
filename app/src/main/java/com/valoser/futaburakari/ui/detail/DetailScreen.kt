@@ -54,7 +54,11 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 
 /**
  * Compose-based detail screen scaffold.
- * Hosts the thread list, search UI, and optional ad banner.
+ * - Renders the thread list with fast scrolling, swipe-to-refresh, and infinite scroll trigger.
+ * - Hosts docked search UI with debounced suggestions and a bottom search navigator overlay.
+ * - Manages dialogs/sheets: ID menu, NG add flows, media grid sheet, and quote/No. reference sheet.
+ * - Supports optional ad banner and reports its height for layout padding.
+ * - Note: Media sheet is handled internally; `onOpenMedia` is kept for compatibility.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,7 +158,7 @@ fun DetailScreenScaffold(
                     IconButton(onClick = onOpenNg) {
                         Icon(Icons.Filled.Block, contentDescription = "NG Manage")
                     }
-                    // Prefer Compose sheet; keep callback available if needed
+                    // Prefer a Compose-driven media sheet; keep the callback param available for compatibility
                     IconButton(onClick = { openMediaSheet = true }) {
                         Icon(Icons.Filled.Image, contentDescription = "Media List")
                     }
@@ -502,7 +506,7 @@ fun DetailScreenScaffold(
                 }
             }
 
-            // Helper はファイル末尾の top-level 定義を利用
+            // Helpers are defined at file bottom as top-level functions
 
             // メディア一覧（Compose ModalBottomSheet）
             if (openMediaSheet) {
@@ -706,6 +710,11 @@ fun DetailScreenScaffold(
     }
 }
 
+/**
+ * Simple banner ad host using Google Mobile Ads `AdView`.
+ * - Emits measured height via `onHeightChanged` so layouts can add bottom padding.
+ * - Width matches parent; height depends on the selected AdSize.
+ */
 @Composable
 private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
     AndroidView(
@@ -725,7 +734,10 @@ private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
     )
 }
 
-// Ensure only the last ThreadEndTime remains; keep order for other items
+/**
+ * Normalize thread items to keep only the last `ThreadEndTime` entry.
+ * Preserves relative order of all other items.
+ */
 private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent> {
     val endIdxs = src.withIndex().filter { it.value is DetailContent.ThreadEndTime }.map { it.index }
     if (endIdxs.isEmpty()) return src
@@ -739,6 +751,10 @@ private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent
     return out
 }
 
+/**
+ * Bottom overlay that shows search navigation controls and current/total hits.
+ * Invokes `onPrev`/`onNext` when the arrow buttons are tapped.
+ */
 @Composable
 private fun SearchNavigationBar(
     modifier: Modifier = Modifier,
@@ -774,6 +790,9 @@ private fun SearchNavigationBar(
     }
 }
 
+/**
+ * Small AssistChip used for quick search suggestions within the docked search UI.
+ */
 @Composable
 private fun QuickFilterChip(label: String, onClick: () -> Unit) {
     AssistChip(

@@ -6,7 +6,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// Set of Material typography styles to start with
+/**
+ * Material 3 Typography used by `FutaburakariTheme`.
+ * - Overrides only `bodyLarge`; all other styles use Material 3 defaults.
+ * - Font family remains `FontFamily.Default` (no bundled custom font).
+ * To customize titles/labels/etc., uncomment and adjust the templates below.
+ */
 val Typography = Typography(
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,

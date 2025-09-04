@@ -11,7 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 
-// Base (Purple) scheme aligned to XML
+// Base (Purple) scheme, aligned to legacy XML theme values
 private val DarkPurpleScheme = darkColorScheme(
     primary = Color(0xFF3700B3), // purple_700
     onPrimary = Color(0xFFFFFFFF),
@@ -28,7 +28,7 @@ private val LightPurpleScheme = lightColorScheme(
     tertiary = Color(0xFF018786),
 )
 
-// Green scheme (from XML ThemeOverlay/Theme)
+// Green scheme (from legacy XML overlays/themes)
 private val LightGreenScheme = lightColorScheme(
     primary = Color(0xFF004D2D), // green_primary
     onPrimary = Color(0xFFFFFFFF),
@@ -45,7 +45,7 @@ private val DarkGreenScheme = darkColorScheme(
     tertiary = Color(0xFF018786),
 )
 
-// Blue scheme (from XML)
+// Blue scheme (from legacy XML)
 private val LightBlueScheme = lightColorScheme(
     primary = Color(0xFF1565C0),
     onPrimary = Color(0xFFFFFFFF),
@@ -62,7 +62,7 @@ private val DarkBlueScheme = darkColorScheme(
     tertiary = Color(0xFF00796B),
 )
 
-// Orange scheme (from XML)
+// Orange scheme (from legacy XML)
 private val LightOrangeScheme = lightColorScheme(
     primary = Color(0xFFEF6C00),
     onPrimary = Color(0xFFFFFFFF),
@@ -79,6 +79,11 @@ private val DarkOrangeScheme = darkColorScheme(
     tertiary = Color(0xFF00695C),
 )
 
+/**
+ * Resolve a concrete color scheme for a given optional `colorMode` and dark flag.
+ * Supported modes: "purple" (default), "green", "blue", "orange".
+ * Falls back to the purple scheme when the mode is null/unknown.
+ */
 private fun schemeFor(colorMode: String?, dark: Boolean): androidx.compose.material3.ColorScheme {
     return when (colorMode) {
         "green" -> if (dark) DarkGreenScheme else LightGreenScheme
@@ -89,6 +94,15 @@ private fun schemeFor(colorMode: String?, dark: Boolean): androidx.compose.mater
     }
 }
 
+/**
+ * App theme entry point.
+ * - If `colorMode` is specified (case-insensitive), use the corresponding fixed scheme
+ *   and ignore dynamic colors.
+ * - Else if `dynamicColor` is true and API ≥ 31 (Android 12+), use Material 3 dynamic
+ *   color scheme based on the user's wallpaper (dark/light variant selected by `darkTheme`).
+ * - Else, fall back to the fixed purple scheme (dark/light).
+ * Applies `Typography` from this module and passes `content` to `MaterialTheme`.
+ */
 @Composable
 fun FutaburakariTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),

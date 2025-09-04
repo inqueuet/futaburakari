@@ -1,5 +1,19 @@
 package com.valoser.futaburakari.ui.compose
 
+/**
+ * 設定画面。
+ * - 表示設定（グリッド列数/フォント/テーマ/カラー）
+ * - NG管理（スレタイNGのショートカット）
+ * - 投稿設定（投稿時の削除キー保存）
+ * - キャッシュ設定（Coil画像/スレッド詳細キャッシュの削除、自動クリーンアップ上限）
+ * - 広告表示（Detail画面のバナー固定表示）
+ * - バックグラウンド（監視ワーカーの有効/無効切り替えとスケジューリング）
+ * - その他（プライバシーポリシー・問い合わせ）
+ *
+ * 各項目の保存は `SharedPreferences`（一部は `ThreadMonitorWorker` 用の専用Prefs）に反映され、
+ * テーマ/フォント/カラーの変更は `Activity#recreate()` を呼び出して即時反映する。
+ */
+
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -61,7 +75,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val prefs = remember { PreferenceManager.getDefaultSharedPreferences(ctx) }
     val bgPrefs = remember { ctx.getSharedPreferences(ThreadMonitorWorker.PREFS_BG, android.content.Context.MODE_PRIVATE) }
 
-    // States
+    // States（現在の設定値をPreferencesから読み込み）
     var gridSpan by remember { mutableStateOf(prefs.getString("pref_key_grid_span", "4") ?: "4") }
     var fontScale by remember { mutableStateOf(prefs.getString("pref_key_font_scale", "1.0") ?: "1.0") }
     var themeMode by remember { mutableStateOf(prefs.getString("pref_key_theme_mode", "system") ?: "system") }
@@ -70,11 +84,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
     var bgEnabled by remember { mutableStateOf(bgPrefs.getBoolean(ThreadMonitorWorker.KEY_BG_ENABLED, false)) }
 
-    // Dialog state for password
+    // 投稿用パスワード入力ダイアログの状態
     var showPwdDialog by remember { mutableStateOf(false) }
     var pwdText by remember { mutableStateOf("") }
     var clearingCache by remember { mutableStateOf(false) }
 
+    // ドロップダウン用の表示ラベルと値の配列（strings.xmlから取得）
     val gridEntries = remember { ctx.resources.getStringArray(R.array.pref_grid_span_entries).toList() }
     val gridValues = remember { ctx.resources.getStringArray(R.array.pref_grid_span_values).toList() }
     val fontEntries = remember { ctx.resources.getStringArray(R.array.pref_font_scale_entries).toList() }
@@ -109,6 +124,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         ) {
             item { SectionHeader(text = "表示設定") }
             item {
+                // カタログ等のグリッド列数
                 DropdownPreferenceRow(
                     title = "グリッド列数",
                     entries = gridEntries,
@@ -118,6 +134,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
+                // アプリ全体のフォント倍率。保存後にActivityを再生成して反映
                 DropdownPreferenceRow(
                     title = "フォントサイズ",
                     entries = fontEntries,
@@ -131,6 +148,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
+                // ライト/ダーク/システムに追従。保存後に再生成
                 DropdownPreferenceRow(
                     title = "テーマモード",
                     entries = themeEntries,
@@ -144,6 +162,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
+                // アプリのカラーバリエーション。保存後に再生成
                 DropdownPreferenceRow(
                     title = "カラーモード",
                     entries = colorEntries,
@@ -157,6 +176,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
             item {
+                // スレッドタイトルに対するNG管理画面への遷移（種類をスレタイに固定）
                 ListRow(
                     title = "スレタイNG管理",
                     summary = "カタログのスレッドタイトルに対するNGを設定します"
@@ -170,6 +190,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
             item { SectionHeader(text = "投稿設定") }
             item {
+                // 投稿時に使う削除キー（パスワード）を保存
                 ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
             }
 
@@ -177,6 +198,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { SectionHeader(text = "キャッシュ設定") }
             item {
                 val scope = rememberCoroutineScope()
+                // 画像（Coil Memory/Disk）とスレッド詳細のキャッシュを全削除
                 ListRow(title = "キャッシュを削除", summary = "画像とスレッド内容のキャッシュをすべて削除します。") {
                     if (clearingCache) return@ListRow
                     clearingCache = true
@@ -193,6 +215,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
             item {
+                // 自動クリーンアップで保持するキャッシュの上限（MB）。0は無効
                 DropdownPreferenceRow(
                     title = "自動クリーンアップ上限",
                     entries = cleanupEntries,
@@ -205,6 +228,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
             item { SectionHeader(text = "広告表示") }
             item {
+                // Detail画面にバナー広告を固定表示するか
                 SwitchRow(title = "広告を表示", checked = adsEnabled, summary = "Detail画面下部にバナー広告を固定表示します") {
                     adsEnabled = it
                     prefs.edit().putBoolean("pref_key_ads_enabled", it).apply()
@@ -214,6 +238,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
             item { SectionHeader(text = "バックグラウンド") }
             item {
+                // スレッド監視ワーカーの有効/無効。ON時は履歴にある全スレッドをスケジューリング、OFF時は全解除
                 SwitchRow(title = ctx.getString(R.string.bg_monitor), checked = bgEnabled, summary = ctx.getString(R.string.bg_monitor_summary)) { on ->
                     bgEnabled = on
                     bgPrefs.edit().putBoolean(ThreadMonitorWorker.KEY_BG_ENABLED, on).apply()
@@ -233,18 +258,21 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
             item { SectionHeader(text = "その他") }
             item {
+                // 外部ブラウザでプライバシーポリシーを開く
                 ListRow(title = "プライバシーポリシー", summary = "") {
                     val url = "https://note.com/inqueuet/n/nb86f8e3f405a"
                     ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
             }
             item {
+                // メールで問い合わせ
                 ListRow(title = ctx.getString(R.string.settings_inquiry), summary = "") {
                     ctx.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:admin@inqueuet.com")))
                 }
             }
         }
 
+        // 投稿用パスワード入力ダイアログ
         if (showPwdDialog) {
             AlertDialog(
                 onDismissRequest = { showPwdDialog = false },
@@ -271,6 +299,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun SectionHeader(text: String) {
+    // セクションタイトル
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
@@ -280,6 +309,7 @@ private fun SectionHeader(text: String) {
 
 @Composable
 private fun ListRow(title: String, summary: String, onClick: () -> Unit) {
+    // 設定の1行（タイトル＋サマリ）。クリックで `onClick` 実行
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -303,7 +333,7 @@ private fun DropdownPreferenceRow(
     onValueChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    // derive summary from current value
+    // 現在値に対応するラベルを算出（見つからない場合は値をそのまま表示）
     val currentLabel = entries.getOrNull(values.indexOf(value)) ?: value
 
     androidx.compose.foundation.layout.Box(
@@ -341,6 +371,7 @@ private fun DropdownPreferenceRow(
 
 @Composable
 private fun SwitchRow(title: String, checked: Boolean, summary: String = "", onToggle: (Boolean) -> Unit) {
+    // タイトル＋サマリ＋スイッチの1行
     Row(
         modifier = Modifier
             .fillMaxWidth()

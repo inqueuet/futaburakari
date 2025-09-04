@@ -1,5 +1,12 @@
 package com.valoser.futaburakari.ui.compose
 
+/**
+ * レス投稿画面。
+ * - 名前/メール/題名/コメント/削除キーの入力、任意のファイル添付（ドキュメントピッカー）に対応。
+ * - `initialQuote` はコメント初期値、`initialPassword` は削除キー初期値。
+ * - タイトルが空の場合は "レスを投稿" を表示。
+ * - 送信中（UiState.Loading）は入力と送信を無効化し、プログレスを表示。
+ */
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -70,6 +77,8 @@ fun ReplyScreen(
     var pickedLabel by remember { mutableStateOf("ファイルが選択されていません") }
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    // ドキュメントピッカー。選択後は読取りの永続権限を取得して `pickedUri` とラベルを更新。
+    // 何かを選んだ場合は添付ありになるよう `textOnly` をfalseにする。
     val pickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             pickedUri = uri
@@ -105,6 +114,7 @@ fun ReplyScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
+            // おなまえ（任意）
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
@@ -114,6 +124,7 @@ fun ReplyScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
+            // E-mail（任意）
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it },
@@ -123,6 +134,7 @@ fun ReplyScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
+            // 題名（任意）
             OutlinedTextField(
                 value = sub,
                 onValueChange = { sub = it },
@@ -132,6 +144,7 @@ fun ReplyScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
+            // コメント（必須）
             OutlinedTextField(
                 value = comment,
                 onValueChange = { comment = it },
@@ -154,11 +167,13 @@ fun ReplyScreen(
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(modifier = Modifier.size(8.dp))
+                // 任意のMIMEタイプを選択可能。`textOnly`（=添付しない）がオンの間は無効化。
                 Button(onClick = { pickLauncher.launch(arrayOf("*/*")) }, enabled = !textOnly && !isLoading) {
                     Text("選択…")
                 }
                 Spacer(modifier = Modifier.size(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // ラベルは「画像なし」だが、実装上は「ファイルを添付しない」フラグとして機能する
                     Checkbox(checked = textOnly, onCheckedChange = { textOnly = it })
                     Text("画像なし", style = MaterialTheme.typography.labelSmall)
                 }
@@ -179,6 +194,7 @@ fun ReplyScreen(
             Spacer(modifier = Modifier.height(16.dp))
             Button(
                 onClick = {
+                    // 空文字は null に変換して送信。コメントはそのまま必須扱い。
                     onSubmit(name.ifBlank { null }, email.ifBlank { null }, sub.ifBlank { null }, comment, pwd.ifBlank { null }, pickedUri, textOnly)
                 },
                 enabled = !isLoading,
