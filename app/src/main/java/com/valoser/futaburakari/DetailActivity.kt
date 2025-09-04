@@ -156,6 +156,8 @@ class DetailActivity : BaseActivity() {
                     onClearSearch = { viewModel.clearSearch() },
                     onReapplyNgFilter = { viewModel.reapplyNgFilter() },
                     searchStateFlow = viewModel.searchState,
+                    onSearchPrev = { viewModel.navigateToPrevHit() },
+                    onSearchNext = { viewModel.navigateToNextHit() },
                     bottomOffsetPxFlow = bottomOffsetFlow,
                     searchActiveFlow = searchBarActiveFlow,
                     onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },

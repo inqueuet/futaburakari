@@ -117,6 +117,7 @@ fun DetailScreenScaffold(
             var idMenuTarget by remember { mutableStateOf<String?>(null) }
             var idSheetItems by remember { mutableStateOf<List<DetailContent>?>(null) }
             var resRefItems by remember { mutableStateOf<List<DetailContent>?>(null) }
+            var textSearchItems by remember { mutableStateOf<List<DetailContent>?>(null) }
             // NG追加（Compose）用の状態
             var pendingNgId by remember { mutableStateOf<String?>(null) }
             var pendingNgBody by remember { mutableStateOf<String?>(null) }
@@ -246,6 +247,15 @@ fun DetailScreenScaffold(
                         onResNumDelClick = { resNum -> reportTarget = resNum },
                         onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
+                        onFreeTextSearch = { token ->
+                            val list = buildTextSearchItems(items, token)
+                            if (list.isNotEmpty()) {
+                                textSearchItems = list
+                            } else {
+                                // If no direct hits, optionally fall back to activating top search
+                                // setSearchActive(true); query = token
+                            }
+                        },
                         onAddNgFromBody = { body -> pendingNgBody = body },
                         getSodaneState = getSodaneState,
                         onImageLoaded = onImageLoaded,
@@ -432,6 +442,7 @@ fun DetailScreenScaffold(
                         onResNumDelClick = null,
                         onIdClick = null,
                         onBodyClick = null,
+                        onFreeTextSearch = null,
                         onAddNgFromBody = null,
                         getSodaneState = { false },
                         onImageLoaded = onImageLoaded,
@@ -460,6 +471,7 @@ fun DetailScreenScaffold(
                         onResNumDelClick = null,
                         onIdClick = null,
                         onBodyClick = null,
+                        onFreeTextSearch = null,
                         onAddNgFromBody = null,
                         getSodaneState = { false },
                         onImageLoaded = onImageLoaded,
@@ -635,8 +647,15 @@ fun DetailScreenScaffold(
                             .padding(bottom = bottomDp),
                         current = s.currentIndexDisplay,
                         total = s.total,
-                        onPrev = { (onSearchPrev ?: navPrev)?.invoke() },
-                        onNext = { (onSearchNext ?: navNext)?.invoke() }
+                        // If VM callbacks are provided, invoke them AND scroll via local navigator.
+                        onPrev = {
+                            onSearchPrev?.invoke()
+                            navPrev?.invoke()
+                        },
+                        onNext = {
+                            onSearchNext?.invoke()
+                            navNext?.invoke()
+                        }
                     )
                 }
             }

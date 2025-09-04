@@ -61,3 +61,52 @@ internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): 
         .flatten()
 }
 
+/**
+ * Build list of posts that contain the given free-text query in their plain text,
+ * including the text row and any immediately following media until the next Text/ThreadEndTime.
+ */
+internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List<DetailContent> {
+    val q = query.trim()
+    if (q.isEmpty()) return emptyList()
+
+    fun plainOf(t: DetailContent.Text): String =
+        android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+            .replace("\u200B", "")
+            .replace('　', ' ')
+            .replace('＞', '>')
+            .replace('≫', '>')
+            .let { java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFKC) }
+
+    val hitIndexes = all.withIndex().filter { (_, c) ->
+        c is DetailContent.Text && plainOf(c).contains(q, ignoreCase = true)
+    }.map { it.index }
+
+    if (hitIndexes.isEmpty()) return emptyList()
+
+    val groups = mutableListOf<List<DetailContent>>()
+    for (i in hitIndexes) {
+        val group = mutableListOf<DetailContent>()
+        group += all[i]
+        var j = i + 1
+        while (j < all.size) {
+            when (val c = all[j]) {
+                is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
+                is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+            }
+        }
+        groups += group
+    }
+
+    fun extractResNo(c: DetailContent): Int? = when (c) {
+        is DetailContent.Text -> {
+            val plain = android.text.Html.fromHtml(c.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+            Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        }
+        else -> null
+    }
+
+    return groups
+        .distinctBy { it.firstOrNull()?.id }
+        .sortedWith(compareBy<List<DetailContent>> { grp -> extractResNo(grp.firstOrNull() ?: return@compareBy Int.MAX_VALUE) ?: Int.MAX_VALUE })
+        .flatten()
+}

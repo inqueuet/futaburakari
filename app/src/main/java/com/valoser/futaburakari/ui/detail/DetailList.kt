@@ -60,6 +60,8 @@ fun DetailListCompose(
     onIdClick: ((String) -> Unit)? = null,
     onBodyClick: ((String) -> Unit)? = null,
     onAddNgFromBody: ((String) -> Unit)? = null,
+    // Free text search when clicking body (non-quote areas)
+    onFreeTextSearch: ((String) -> Unit)? = null,
     getSodaneState: ((String) -> Boolean)? = null,
     onImageLoaded: (() -> Unit)? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
@@ -218,6 +220,13 @@ fun DetailListCompose(
                                             onSodaneClick?.invoke(rn)
                                         }
                                     }
+                                }
+                            }
+                            // Fallback: free text search around click position
+                            if (res == null && quote == null && id == null && url == null && sodane == null) {
+                                val token = extractKeywordAt(displayText, offset)
+                                if (token.length >= 2) {
+                                    onFreeTextSearch?.invoke(token)
                                 }
                             }
                         })
@@ -454,6 +463,39 @@ private fun padTokensForSpacing(src: String): String {
         start = if (nl < 0) t.length else nl + 1
     }
     return sb.toString()
+}
+
+// Extract a reasonable keyword around the clicked offset to use for search.
+private fun extractKeywordAt(text: String, offsetRaw: Int): String {
+    if (text.isEmpty()) return ""
+    val offset = offsetRaw.coerceIn(0, text.length - 1)
+    // Use the line containing the offset as primary boundary
+    val lineStart = text.lastIndexOf('\n', startIndex = offset).let { if (it < 0) 0 else it + 1 }
+    val lineEnd = text.indexOf('\n', startIndex = lineStart).let { if (it < 0) text.length else it }
+    val line = text.substring(lineStart, lineEnd)
+    if (line.isBlank()) return ""
+    // Compute local offset within the line
+    val local = (offset - lineStart).coerceIn(0, line.length - 1)
+    // Expand to token boundaries: letters, digits, CJK, underscore, dot, slash
+    fun isTokenChar(ch: Char): Boolean {
+        return ch.isLetterOrDigit() || ch == '_' || ch == '.' || ch == '/' ||
+            (ch.code in 0x3040..0x30FF) || // Hiragana/Katakana
+            (ch.code in 0x4E00..0x9FFF)    // CJK Unified Ideographs
+    }
+    var l = local
+    var r = local
+    while (l > 0 && isTokenChar(line[l - 1])) l--
+    while (r < line.length && isTokenChar(line[r])) r++
+    var token = line.substring(l, r).trim()
+    // Fallback: if too short, take a window around the click
+    if (token.length < 2) {
+        val win = 8
+        val s = (local - win).coerceAtLeast(0)
+        val e = (local + win).coerceAtMost(line.length)
+        token = line.substring(s, e).trim()
+    }
+    // Limit length to avoid overly large queries
+    return token.take(40)
 }
 
 // Apply optimistic overrides: replace token with そうだねxN on No.行
