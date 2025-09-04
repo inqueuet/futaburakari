@@ -103,6 +103,8 @@ fun DetailScreenScaffold(
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
     // 末尾近辺に到達したときに呼ばれる（無限スクロール用）
     onNearListEnd: (() -> Unit)? = null,
+    // そうだねのサーバ応答（resNum -> count）
+    sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var reportTarget by remember { mutableStateOf<String?>(null) }
@@ -165,6 +167,13 @@ fun DetailScreenScaffold(
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
+            // Hoisted "そうだね" 表示カウント
+            val sodaneCounts = remember { androidx.compose.runtime.mutableStateMapOf<String, Int>() }
+            LaunchedEffect(sodaneUpdates) {
+                sodaneUpdates?.let { flow ->
+                    flow.collect { (rn, count) -> sodaneCounts[rn] = count }
+                }
+            }
             // Hoist items/listState so they are visible to dialogs/sheets below
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
@@ -258,6 +267,8 @@ fun DetailScreenScaffold(
                         },
                         onAddNgFromBody = { body -> pendingNgBody = body },
                         getSodaneState = getSodaneState,
+                        sodaneCounts = sodaneCounts,
+                        onSetSodaneCount = { rn, c -> sodaneCounts[rn] = c },
                         onImageLoaded = onImageLoaded,
                         onVisibleMaxOrdinal = onVisibleMaxOrdinal,
                         listState = listState,
@@ -445,6 +456,8 @@ fun DetailScreenScaffold(
                         onFreeTextSearch = null,
                         onAddNgFromBody = null,
                         getSodaneState = { false },
+                        sodaneCounts = emptyMap(),
+                        onSetSodaneCount = null,
                         onImageLoaded = onImageLoaded,
                         onVisibleMaxOrdinal = null,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
@@ -474,6 +487,8 @@ fun DetailScreenScaffold(
                         onFreeTextSearch = null,
                         onAddNgFromBody = null,
                         getSodaneState = { false },
+                        sodaneCounts = emptyMap(),
+                        onSetSodaneCount = null,
                         onImageLoaded = onImageLoaded,
                         onVisibleMaxOrdinal = null,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)

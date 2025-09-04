@@ -200,6 +200,7 @@ class DetailActivity : BaseActivity() {
                     },
                     isRefreshingFlow = viewModel.isLoading,
                     onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) },
+                    sodaneUpdates = viewModel.sodaneUpdate,
                     threadUrl = currentUrl,
                     onNearListEnd = {
                         val url = currentUrl ?: return@DetailScreenScaffold

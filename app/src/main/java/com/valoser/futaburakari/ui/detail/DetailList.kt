@@ -72,6 +72,9 @@ fun DetailListCompose(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Compose側で検索Prev/Nextナビを提供するためのコールバック
     onProvideSearchNavigator: (((() -> Unit), (() -> Unit)) -> Unit)? = null,
+    // Hoisted "そうだね" 表示カウント（resNum -> count）
+    sodaneCounts: Map<String, Int> = emptyMap(),
+    onSetSodaneCount: ((String, Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -79,8 +82,7 @@ fun DetailListCompose(
 
     // Dialog state for No. actions
     var resNumForDialog by remember { mutableStateOf<String?>(null) }
-    // Optimistic "そうだね" override counts
-    val sodaneOverrides = remember { androidx.compose.runtime.mutableStateMapOf<String, Int>() }
+    // "そうだね" 表示カウントは親から受け取る
 
     val safeIndex = if (initialScrollIndex >= 0) initialScrollIndex else 0
     val safeOffset = if (initialScrollOffset >= 0) initialScrollOffset else 0
@@ -178,7 +180,10 @@ fun DetailListCompose(
             when (item) {
                 is DetailContent.Text -> {
                     val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-                    val displayText = remember(plain, sodaneOverrides) { applySodaneDisplay(padTokensForSpacing(plain), sodaneOverrides) }
+                    // Recompute when optimistic overrides change by keying on a snapshot of entries
+                    val displayText = remember(plain, sodaneCounts.toList()) {
+                        applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts)
+                    }
                     val annotated = remember(displayText, searchQuery) { buildAnnotatedFromText(displayText, searchQuery) }
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
@@ -214,8 +219,9 @@ fun DetailListCompose(
                                         // 既に押していれば無視
                                         val disabled = getSodaneState?.invoke(rn) ?: false
                                         if (!disabled) {
-                                            // 楽観的に +1 表示
-                                            sodaneOverrides[rn] = (sodaneOverrides[rn] ?: 0) + 1
+                                            // 楽観的に +1 表示（親に委譲）
+                                            val next = (sodaneCounts[rn] ?: 0) + 1
+                                            onSetSodaneCount?.invoke(rn, next)
                                             // コールバック（サーバ送信）
                                             onSodaneClick?.invoke(rn)
                                         }
