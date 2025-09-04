@@ -8,7 +8,6 @@ import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import androidx.appcompat.widget.SearchView
-import com.valoser.futaburakari.databinding.ActivityDetailBinding
 
 // DetailActivityが実装するコールバックインターフェース
 interface SearchManagerCallback {
@@ -17,11 +16,9 @@ interface SearchManagerCallback {
     fun getStringResource(resId: Int): String
     fun getStringResource(resId: Int, vararg formatArgs: Any): String
     fun onSearchCleared() // 検索がクリアされたときにDetailActivityに通知
-    fun isBindingInitialized(): Boolean // bindingが初期化済みか確認（将来削除予定）
 }
 
 class DetailSearchManager(
-    private val binding: ActivityDetailBinding,
     private val callback: SearchManagerCallback
 ) {
 
@@ -70,8 +67,6 @@ class DetailSearchManager(
     }
 
     fun performSearch(query: String) {
-        if (!callback.isBindingInitialized()) return
-
         currentSearchQuery = query
         _currentQueryFlow.value = query
         // Compose側でハイライトするため、Adapterへの伝播は不要
@@ -101,8 +96,6 @@ class DetailSearchManager(
     }
 
     fun clearSearch() {
-        if (!callback.isBindingInitialized()) return
-
         val searchWasActive = currentSearchQuery != null
         currentSearchQuery = null
         _currentQueryFlow.value = null

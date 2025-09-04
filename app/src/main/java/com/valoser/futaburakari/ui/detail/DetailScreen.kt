@@ -12,8 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -43,15 +43,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.DetailContent
-import com.valoser.futaburakari.databinding.ActivityDetailBinding
+import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.ui.detail.FastScroller
-import coil.load
-import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
-import android.text.Html
-import com.valoser.futaburakari.BlockDividerDecoration
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
@@ -61,15 +56,9 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  * Hybrid container for gradual Compose migration.
  * Currently embeds the existing XML root inside Compose.
  */
-@Composable
-fun DetailScreenHybrid(binding: ActivityDetailBinding) {
-    AndroidView(factory = { binding.root })
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreenScaffold(
-    binding: ActivityDetailBinding,
     title: String,
     onBack: () -> Unit,
     onReply: () -> Unit,
@@ -175,15 +164,6 @@ fun DetailScreenScaffold(
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
-            // Legacy root は Compose リスト未使用時のみ描画
-            if (!useComposeList) {
-                AndroidView(
-                    modifier = Modifier.matchParentSize(),
-                    factory = { binding.root },
-                    update = { /* no-op */ }
-                )
-            }
-
             // Hoist items/listState so they are visible to dialogs/sheets below
             val items = itemsLive?.observeAsState(emptyList())?.value ?: emptyList()
             // Share list state between list and fast scroller
@@ -677,7 +657,7 @@ private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
                 }
             }
         },
-        update = { v -> onHeightChanged(v.measuredHeight) }
+        update = { v: com.google.android.gms.ads.AdView -> onHeightChanged(v.measuredHeight) }
     )
 }
 
