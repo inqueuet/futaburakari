@@ -38,7 +38,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.graphics.Color
-import com.valoser.futaburakari.DetailAdapter
+ 
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.R
 import android.text.Html
@@ -78,22 +78,7 @@ fun DetailListCompose(
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    // Reuse adapter utilities by creating a lightweight adapter instance configured with callbacks
-    val adapter = remember {
-        DetailAdapter().apply {
-            onQuoteClickListener = onQuoteClick
-            onSodaNeClickListener = onSodaneClick
-            onThreadEndTimeClickListener = onThreadEndTimeClick
-            onResNumClickListener = onResNumClick
-            onResNumConfirmClickListener = onResNumConfirmClick
-            onResNumDelClickListener = onResNumDelClick
-            onIdClickListener = onIdClick
-            onBodyClickListener = onBodyClick
-            onAddNgFromBodyListener = onAddNgFromBody
-            getSodaNeState = getSodaneState
-            this.onImageLoaded = onImageLoaded
-        }
-    }
+    // Callbacks are passed directly; no legacy adapter dependency
 
     // Dialog state for No. actions
     var resNumForDialog by remember { mutableStateOf<String?>(null) }
@@ -261,7 +246,7 @@ fun DetailListCompose(
                                     ctx.startActivity(i)
                                 },
                             contentScale = ContentScale.Fit,
-                            onSuccess = { adapter.onImageLoaded?.invoke() }
+                            onSuccess = { onImageLoaded?.invoke() }
                         )
                         // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。
                         val promptPlain = run {
@@ -305,7 +290,7 @@ fun DetailListCompose(
                                     ctx.startActivity(i)
                                 },
                             contentScale = ContentScale.Fit,
-                            onSuccess = { adapter.onImageLoaded?.invoke() }
+                            onSuccess = { onImageLoaded?.invoke() }
                         )
                         val promptPlain = run {
                             val raw = item.prompt
@@ -340,7 +325,7 @@ fun DetailListCompose(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp)
-                            .clickable { adapter.onThreadEndTimeClickListener?.invoke() },
+                            .clickable { onThreadEndTimeClick?.invoke() },
                     )
                 }
             }

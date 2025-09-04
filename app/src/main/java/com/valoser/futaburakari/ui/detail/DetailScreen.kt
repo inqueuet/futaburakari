@@ -79,7 +79,6 @@ fun DetailScreenScaffold(
     searchActiveFlow: StateFlow<Boolean>? = null,
     onSearchActiveChange: ((Boolean) -> Unit)? = null,
     recentSearchesFlow: StateFlow<List<String>>? = null,
-    useComposeList: Boolean = false,
     // Compose専用: 広告バーの表示と高さ通知
     showAds: Boolean = false,
     adUnitId: String? = null,
@@ -165,7 +164,8 @@ fun DetailScreenScaffold(
             val ctx = androidx.compose.ui.platform.LocalContext.current
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
             // Hoist items/listState so they are visible to dialogs/sheets below
-            val items = itemsLive?.observeAsState(emptyList())?.value ?: emptyList()
+            val raw = itemsLive?.observeAsState(emptyList())?.value ?: emptyList()
+            val items = remember(raw) { normalizeThreadEndTime(raw) }
             // Share list state between list and fast scroller
             val listState = rememberLazyListState(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
@@ -174,7 +174,7 @@ fun DetailScreenScaffold(
             // 検索ナビ（Compose内でリストに吸着）を上位スコープで保持
             var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
             var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
-            if (useComposeList && itemsLive != null) {
+            if (itemsLive != null) {
                 val searchQuery = currentQueryFlow?.collectAsState(initial = null)?.value
                 val refreshing = isRefreshingLive?.observeAsState(false)?.value ?: false
                 val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
@@ -659,6 +659,20 @@ private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
         },
         update = { v: com.google.android.gms.ads.AdView -> onHeightChanged(v.measuredHeight) }
     )
+}
+
+// Ensure only the last ThreadEndTime remains; keep order for other items
+private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent> {
+    val endIdxs = src.withIndex().filter { it.value is DetailContent.ThreadEndTime }.map { it.index }
+    if (endIdxs.isEmpty()) return src
+    val keep = endIdxs.last()
+    val out = ArrayList<DetailContent>(src.size - (endIdxs.size - 1))
+    for ((i, item) in src.withIndex()) {
+        if (item is DetailContent.ThreadEndTime) {
+            if (i == keep) out += item
+        } else out += item
+    }
+    return out
 }
 
 @Composable

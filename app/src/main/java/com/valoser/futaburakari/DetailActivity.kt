@@ -169,7 +169,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     searchActiveFlow = searchBarActiveFlow,
                     onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
                     recentSearchesFlow = recentSearchStore.items,
-                    useComposeList = true,
                     showAds = showAds,
                     adUnitId = adUnitId,
                     onBottomPaddingChange = { h -> bottomOffsetFlowInternal.value = h },
