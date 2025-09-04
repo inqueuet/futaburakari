@@ -43,6 +43,10 @@ import com.valoser.futaburakari.ui.detail.SearchState
  * - 再取得時の揺れ対策: 既存表示のプロンプトを新リストへマージしてから表示更新（空で潰さない）。
  * - フォールバック: キャッシュ/スナップショット/アーカイブ再構成の各経路でも再抽出を走らせ、段階反映。
  * - 履歴更新: サムネイル/既読序数の更新、そうだね投稿、削除、検索状態の管理。
+ * - レス番号抽出: OP はURL末尾、返信は本文HTML内の「No」表記から抽出（ドット有無/全角・空白/改行の差異に頑健）。
+ *   これにより ID がない投稿でも No が安定して解決され、UI 側の「そうだね」判定・送信に利用できる。
+ *   なお UI 側（DetailList）では表示テキストの正規化により、`ID:` と `No` の隣接や日付直後の `No` 隣接へ空白補正を行い、
+ *   可読性とクリック検出の安定化を図っている（ViewModel は生HTMLを保持し、検出はHTML/プレーン双方から頑健に行う）。
  */
 @HiltViewModel
 class DetailViewModel @Inject constructor(
@@ -62,12 +66,13 @@ class DetailViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // そうだねの更新通知用
+    // そうだねの更新通知用（resNum -> サーバ応答カウント）。UI側ではこれを受け取り表示を楽観上書き。
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
     val sodaneUpdate = _sodaneUpdate.asSharedFlow()
 
     // 「そうだね」送信（UIからはレス番号のみ渡す）。
     // 参照（Referer）は現在のスレURL（currentUrl）を使用し、成功時は更新通知でUIを反映。
+    // resNum は parse 時に DetailContent.Text.resNum として保持しており、UI 側での行内パースが難しい場合のフォールバックに利用可能。
 
     private val cacheManager = DetailCacheManager(appContext)
     private var currentUrl: String? = null
@@ -102,15 +107,17 @@ class DetailViewModel @Inject constructor(
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
         viewModelScope.launch {
+            // スレ移動時に「そうだね」状態を正しくリセットするため、
+            // 代入前のURLと比較してページ遷移を判定する。
+            val isNewPage = this@DetailViewModel.currentUrl != url
+            if (forceRefresh || isNewPage) {
+                resetSodaNeStates()
+            }
             this@DetailViewModel.currentUrl = url
             _isLoading.value = true
             _error.value = null
             var itemIdCounter = 0L
 
-            // 新しいページを読み込む場合はそうだねの状態をリセット
-            if (forceRefresh || currentUrl != url) {
-                resetSodaNeStates()
-            }
 
             try {
                 if (!forceRefresh) {
@@ -315,10 +322,13 @@ class DetailViewModel @Inject constructor(
             }
 
             if (html.isNotBlank()) {
+                // レス番号の抽出: OP はURL末尾、返信は HTML 内の "No."（改行/空白やドットの有無に頑健）から取得
                 val resNum = if (isOp) {
                     url.substringAfterLast('/').substringBefore(".htm")
                 } else {
-                    Regex("No\\?.\\s*(\\d+)").find(html)?.groupValues?.getOrNull(1)
+                    // Futaba系の "No."（または一部で「No」）に続く数値を安定抽出（改行や余分な空白を許容）
+                    Regex("""No\.?\s*(\n?\s*)?(\d+)""").find(html)?.groupValues?.getOrNull(2)
+                        ?: Regex("""No\.?\s*(\d+)""").find(html)?.groupValues?.getOrNull(1)
                 }
                 progressivelyLoadedContent.add(
                     DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html, resNum = resNum)
@@ -526,7 +536,11 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** 指定レス番号に「そうだね」を送信し、成功時にUIへカウント更新を通知。 */
+    /**
+     * 指定レス番号に「そうだね」を送信し、成功時は (resNum -> count) をUIへ通知。
+     * UI 側ではこの通知を受けて楽観表示（＋/そうだね → そうだねxN）を行い、
+     * 行内に No が見つからない場合も自投稿番号(selfResNum)でフォールバックして置換する。
+     */
     fun postSodaNe(resNum: String) {
         val url = currentUrl
         if (url == null) {

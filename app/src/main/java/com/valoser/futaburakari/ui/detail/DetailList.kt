@@ -8,7 +8,8 @@ package com.valoser.futaburakari.ui.detail
  * - ブロック構造: 1つの Text に続く Image/Video を同一ブロックとして扱い、ブロック末尾のみ区切り線を描画。
  * - 検索: `searchQuery` にマッチする要素のインデックスを算出し、`onProvideSearchNavigator` で Prev/Next 関数を渡す。
  * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> or ＞)、`ID:xxxx`、URL、ファイル名（xxx.jpg 等）、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
- *   - そうだねは引用行を除外し、同じ行に `No.` が含まれる場合のみ有効。
+ *   - そうだねは引用行を除外。行内に `No.` を含む場合を対象
+ *     （行内で見つからない場合は投稿自身の `No.` をフォールバックとして用いて送信可能）。
  *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
  * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
  * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
@@ -16,6 +17,10 @@ package com.valoser.futaburakari.ui.detail
  * - 画像/動画のタップでメディアビューへ遷移（拡大/動画再生、コピー/保存機能はメディア側で提供）。
  * - 画像/動画の直下にファイル名があれば表示し、タップでファイル名参照の集計シートを開く。
  * - プロンプト文はHTML→プレーン化して表示（リンク検出や装飾は行わない）。
+ * - No の検出は表記ゆれに対応（ドットの有無/全角、No と番号の間の空白/改行）。
+ *   また、日付や閉じカッコ `)` の直後に No が隣接してしまう場合、および `ID:` と `No` が隣接する場合は
+ *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
+ *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
  */
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -205,12 +210,15 @@ fun DetailListCompose(
                 is DetailContent.Text -> {
                     val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
                     val selfResNum = remember(plain) {
-                        Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)
+                        // No 抽出を寛容に（ドット任意・全角許容・空白改行許容）
+                        Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(plain)?.groupValues?.getOrNull(2)
+                            ?: Regex("""(?i)No[.\uFF0E]?\s*(\d+)""").find(plain)?.groupValues?.getOrNull(1)
                     }
                     // 楽観表示の変更に追随するよう、エントリのスナップショットをキーに再計算
                     // 表示用にトークン周りの空白を補正し、そうだねの楽観カウントを適用
                     val displayText = remember(plain, sodaneCounts.toList()) {
-                        applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts)
+                        // 楽観表示の適用時、行内で No が見つからない場合は自投稿の No をフォールバック
+                        applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts, selfResNum)
                     }
                     // クリック可能領域（No./引用/ID/URL/ファイル名/そうだね/検索ハイライト）を付与
                     val annotated = remember(displayText, searchQuery, threadTitle) { buildAnnotatedFromText(displayText, searchQuery, threadTitle) }
@@ -242,21 +250,22 @@ fun DetailListCompose(
                                 id != null -> onIdClick?.invoke(id)
                                 url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
                                 sodane != null -> {
-                                    // 推定対象 No. を同一行から取得
+                                    // 推定対象 No. を同一行から取得（なければ投稿自身の No. をフォールバック）
                                     val lineStart = displayText.lastIndexOf('\n', startIndex = offset.coerceAtMost(displayText.length), ignoreCase = false).let { if (it < 0) 0 else it + 1 }
                                     val lineEnd = displayText.indexOf('\n', startIndex = lineStart).let { if (it < 0) displayText.length else it }
                                     val lineText = displayText.substring(lineStart, lineEnd)
-                                    val m = Regex("No\\.(\\d+)").find(lineText)
-                                    val rn = m?.groupValues?.getOrNull(1)
-                                    if (!rn.isNullOrBlank()) {
+                                    val m = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(lineText)
+                                    val rn = m?.groupValues?.getOrNull(2)
+                                    val target = rn ?: selfResNum
+                                    if (!target.isNullOrBlank()) {
                                         // 既に押していれば無視
-                                        val disabled = getSodaneState?.invoke(rn) ?: false
+                                        val disabled = getSodaneState?.invoke(target) ?: false
                                         if (!disabled) {
                                             // 楽観的に +1 表示（親に委譲）
-                                            val next = (sodaneCounts[rn] ?: 0) + 1
-                                            onSetSodaneCount?.invoke(rn, next)
+                                            val next = (sodaneCounts[target] ?: 0) + 1
+                                            onSetSodaneCount?.invoke(target, next)
                                             // コールバック（サーバ送信）
-                                            onSodaneClick?.invoke(rn)
+                                            onSodaneClick?.invoke(target)
                                         }
                                     }
                                 }
@@ -455,8 +464,8 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
 // - 検索語は背景色でハイライト。
 private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle: String?): AnnotatedString = buildAnnotatedString {
     append(text)
-    // No.1234 pattern
-    val resRegex = Regex("""No\.(\d+)""")
+    // No.1234 pattern（ドット任意・全角ドット・空白許容）
+    val resRegex = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""")
     resRegex.findAll(text).forEach { m ->
         val num = m.groupValues[1]
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
@@ -538,7 +547,8 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val line = text.substring(lineStart, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        val hasNo = Regex("\\bNo\\.\\d+\\b").containsMatchIn(line)
+        // No の検出を寛容に（ドット任意／全角ドット許容／空白を許容）
+        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(line)
         if (!isQuote && hasNo) {
             sodaneRegex.findAll(line).forEach { m ->
                 val s = lineStart + m.range.first
@@ -555,11 +565,18 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
 // No. を含む非引用行の末尾に そうだね トークンが存在しない場合は付与する。
 private fun padTokensForSpacing(src: String): String {
     var t = src.replace("\u200B", "")
-    // ID:xxxx と No.xxxx の間に順不同で必ず空白を入れる
-    t = Regex("(ID[:：][\\w./+]+)\\s*(?=No\\.)").replace(t, "$1 ")
-    t = Regex("(No\\.\\d+)\\s*(?=ID[:：])").replace(t, "$1 ")
-    // No.xxxx と +/そうだね トークンの間に空白を入れる
-    t = Regex("(No\\.\\d+)(?=(?:[+＋]|そうだね))").replace(t, "$1 ")
+    // 表記ゆれ吸収: 全角→半角などを正規化し、半角スペースに統一
+    t = java.text.Normalizer.normalize(t.replace('　', ' '), java.text.Normalizer.Form.NFKC)
+    // 日付や括弧閉じの直後に No が隣接してしまうケースを緩和（例: "...12:34:56)No.1234" → ") No.1234"）
+    // 数字または ')' の直後に No が続く場合にスペースを補う。
+    t = Regex("""([0-9)])\s*(?=No[.\uFF0E]?)""", RegexOption.IGNORE_CASE).replace(t, "$1 ")
+    // 汎用: 非空白直後に No が続く場合はスペースを補う（ID と No が隣接しているケース等の取りこぼしを補完）
+    t = Regex("""(?i)(?<=\S)(?=No[.\uFF0E]?\s*\d+)""").replace(t, " ")
+    // ID:xxxx と No.xxxx の間に順不同で必ず空白を入れる（No のドット・全角ドット・空白を許容）
+    t = Regex("""(?i)(ID[:：][\\w./+\-]+)\s*(?=No[.\uFF0E]?)""", RegexOption.IGNORE_CASE).replace(t, "$1 ")
+    t = Regex("""(?i)(No[.\uFF0E]?\s*\d+)\s*(?=ID[:：])""", RegexOption.IGNORE_CASE).replace(t, "$1 ")
+    // No.xxxx と +/そうだね トークンの間に空白を入れる（No のドット・全角ドット・空白を許容）
+    t = Regex("""(No[.\uFF0E]?\s*\d+)(?=(?:[+＋]|そうだね))""").replace(t, "$1 ")
     // 複数の空白を1つに正規化
     t = Regex("[ ]{2,}").replace(t, " ")
     // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（本文や引用行は対象外）
@@ -571,7 +588,7 @@ private fun padTokensForSpacing(src: String): String {
         val line = t.substring(start, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        val hasNo = Regex("\\bNo\\.\\d+\\b").containsMatchIn(line)
+        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(line)
         if (!isQuote && hasNo) {
             if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(line)) {
                 sb.append(line).append(" そうだね")
@@ -583,8 +600,10 @@ private fun padTokensForSpacing(src: String): String {
     return sb.toString()
 }
 
-// Apply optimistic overrides: そうだねトークンを そうだねxN に置換（No. 行のみ対象）
-private fun applySodaneDisplay(text: String, overrides: Map<String, Int>): String {
+// Apply optimistic overrides:
+// - そうだねトークン（+／＋／そうだね／そうだねxN）を「そうだねxN」に置換して表示上書き。
+// - 行内から No を抽出（No のドット有無・全角・空白改行に寛容）。行で見つからない場合は selfResNum をフォールバックに使用。
+private fun applySodaneDisplay(text: String, overrides: Map<String, Int>, selfResNum: String?): String {
     if (overrides.isEmpty()) return text
     val sb = StringBuilder()
     var start = 0
@@ -592,8 +611,9 @@ private fun applySodaneDisplay(text: String, overrides: Map<String, Int>): Strin
         val nl = text.indexOf('\n', start)
         val end = if (nl < 0) text.length else nl
         var line = text.substring(start, end)
-        val m = Regex("No\\.(\\d+)").find(line)
-        val rn = m?.groupValues?.getOrNull(1)
+        // No の抽出も寛容に（ドット任意・全角許容・空白改行許容）
+        val m = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""").find(line)
+        val rn = m?.groupValues?.getOrNull(1) ?: selfResNum
         val cnt = rn?.let { overrides[it] }
         if (cnt != null && cnt > 0) {
             line = line.replace(Regex("(?:そうだねx\\d+|そうだね|[+＋])"), "そうだねx$cnt")
