@@ -16,9 +16,10 @@ sealed class DetailContent {
         val fileName: String? = null
     ) : DetailContent()
 
-    data class Text(
+        data class Text(
         override val id: String,
-        val htmlContent: String
+        val htmlContent: String,
+        val resNum: String? = null
     ) : DetailContent()
 
     data class Video(

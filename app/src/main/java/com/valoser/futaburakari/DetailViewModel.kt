@@ -290,8 +290,13 @@ class DetailViewModel @Inject constructor(
             }
 
             if (html.isNotBlank()) {
+                val resNum = if (isOp) {
+                    url.substringAfterLast('/').substringBefore(".htm")
+                } else {
+                    Regex("No\\?.\\s*(\\d+)").find(html)?.groupValues?.getOrNull(1)
+                }
                 progressivelyLoadedContent.add(
-                    DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html)
+                    DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html, resNum = resNum)
                 )
             }
 

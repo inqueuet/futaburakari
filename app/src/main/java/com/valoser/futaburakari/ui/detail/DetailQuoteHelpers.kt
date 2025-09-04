@@ -65,7 +65,11 @@ internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): 
  * Build list of posts that quote the given source Text's body lines (first-level quote content),
  * including the text row and any immediately following media until the next Text/ThreadEndTime.
  */
-internal fun buildBackReferencesByContent(all: List<DetailContent>, source: DetailContent.Text): List<DetailContent> {
+internal fun buildBackReferencesByContent(
+    all: List<DetailContent>,
+    source: DetailContent.Text,
+    extraCandidates: Set<String> = emptySet(),
+): List<DetailContent> {
     fun normalize(s: String): String = Normalizer.normalize(
         s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
         Normalizer.Form.NFKC
@@ -75,8 +79,12 @@ internal fun buildBackReferencesByContent(all: List<DetailContent>, source: Deta
     val srcPlain = Html.fromHtml(source.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
     val candidates: Set<String> = srcPlain.lines()
         .map { normalize(it) }
-        .filter { it.isNotBlank() && !it.startsWith("No.", ignoreCase = true) && !it.startsWith("ID:", ignoreCase = true) && it.length >= 4 }
+        .filter { it.isNotBlank() && !it.startsWith("No.", ignoreCase = true) && !it.startsWith("ID:", ignoreCase = true) && it.length >= 2 }
         .toSet()
+        .let {
+            if (extraCandidates.isEmpty()) it
+            else it + extraCandidates.map { s -> normalize(s) }
+        }
     if (candidates.isEmpty()) return emptyList()
 
     // Find posts that contain a quote line exactly equal to any candidate
@@ -84,12 +92,22 @@ internal fun buildBackReferencesByContent(all: List<DetailContent>, source: Deta
         if (c !is DetailContent.Text) return@filter false
         if (c.id == source.id) return@filter false
         val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-        val quoteLines = Regex("^>+[^\\n]*", RegexOption.MULTILINE)
-            .findAll(plain)
-            .map { m -> normalize(m.value.replaceFirst(Regex("^>+"), "")) }
+        val quoteLines = plain.lines()
+            .filter { it.trim().startsWith(">") }
+            .map { normalize(it.trim().replaceFirst(Regex("^>+"), "")) }
             .filter { it.isNotBlank() }
             .toSet()
-        quoteLines.any { it in candidates }
+        if (quoteLines.any { it in candidates }) return@filter true
+
+        // 2. extraCandidates がある場合、レス本文の各行が完全に一致するかを検索
+        if (extraCandidates.isNotEmpty()) {
+            val plainLines = plain.lines().map { normalize(it) }.filter { it.isNotBlank() }
+            if (plainLines.any { it in candidates }) {
+                return@filter true
+            }
+        }
+
+        false
     }.map { it.index }
 
     if (hitIndexes.isEmpty()) return emptyList()
@@ -125,7 +143,11 @@ internal fun buildBackReferencesByContent(all: List<DetailContent>, source: Deta
 /**
  * Combine the source Text (and its following media) with all posts that quote it (and their media).
  */
-internal fun buildSelfAndBackrefItems(all: List<DetailContent>, source: DetailContent.Text): List<DetailContent> {
+internal fun buildSelfAndBackrefItems(
+    all: List<DetailContent>,
+    source: DetailContent.Text,
+    extraCandidates: Set<String> = emptySet(),
+): List<DetailContent> {
     // Build group for the source itself
     val srcIndex = all.indexOfFirst { it.id == source.id }
     if (srcIndex < 0) return emptyList()
@@ -143,7 +165,7 @@ internal fun buildSelfAndBackrefItems(all: List<DetailContent>, source: DetailCo
         groups += g
     }
     // Append back-references
-    val back = buildBackReferencesByContent(all, source)
+    val back = buildBackReferencesByContent(all, source, extraCandidates = extraCandidates)
     if (back.isNotEmpty()) {
         var k = 0
         while (k < back.size) {
@@ -206,7 +228,8 @@ internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List
     fun extractResNo(c: DetailContent): Int? = when (c) {
         is DetailContent.Text -> {
             val plain = android.text.Html.fromHtml(c.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
-            Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
+                .find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
         else -> null
     }

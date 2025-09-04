@@ -76,6 +76,8 @@ fun DetailListCompose(
     // Hoisted "そうだね" 表示カウント（resNum -> count）
     sodaneCounts: Map<String, Int> = emptyMap(),
     onSetSodaneCount: ((String, Int) -> Unit)? = null,
+    // スレタイトル（タイトル行を引用扱いにするためのヒント）
+    threadTitle: String? = null,
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -188,7 +190,7 @@ fun DetailListCompose(
                     val displayText = remember(plain, sodaneCounts.toList()) {
                         applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts)
                     }
-                    val annotated = remember(displayText, searchQuery) { buildAnnotatedFromText(displayText, searchQuery) }
+                    val annotated = remember(displayText, searchQuery, threadTitle) { buildAnnotatedFromText(displayText, searchQuery, threadTitle) }
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -401,7 +403,7 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
 }
 
 // Build AnnotatedString with clickable No.xxxx and quote lines (> or >>)
-private fun buildAnnotatedFromText(text: String, highlight: String?): AnnotatedString = buildAnnotatedString {
+private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle: String?): AnnotatedString = buildAnnotatedString {
     append(text)
     // No.1234 pattern
     val resRegex = Regex("""No\.(\d+)""")
@@ -410,12 +412,42 @@ private fun buildAnnotatedFromText(text: String, highlight: String?): AnnotatedS
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
         addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
     }
-    // Quote lines starting with >+
-    val lineRegex = Regex("^>+[^\n]*", RegexOption.MULTILINE)
+    // Quote lines: allow leading spaces and full-width ＞, and normalize token before passing
+    val lineRegex = Regex("^(?:[\\t \\u3000])*[>＞]+[^\\n]*", RegexOption.MULTILINE)
     lineRegex.findAll(text).forEach { m ->
-        val token = m.value
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
-        addStringAnnotation(tag = "quote", annotation = token, start = m.range.first, end = m.range.last + 1)
+        val tokenRaw = m.value
+        val token = tokenRaw.trimStart().replace('＞', '>')
+        val start = m.range.first + (m.value.length - tokenRaw.trimStart().length)
+        val end = m.range.last + 1
+        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), start, end)
+        addStringAnnotation(tag = "quote", annotation = token, start = start, end = end)
+    }
+    // Title line as quote: if a line equals the thread title (ignoring spaces/width variants), annotate as a quote too
+    if (!threadTitle.isNullOrBlank()) {
+        fun normalize(s: String): String = java.text.Normalizer.normalize(
+            s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
+            java.text.Normalizer.Form.NFKC
+        ).replace(Regex("\\s+"), " ").trim()
+        val needle = normalize(threadTitle)
+        var idx = 0
+        while (idx <= text.length) {
+            val nl = text.indexOf('\n', idx)
+            val end = if (nl < 0) text.length else nl
+            val s = idx
+            val e = end
+            val line = text.substring(s, e)
+            val trimmed = line.trim()
+            // 既に '>' で始まる行は通常の引用検出に任せる
+            if (!trimmed.startsWith('>')) {
+                val norm = normalize(line)
+                if (norm.isNotBlank() && norm == needle) {
+                    val token = ">" + trimmed
+                    addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
+                    addStringAnnotation(tag = "quote", annotation = token, start = s, end = e)
+                }
+            }
+            if (nl < 0) break else idx = nl + 1
+        }
     }
     // ID:xxxx pattern
     val idRegex = Regex("""ID([:：])([\u0021-\u007E\u00A0-\u00FF\w./+]+)""")

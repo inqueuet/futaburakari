@@ -115,6 +115,7 @@ fun DetailScreenScaffold(
     }
 
     // Hoisted UI states for dialogs/sheets so both topBar and content can access
+    var titleClickPending by remember { mutableStateOf(false) }
     var openMediaSheet by remember { mutableStateOf(false) }
             var idMenuTarget by remember { mutableStateOf<String?>(null) }
             var idSheetItems by remember { mutableStateOf<List<DetailContent>?>(null) }
@@ -126,7 +127,15 @@ fun DetailScreenScaffold(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = title, maxLines = 2, style = MaterialTheme.typography.titleMedium) },
+                title = {
+                    // タイトルクリックで「スレタイ（引用元）＋引用先」を表示
+                    Text(
+                        text = title,
+                        maxLines = 2,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.clickable { titleClickPending = true }
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -229,9 +238,10 @@ fun DetailScreenScaffold(
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
+                        threadTitle = title,
                         onQuoteClick = { token ->
                             // 引用先タップ時: 引用元（一致行を含むレス）と、そのレスを引用している投稿の両方を表示
-                            val list = buildQuoteAndBackrefItems(items, token)
+                            val list = buildQuoteAndBackrefItems(items, token, threadTitle = title)
                             if (list.isNotEmpty()) {
                                 resRefItems = list
                             } else {
@@ -668,6 +678,28 @@ fun DetailScreenScaffold(
                             navNext?.invoke()
                         }
                     )
+                }
+                // タイトルクリック要求: items が利用可能なタイミングで処理し、成功時にだけフラグを落とす
+                if (titleClickPending) {
+                    val firstIdx = items.indexOfFirst { it is DetailContent.Text }
+                    if (firstIdx >= 0) {
+                        val src = items[firstIdx] as DetailContent.Text
+                        // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
+                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title))
+                        // 2) OPのNo.を使った引用先（>>No など番号参照）
+                        val rn = src.resNum
+                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn) else emptyList()
+                        // 3) 結合 + 重複排除（表示順は byContent → byNumber）
+                        if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
+                            val seen = HashSet<String>()
+                            val merged = ArrayList<DetailContent>(byContent.size + byNumber.size)
+                            for (c in byContent + byNumber) if (seen.add(c.id)) merged += c
+                            resRefItems = merged
+                            titleClickPending = false
+                        }
+                        // ヒットしなければフラグは保持
+                    }
+                    // items がまだ空の場合もフラグ保持
                 }
             }
         }

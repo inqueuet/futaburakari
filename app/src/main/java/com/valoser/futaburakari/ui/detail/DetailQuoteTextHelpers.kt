@@ -8,8 +8,10 @@ import java.text.Normalizer
 // Strategy: extract the core text (without leading '>') and find Text items whose plain
 // text contains it (ignore spacing and width variants). Include subsequent media until next Text/End.
 internal fun buildQuoteItems(all: List<DetailContent>, token: String): List<DetailContent> {
-    val level = token.takeWhile { it == '>' }.length.coerceAtLeast(1)
-    val core = token.drop(level).trim()
+    // Normalize token: strip leading spaces, convert full-width variants to ASCII
+    val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
+    val level = t0.takeWhile { it == '>' }.length.coerceAtLeast(1)
+    val core = t0.drop(level).trim()
     if (core.isBlank()) return emptyList()
 
     fun normalize(s: String): String = Normalizer.normalize(
@@ -51,9 +53,11 @@ internal fun buildQuoteItems(all: List<DetailContent>, token: String): List<Deta
  * 2) Include each source Text and its following media
  * 3) Include posts that quote any of those source Texts (and their following media)
  */
-internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String): List<DetailContent> {
-    val level = token.takeWhile { it == '>' }.length.coerceAtLeast(1)
-    val core = token.drop(level).trim()
+internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String, threadTitle: String?): List<DetailContent> {
+    // Normalize token: strip leading spaces, convert full-width variants to ASCII
+    val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
+    val level = t0.takeWhile { it == '>' }.length.coerceAtLeast(1)
+    val core = t0.drop(level).trim()
     if (core.isBlank()) return emptyList()
 
     fun normalize(s: String): String = Normalizer.normalize(
@@ -64,11 +68,17 @@ internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String):
     val needle = normalize(core)
 
     // 1) find matching source Text indexes (line-level exact match)
-    val sourceIdxs = all.withIndex().filter { (_, c) ->
+    val sourceIdxsMutable = all.withIndex().filter { (_, c) ->
         if (c !is DetailContent.Text) return@filter false
         val lines = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().lines()
         lines.map { normalize(it) }.any { it.isNotBlank() && it == needle }
     }.map { it.index }
+    val sourceIdxs = sourceIdxsMutable.toMutableSet()
+    // If the quote matches the thread title, treat OP (first Text) as a source as well
+    val titleNorm = threadTitle?.let { normalize(it) }
+    val firstTextIdx = all.indexOfFirst { it is DetailContent.Text }
+    val titleMatched = !titleNorm.isNullOrBlank() && titleNorm == needle && firstTextIdx >= 0
+    if (titleMatched) sourceIdxs.add(firstTextIdx)
     if (sourceIdxs.isEmpty()) return emptyList()
 
     // 2) Collect groups for sources
@@ -91,7 +101,10 @@ internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String):
 
     // 3) For each source, include back-references (quote lines equal to any line of source body)
     for (src in sourceTexts) {
-        val back = buildBackReferencesByContent(all, src)
+        val isOp = all.indexOf(src) == firstTextIdx
+        val extra = if (titleMatched && isOp) setOf(needle) else emptySet()
+        // content-based backrefs
+        val back = buildBackReferencesByContent(all, src, extraCandidates = extra)
         if (back.isNotEmpty()) {
             // back is already flattened; regroup by first item to keep consistency
             val backGroups = mutableListOf<List<DetailContent>>()
@@ -108,6 +121,29 @@ internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String):
                 backGroups += group
             }
             groups += backGroups
+        }
+        // number-based backrefs (>>No)
+        run {
+            val plain = Html.fromHtml(src.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+            val rn = Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
+                .find(plain)?.groupValues?.getOrNull(1)
+            if (!rn.isNullOrBlank()) {
+                val byNum = buildResReferencesItems(all, rn)
+                if (byNum.isNotEmpty()) {
+                    var k = 0
+                    while (k < byNum.size) {
+                        val first = byNum[k]
+                        val g = mutableListOf<DetailContent>()
+                        g += first
+                        k++
+                        while (k < byNum.size && byNum[k] !is DetailContent.Text) {
+                            g += byNum[k]
+                            k++
+                        }
+                        groups += g
+                    }
+                }
+            }
         }
     }
 
