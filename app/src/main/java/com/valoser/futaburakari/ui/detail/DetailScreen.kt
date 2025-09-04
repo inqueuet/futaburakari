@@ -119,7 +119,6 @@ fun DetailScreenScaffold(
             var idMenuTarget by remember { mutableStateOf<String?>(null) }
             var idSheetItems by remember { mutableStateOf<List<DetailContent>?>(null) }
             var resRefItems by remember { mutableStateOf<List<DetailContent>?>(null) }
-            var textSearchItems by remember { mutableStateOf<List<DetailContent>?>(null) }
             // NG追加（Compose）用の状態
             var pendingNgId by remember { mutableStateOf<String?>(null) }
             var pendingNgBody by remember { mutableStateOf<String?>(null) }
@@ -231,8 +230,8 @@ fun DetailScreenScaffold(
                         items = items,
                         searchQuery = searchQuery,
                         onQuoteClick = { token ->
-                            // Compose側で引用トークンから一覧を生成して表示
-                            val list = buildQuoteItems(items, token)
+                            // 引用先タップ時: 引用元（一致行を含むレス）と、そのレスを引用している投稿の両方を表示
+                            val list = buildQuoteAndBackrefItems(items, token)
                             if (list.isNotEmpty()) {
                                 resRefItems = list
                             } else {
@@ -256,16 +255,15 @@ fun DetailScreenScaffold(
                         onResNumDelClick = { resNum -> reportTarget = resNum },
                         onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
-                        onFreeTextSearch = { token ->
-                            val list = buildTextSearchItems(items, token)
+                        onAddNgFromBody = { body -> pendingNgBody = body },
+                        onBodyShowBackRefs = { src ->
+                            val list = buildBackReferencesByContent(items, src)
                             if (list.isNotEmpty()) {
-                                textSearchItems = list
+                                resRefItems = list
                             } else {
-                                // If no direct hits, optionally fall back to activating top search
-                                // setSearchActive(true); query = token
+                                // fallback: 何もヒットしなければ何もしない（必要ならToastなど）
                             }
                         },
-                        onAddNgFromBody = { body -> pendingNgBody = body },
                         getSodaneState = getSodaneState,
                         sodaneCounts = sodaneCounts,
                         onSetSodaneCount = { rn, c -> sodaneCounts[rn] = c },
@@ -453,7 +451,6 @@ fun DetailScreenScaffold(
                         onResNumDelClick = null,
                         onIdClick = null,
                         onBodyClick = null,
-                        onFreeTextSearch = null,
                         onAddNgFromBody = null,
                         getSodaneState = { false },
                         sodaneCounts = emptyMap(),
@@ -484,7 +481,6 @@ fun DetailScreenScaffold(
                         onResNumDelClick = null,
                         onIdClick = null,
                         onBodyClick = null,
-                        onFreeTextSearch = null,
                         onAddNgFromBody = null,
                         getSodaneState = { false },
                         sodaneCounts = emptyMap(),

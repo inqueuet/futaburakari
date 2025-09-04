@@ -60,8 +60,9 @@ fun DetailListCompose(
     onIdClick: ((String) -> Unit)? = null,
     onBodyClick: ((String) -> Unit)? = null,
     onAddNgFromBody: ((String) -> Unit)? = null,
+    // 本文タップで引用元（このレスを引用している投稿）を表示
+    onBodyShowBackRefs: ((DetailContent.Text) -> Unit)? = null,
     // Free text search when clicking body (non-quote areas)
-    onFreeTextSearch: ((String) -> Unit)? = null,
     getSodaneState: ((String) -> Boolean)? = null,
     onImageLoaded: (() -> Unit)? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
@@ -180,6 +181,9 @@ fun DetailListCompose(
             when (item) {
                 is DetailContent.Text -> {
                     val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                    val selfResNum = remember(plain) {
+                        Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)
+                    }
                     // Recompute when optimistic overrides change by keying on a snapshot of entries
                     val displayText = remember(plain, sodaneCounts.toList()) {
                         applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts)
@@ -204,7 +208,8 @@ fun DetailListCompose(
                             val url = tags.firstOrNull { it.tag == "url" }?.item
                             val sodane = tags.firstOrNull { it.tag == "sodane" }?.item
                             when {
-                                res != null -> resNumForDialog = res
+                                // No. タップで「引用元（このレスを引用している投稿）」の一覧シートを直接表示
+                                res != null -> onResNumConfirmClick?.invoke(res)
                                 quote != null -> onQuoteClick?.invoke(quote)
                                 id != null -> onIdClick?.invoke(id)
                                 url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
@@ -228,12 +233,9 @@ fun DetailListCompose(
                                     }
                                 }
                             }
-                            // Fallback: free text search around click position
+                            // 本文（いずれのタグにも該当しない領域）タップで、当該レスを引用している投稿一覧を表示
                             if (res == null && quote == null && id == null && url == null && sodane == null) {
-                                val token = extractKeywordAt(displayText, offset)
-                                if (token.length >= 2) {
-                                    onFreeTextSearch?.invoke(token)
-                                }
+                                onBodyShowBackRefs?.invoke(item)
                             }
                         })
                     }
@@ -435,11 +437,26 @@ private fun buildAnnotatedFromText(text: String, highlight: String?): AnnotatedS
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
         addStringAnnotation("url", m.value, m.range.first, m.range.last + 1)
     }
-    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）
+    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— ヘッダー行（先頭がNo.）のみを対象にする
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
-    sodaneRegex.findAll(text).forEach { m ->
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
-        addStringAnnotation("sodane", "1", m.range.first, m.range.last + 1)
+    var start = 0
+    while (start <= text.length) {
+        val nl = text.indexOf('\n', start)
+        val end = if (nl < 0) text.length else nl
+        val lineStart = start
+        val lineEnd = end
+        val line = text.substring(lineStart, lineEnd)
+        val trimmed = line.trimStart()
+        // ヘッダー行: 先頭（空白除去後）が "No." から始まる行のみ
+        if (trimmed.startsWith("No.")) {
+            sodaneRegex.findAll(line).forEach { m ->
+                val s = lineStart + m.range.first
+                val e = lineStart + m.range.last + 1
+                addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
+                addStringAnnotation("sodane", "1", s, e)
+            }
+        }
+        if (nl < 0) break else start = nl + 1
     }
 }
 
@@ -453,14 +470,15 @@ private fun padTokensForSpacing(src: String): String {
     t = Regex("(No\\.\\d+)(?=(?:[+＋]|そうだね))").replace(t, "$1 ")
     // Normalize multiple spaces
     t = Regex("[ ]{2,}").replace(t, " ")
-    // Ensure a そうだね token exists at end of No. line if absent
+    // Ensure a そうだね token exists at end of No. header line if absent (本文や引用行は対象外)
     val sb = StringBuilder()
     var start = 0
     while (start < t.length) {
         val nl = t.indexOf('\n', start)
         val end = if (nl < 0) t.length else nl
         val line = t.substring(start, end)
-        if (Regex("No\\.\\d+").containsMatchIn(line)) {
+        val trimmed = line.trimStart()
+        if (trimmed.startsWith("No.")) {
             if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(line)) {
                 sb.append(line).append(" そうだね")
             } else sb.append(line)
@@ -471,38 +489,7 @@ private fun padTokensForSpacing(src: String): String {
     return sb.toString()
 }
 
-// Extract a reasonable keyword around the clicked offset to use for search.
-private fun extractKeywordAt(text: String, offsetRaw: Int): String {
-    if (text.isEmpty()) return ""
-    val offset = offsetRaw.coerceIn(0, text.length - 1)
-    // Use the line containing the offset as primary boundary
-    val lineStart = text.lastIndexOf('\n', startIndex = offset).let { if (it < 0) 0 else it + 1 }
-    val lineEnd = text.indexOf('\n', startIndex = lineStart).let { if (it < 0) text.length else it }
-    val line = text.substring(lineStart, lineEnd)
-    if (line.isBlank()) return ""
-    // Compute local offset within the line
-    val local = (offset - lineStart).coerceIn(0, line.length - 1)
-    // Expand to token boundaries: letters, digits, CJK, underscore, dot, slash
-    fun isTokenChar(ch: Char): Boolean {
-        return ch.isLetterOrDigit() || ch == '_' || ch == '.' || ch == '/' ||
-            (ch.code in 0x3040..0x30FF) || // Hiragana/Katakana
-            (ch.code in 0x4E00..0x9FFF)    // CJK Unified Ideographs
-    }
-    var l = local
-    var r = local
-    while (l > 0 && isTokenChar(line[l - 1])) l--
-    while (r < line.length && isTokenChar(line[r])) r++
-    var token = line.substring(l, r).trim()
-    // Fallback: if too short, take a window around the click
-    if (token.length < 2) {
-        val win = 8
-        val s = (local - win).coerceAtLeast(0)
-        val e = (local + win).coerceAtMost(line.length)
-        token = line.substring(s, e).trim()
-    }
-    // Limit length to avoid overly large queries
-    return token.take(40)
-}
+// (no-op)
 
 // Apply optimistic overrides: replace token with そうだねxN on No.行
 private fun applySodaneDisplay(text: String, overrides: Map<String, Int>): String {
