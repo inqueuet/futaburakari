@@ -38,7 +38,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.*
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
-import androidx.compose.runtime.livedata.observeAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -72,7 +72,7 @@ fun DetailScreenScaffold(
     onClearSearch: () -> Unit,
     // NG再適用のためのフック（追加後呼ぶ）
     onReapplyNgFilter: (() -> Unit)? = null,
-    searchStateFlow: StateFlow<com.valoser.futaburakari.DetailSearchManager.SearchState>? = null,
+    searchStateFlow: StateFlow<com.valoser.futaburakari.ui.detail.SearchState>? = null,
     onSearchPrev: (() -> Unit)? = null,
     onSearchNext: (() -> Unit)? = null,
     bottomOffsetPxFlow: StateFlow<Int>? = null,
@@ -88,7 +88,7 @@ fun DetailScreenScaffold(
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
-    itemsLive: androidx.lifecycle.LiveData<List<DetailContent>>? = null,
+    itemsFlow: StateFlow<List<DetailContent>>? = null,
     currentQueryFlow: StateFlow<String?>? = null,
     getSodaneState: ((String) -> Boolean)? = null,
     onQuoteClick: ((String) -> Unit)? = null,
@@ -99,7 +99,7 @@ fun DetailScreenScaffold(
     onAddNgFromBody: ((String) -> Unit)? = null,
     onThreadEndTimeClick: (() -> Unit)? = null,
     onImageLoaded: (() -> Unit)? = null,
-    isRefreshingLive: androidx.lifecycle.LiveData<Boolean>? = null,
+    isRefreshingFlow: StateFlow<Boolean>? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
     // 末尾近辺に到達したときに呼ばれる（無限スクロール用）
     onNearListEnd: (() -> Unit)? = null,
@@ -165,7 +165,7 @@ fun DetailScreenScaffold(
             val ctx = androidx.compose.ui.platform.LocalContext.current
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
             // Hoist items/listState so they are visible to dialogs/sheets below
-            val raw = itemsLive?.observeAsState(emptyList())?.value ?: emptyList()
+            val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
             // Share list state between list and fast scroller
             val listState = rememberLazyListState(
@@ -175,9 +175,9 @@ fun DetailScreenScaffold(
             // 検索ナビ（Compose内でリストに吸着）を上位スコープで保持
             var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
             var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
-            if (itemsLive != null) {
-                val searchQuery = currentQueryFlow?.collectAsState(initial = null)?.value
-                val refreshing = isRefreshingLive?.observeAsState(false)?.value ?: false
+            if (itemsFlow != null) {
+                val searchQuery = currentQueryFlow?.collectAsStateWithLifecycle(null)?.value
+                val refreshing = isRefreshingFlow?.collectAsStateWithLifecycle(false)?.value ?: false
                 val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
                 var fastScrollActive by remember { mutableStateOf(false) }
                 // Bottom padding: legacy Flow があれば使用。無ければ広告高さから算出
@@ -624,7 +624,7 @@ fun DetailScreenScaffold(
 
             // 検索ナビ（↓↑ と 件数表示）— 従来の下部UI相当をComposeで重ねる
             if (searchStateFlow != null) {
-                val s by searchStateFlow.collectAsState()
+                val s by searchStateFlow.collectAsStateWithLifecycle(com.valoser.futaburakari.ui.detail.SearchState(false, 0, 0))
                 if (s.active) {
                     val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
                     val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }

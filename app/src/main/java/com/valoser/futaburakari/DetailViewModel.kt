@@ -24,8 +24,12 @@ import java.net.URL
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
+import com.valoser.futaburakari.ui.detail.SearchState
 
 @HiltViewModel
 class DetailViewModel @Inject constructor(
@@ -33,14 +37,14 @@ class DetailViewModel @Inject constructor(
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
-    private val _detailContent = MutableLiveData<List<DetailContent>>()
-    val detailContent: LiveData<List<DetailContent>> = _detailContent
+    private val _detailContent = MutableStateFlow<List<DetailContent>>(emptyList())
+    val detailContent: StateFlow<List<DetailContent>> = _detailContent.asStateFlow()
 
     private val _error = MutableLiveData<String?>()
     val error: LiveData<String?> = _error
 
-    private val _isLoading = MutableLiveData<Boolean>()
-    val isLoading: LiveData<Boolean> = _isLoading
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     // そうだねの更新通知用
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
@@ -55,6 +59,15 @@ class DetailViewModel @Inject constructor(
     // NG フィルタ適用前の生コンテンツを保持
     private var rawContent: List<DetailContent> = emptyList()
     private val ngStore by lazy { NgStore(appContext) }
+
+    // ---- Search state (single source of truth) ----
+    private var currentSearchQuery: String? = null
+    private val _currentQueryFlow = MutableStateFlow<String?>(null)
+    val currentQuery: StateFlow<String?> = _currentQueryFlow.asStateFlow()
+    private val searchResultPositions = mutableListOf<Int>()
+    private var currentSearchHitIndex = -1
+    private val _searchState = MutableStateFlow(SearchState(active = false, currentIndexDisplay = 0, total = 0))
+    val searchState: StateFlow<SearchState> = _searchState.asStateFlow()
 
     // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
     private val sodaNeStates = mutableMapOf<String, Boolean>()
@@ -410,7 +423,7 @@ class DetailViewModel @Inject constructor(
                 val now = System.currentTimeMillis()
                 val due = (now - lastFlush) >= flushIntervalMs
                 if (batch.isNotEmpty() && (force || due)) {
-                    val current = _detailContent.value?.toMutableList() ?: return
+                    val current = _detailContent.value.toMutableList()
                     var changed = false
                     batch.forEach { (id, prompt) ->
                         val idx = current.indexOfFirst { it.id == id }
@@ -425,7 +438,7 @@ class DetailViewModel @Inject constructor(
                         }
                     }
                     if (changed) {
-                        _detailContent.postValue(current.toList())
+                        _detailContent.value = current.toList()
                         withContext(Dispatchers.IO) { cacheManager.saveDetails(url, current.toList()) }
                     }
                     batch.clear()
@@ -481,7 +494,7 @@ class DetailViewModel @Inject constructor(
     fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String, onlyImage: Boolean) {
         viewModelScope.launch {
             try {
-                _isLoading.postValue(true)
+                _isLoading.value = true
 
                 // 念のため直前にスレGETしてCookieを埋める（posttime等）
                 withContext(Dispatchers.IO) { networkClient.fetchDocument(referer) }
@@ -505,7 +518,7 @@ class DetailViewModel @Inject constructor(
             } catch (e: Exception) {
                 _error.postValue("削除中にエラーが発生しました: ${e.message}")
             } finally {
-                _isLoading.postValue(false)
+                _isLoading.value = false
             }
         }
     }
@@ -515,7 +528,7 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val url = currentUrl ?: return@launch
-                _isLoading.postValue(true)
+                _isLoading.value = true
 
                 // 事前に参照スレをGETしてCookie類を確実に用意
                 withContext(Dispatchers.IO) { networkClient.fetchDocument(url) }
@@ -537,7 +550,7 @@ class DetailViewModel @Inject constructor(
             } catch (e: Exception) {
                 _error.postValue("del 実行中にエラーが発生しました: ${e.message}")
             } finally {
-                _isLoading.postValue(false)
+                _isLoading.value = false
             }
         }
     }
@@ -566,11 +579,13 @@ class DetailViewModel @Inject constructor(
         ngStore.cleanup()
         val rules = ngStore.getRules()
         if (rules.isEmpty()) {
-            _detailContent.postValue(rawContent)
+            _detailContent.value = rawContent
+            recomputeSearchState()
             return
         }
         val filtered = filterByNgRules(rawContent, rules)
-        _detailContent.postValue(filtered)
+        _detailContent.value = filtered
+        recomputeSearchState()
         // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
         currentUrl?.let { url ->
             viewModelScope.launch(Dispatchers.IO) {
@@ -683,5 +698,73 @@ class DetailViewModel @Inject constructor(
             }
             .joinToString("\n")
             .trimEnd()
+    }
+
+    // ===== Search: public APIs and internals =====
+    fun performSearch(query: String) {
+        currentSearchQuery = query
+        _currentQueryFlow.value = query
+        searchResultPositions.clear()
+        currentSearchHitIndex = -1
+        recomputeSearchState()
+        if (searchResultPositions.isNotEmpty()) {
+            currentSearchHitIndex = 0
+            publishSearchState()
+        }
+    }
+
+    fun clearSearch() {
+        val wasActive = currentSearchQuery != null
+        currentSearchQuery = null
+        _currentQueryFlow.value = null
+        searchResultPositions.clear()
+        currentSearchHitIndex = -1
+        publishSearchState()
+        if (wasActive) {
+            // no-op placeholder for legacy callbacks
+        }
+    }
+
+    fun navigateToPrevHit() {
+        if (searchResultPositions.isEmpty()) return
+        currentSearchHitIndex--
+        if (currentSearchHitIndex < 0) currentSearchHitIndex = searchResultPositions.size - 1
+        publishSearchState()
+    }
+
+    fun navigateToNextHit() {
+        if (searchResultPositions.isEmpty()) return
+        currentSearchHitIndex++
+        if (currentSearchHitIndex >= searchResultPositions.size) currentSearchHitIndex = 0
+        publishSearchState()
+    }
+
+    private fun recomputeSearchState() {
+        searchResultPositions.clear()
+        val q = currentSearchQuery?.trim().orEmpty()
+        if (q.isBlank()) {
+            publishSearchState()
+            return
+        }
+        val contentList = _detailContent.value
+        contentList.forEachIndexed { index, content ->
+            val textToSearch: String? = when (content) {
+                is DetailContent.Text -> android.text.Html.fromHtml(content.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+                is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
+                is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
+                is DetailContent.ThreadEndTime -> null
+            }
+            if (textToSearch?.contains(q, ignoreCase = true) == true) {
+                searchResultPositions.add(index)
+            }
+        }
+        publishSearchState()
+    }
+
+    private fun publishSearchState() {
+        val active = (currentSearchQuery != null) && searchResultPositions.isNotEmpty()
+        val currentDisp = if (active && currentSearchHitIndex in searchResultPositions.indices) currentSearchHitIndex + 1 else 0
+        val total = searchResultPositions.size
+        _searchState.value = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)
     }
 }

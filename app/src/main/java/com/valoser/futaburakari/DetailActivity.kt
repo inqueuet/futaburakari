@@ -38,10 +38,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.valoser.futaburakari.search.RecentSearchStore
 
 @AndroidEntryPoint
-class DetailActivity : BaseActivity(), SearchManagerCallback {
+class DetailActivity : BaseActivity() {
 
     private val viewModel: DetailViewModel by viewModels()
-    private lateinit var detailSearchManager: DetailSearchManager
     private lateinit var scrollStore: ScrollPositionStore
 
     private var currentUrl: String? = null
@@ -151,12 +150,12 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     },
                     onSubmitSearch = { q ->
                         recentSearchStore.add(q)
-                        detailSearchManager.performSearch(q)
+                        viewModel.performSearch(q)
                     },
-                    onDebouncedSearch = { q -> detailSearchManager.performSearch(q) },
-                    onClearSearch = { detailSearchManager.clearSearch() },
+                    onDebouncedSearch = { q -> viewModel.performSearch(q) },
+                    onClearSearch = { viewModel.clearSearch() },
                     onReapplyNgFilter = { viewModel.reapplyNgFilter() },
-                    searchStateFlow = detailSearchManager.searchState,
+                    searchStateFlow = viewModel.searchState,
                     bottomOffsetPxFlow = bottomOffsetFlow,
                     searchActiveFlow = searchBarActiveFlow,
                     onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
@@ -172,8 +171,8 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                         val key = UrlNormalizer.threadKey(url)
                         scrollStore.saveScrollState(key, pos, off)
                     },
-                    itemsLive = viewModel.detailContent,
-                    currentQueryFlow = detailSearchManager.currentQueryFlow,
+                    itemsFlow = viewModel.detailContent,
+                    currentQueryFlow = viewModel.currentQuery,
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
                     // Compose側で引用一覧を表示するため、ここでは何もしない
                     onQuoteClick = null,
@@ -195,9 +194,9 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     onAddNgFromBody = { _ -> },
                     onThreadEndTimeClick = { reloadDetails() },
                     onImageLoaded = {
-                        detailSearchManager.realignToCurrentHitIfActive()
+                        // no-op; Compose handles scrolling alignment
                     },
-                    isRefreshingLive = viewModel.isLoading,
+                    isRefreshingFlow = viewModel.isLoading,
                     onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) },
                     threadUrl = currentUrl,
                     onNearListEnd = {
@@ -227,9 +226,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             ThreadMonitorWorker.snapshotNow(this, url)
         }
 
-        // Compose専用の検索マネージャ
-        detailSearchManager = DetailSearchManager(this)
-
         observeViewModel()
         currentUrl?.let { viewModel.fetchDetails(it) }
 
@@ -241,8 +237,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     searchBarActiveFlowInternal.value = false
                     return
                 }
-                if (detailSearchManager.handleOnBackPressed()) return
-
                 // デフォルトの戻るへ委譲
                 isEnabled = false
                 onBackPressedDispatcher.onBackPressed()
@@ -284,17 +278,19 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     
 
     // -------------------------
-    // LiveData監視
+    // Flow監視
     // -------------------------
     private fun observeViewModel() {
-        viewModel.detailContent.observe(this, Observer { list ->
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.detailContent.collect { list ->
 
             // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
             runCatching {
                 val latestReplyNo = list.count { it is DetailContent.Text }
                 val threadUrl = currentUrl
                 if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.applyFetchResult(this, threadUrl, latestReplyNo)
+                    HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
                 }
             }
 
@@ -310,7 +306,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 }
                 val threadUrl = currentUrl
                 if (!url.isNullOrBlank() && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.updateThumbnail(this, threadUrl, url)
+                    HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
                 }
             }
 
@@ -329,13 +325,15 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 withContext(kotlinx.coroutines.Dispatchers.Main) { plainTextCache = cache }
             }
 
-            // 検索ナビの表示切替は DetailSearchManager.performSearch/clearSearch に委譲
+            // 検索ナビの表示は ViewModel.searchState に統一
 
             // suppressNextRestoreフラグのリセットのみ残す
             if (suppressNextRestore) {
                 suppressNextRestore = false
             }
-        })
+                }
+            }
+        }
 
         viewModel.error.observe(this, Observer { err ->
             err?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
@@ -349,7 +347,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         currentUrl?.let { url ->
             suppressNextRestore = false
             // Compose側でスクロールは保持・保存されるため明示の保存/復元は不要
-            detailSearchManager.clearSearch()
+            viewModel.clearSearch()
             isInitialLoad = true // ★リロード時は再度復元を許可する
             viewModel.fetchDetails(url, forceRefresh = true)
         }
@@ -361,14 +359,6 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     // メニューはCompose TopBarで提供するため未使用
 
-    // ===== SearchManagerCallback 実装 =====
-    override fun getDetailContent(): List<DetailContent>? = viewModel.detailContent.value
-    override fun showToast(message: String, duration: Int) { Toast.makeText(this, message, duration).show() }
-    override fun getStringResource(resId: Int): String = getString(resId)
-    override fun getStringResource(resId: Int, vararg formatArgs: Any): String = getString(resId, *formatArgs)
-    override fun onSearchCleared() {
-        // Compose 検索ナビに移行済みのため特にUI更新不要
-    }
     // ViewBindingは撤去済み
 
     // ★ 変更点 4: 返信画面を起動する共通メソッド
@@ -487,7 +477,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
 
     // レス数（Text/Image/Video の件数）を返す
     private fun countPostItems(): Int {
-        val list = viewModel.detailContent.value ?: return 0
+        val list = viewModel.detailContent.value
         return list.count { it is DetailContent.Text || it is DetailContent.Image || it is DetailContent.Video }
     }
 
