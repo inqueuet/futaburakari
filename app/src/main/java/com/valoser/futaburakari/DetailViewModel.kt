@@ -32,12 +32,17 @@ import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
 
 /**
- * ViewModel for thread details.
+ * スレ詳細用の ViewModel。
  *
- * - Loads and parses thread HTML into `DetailContent` items.
- * - Persists raw content to cache and exposes NG-filtered content via `StateFlow`.
- * - Updates history (thumbnail, unread count) and archives snapshots for offline.
- * - Handles actions: incremental updates, SODA-NE post, deletions, and search state.
+ * 機能概要:
+ * - HTML を `DetailContent` 列（Text / Image / Video / ThreadEndTime）へパースし、NG適用後を `detailContent` に公開。
+ * - キャッシュ戦略: 生データはディスクへ保存、表示はNG適用後。スナップショット（アーカイブ用）も併用。
+ * - プロンプト永続化: 画像メタデータの段階抽出→反映ごとにキャッシュ/スナップショットを更新。
+ *   - 表示状態（NG適用＋取得済みプロンプト）でスナップショットを保存し、dat落ち/オフライン復元性を向上。
+ *   - `file://` のローカル画像には EXIF(UserComment) にも書き戻し（上書き）して再抽出の成功率を高める。
+ * - 再取得時の揺れ対策: 既存表示のプロンプトを新リストへマージしてから表示更新（空で潰さない）。
+ * - フォールバック: キャッシュ/スナップショット/アーカイブ再構成の各経路でも再抽出を走らせ、段階反映。
+ * - 履歴更新: サムネイル/既読序数の更新、そうだね投稿、削除、検索状態の管理。
  */
 @HiltViewModel
 class DetailViewModel @Inject constructor(
@@ -86,8 +91,13 @@ class DetailViewModel @Inject constructor(
     private val limitedIO = Dispatchers.IO.limitedParallelism(2)
 
     /**
-     * 詳細を取得して表示を更新する。キャッシュ/スナップショット優先で即時表示し、
-     * 必要に応じてネットワークから取得して差し替える。`forceRefresh=true` で常に再取得。
+     * 詳細を取得して表示を更新。
+     *
+     * ポリシー:
+     * - まずキャッシュ/スナップショットがあれば即時表示（NG適用後）。その後、画像プロンプトを再抽出して段階反映。
+     * - ネット再取得時は既存表示のプロンプトを新規リストへマージし、空で潰さないようにしてから表示更新。
+     * - 例外時はキャッシュ → スナップショット → アーカイブ再構成の順で復元し、いずれの経路でも再抽出を走らせる。
+     * - `forceRefresh=true` の場合は常に再取得。
      */
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
@@ -108,6 +118,8 @@ class DetailViewModel @Inject constructor(
                     if (cachedDetails != null) {
                         rawContent = cachedDetails
                         applyNgAndPost()
+                        // 即時表示後に、キャッシュ由来でも不足メタデータ（画像プロンプト等）を並行取得して段階反映
+                        updateMetadataInBackground(cachedDetails, url)
                         _isLoading.value = false
                         return@launch
                     }
@@ -135,8 +147,12 @@ class DetailViewModel @Inject constructor(
 
                 val progressivelyLoadedContent = parseContentFromDocument(document, url)
 
+                // 既存表示のプロンプト等を引き継ぐ（ネット更新で一時的に消えないように）
+                val prior = _detailContent.value
+                val merged = if (prior.isEmpty()) progressivelyLoadedContent else mergePrompts(progressivelyLoadedContent, prior)
+
                 // キャッシュは生データを保存し、表示はNG適用後
-                rawContent = progressivelyLoadedContent
+                rawContent = merged
                 applyNgAndPost()
                 _isLoading.value = false
 
@@ -154,6 +170,8 @@ class DetailViewModel @Inject constructor(
                     }
                     rawContent = cached
                     applyNgAndPost()
+                    // キャッシュ由来でも画像プロンプト抽出を再試行（オフライン時の復元用）
+                    updateMetadataInBackground(cached, url)
                     // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映
                     runCatching {
                         val media = cached.firstOrNull { it is DetailContent.Image || it is DetailContent.Video }
@@ -186,6 +204,8 @@ class DetailViewModel @Inject constructor(
                         }
                         rawContent = reconstructed
                         applyNgAndPost()
+                        // スナップショット/再構成からも画像プロンプト抽出を実施（file:// を対象）
+                        updateMetadataInBackground(reconstructed, url)
                         _error.value = null
                     } else {
                         _error.value = "詳細の取得に失敗しました: ${e.message}"
@@ -380,7 +400,15 @@ class DetailViewModel @Inject constructor(
         return progressivelyLoadedContent.toList()
     }
 
-    /** メタデータ（主に画像の説明など）をバックグラウンドで取得し、バッチで段階反映する。 */
+    /**
+     * 画像メタデータ（主にプロンプト/説明）をバックグラウンドで抽出し、250ms間隔でバッチ適用する。
+     *
+     * 挙動:
+     * - 画像ごとに `MetadataExtractor.extract` を実行（HTTP/ローカル file:// 対応）。
+     * - 反映時にキャッシュ/スナップショットへ都度保存。
+     * - `file://` の場合、EXIF(UserComment) にも書き戻し（上書き）し、後続の再抽出を安定化。
+     * - 動画は対象外。
+     */
     private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
         // 段階反映: 各ジョブ完了ごとにチャンネルへ送り、一定間隔でまとめて適用
         val updates = Channel<Pair<String, String?>>(Channel.UNLIMITED)
@@ -391,7 +419,8 @@ class DetailViewModel @Inject constructor(
                 is DetailContent.Image -> {
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
-                            withTimeoutOrNull(5000L) { MetadataExtractor.extract(appContext, content.imageUrl, networkClient) }
+                            /*  画像プロンプトの取得タイムアウト時間はここを変更  */
+                            withTimeoutOrNull(60000L) { MetadataExtractor.extract(appContext, content.imageUrl, networkClient) }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata task error for ${content.imageUrl}", e)
                             null
@@ -446,8 +475,40 @@ class DetailViewModel @Inject constructor(
                         }
                     }
                     if (changed) {
-                        _detailContent.value = current.toList()
-                        withContext(Dispatchers.IO) { cacheManager.saveDetails(url, current.toList()) }
+                        val snapshot = current.toList()
+                        _detailContent.value = snapshot
+                        withContext(Dispatchers.IO) {
+                            cacheManager.saveDetails(url, snapshot)
+                            // 抽出完了ごとにアーカイブスナップショットも更新（オフライン時の即時反映用）
+                            cacheManager.saveArchiveSnapshot(url, snapshot)
+                            // 取得済みプロンプトをローカルのアーカイブ画像へも書き戻し（上書き許容）
+                            runCatching {
+                                batch.forEach { (id, p) ->
+                                    val prompt = p ?: return@forEach
+                                    val idx = snapshot.indexOfFirst { it.id == id }
+                                    if (idx < 0) return@forEach
+                                    when (val it = snapshot[idx]) {
+                                        is DetailContent.Image -> {
+                                            val u = it.imageUrl
+                                            if (u.startsWith("file:")) {
+                                                val path = android.net.Uri.parse(u).path
+                                                if (!path.isNullOrBlank()) {
+                                                    try {
+                                                        val exif = androidx.exifinterface.media.ExifInterface(path)
+                                                        exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_USER_COMMENT, prompt)
+                                                        exif.saveAttributes()
+                                                    } catch (_: Exception) {
+                                                        // ignore write failure per-file
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        is DetailContent.Video -> { /* not supported */ }
+                                        else -> {}
+                                    }
+                                }
+                            }
+                        }
                     }
                     batch.clear()
                     lastFlush = now
@@ -601,7 +662,58 @@ class DetailViewModel @Inject constructor(
         currentUrl?.let { url ->
             viewModelScope.launch(Dispatchers.IO) {
                 cacheManager.saveDetails(url, rawContent)
-                cacheManager.saveArchiveSnapshot(url, rawContent)
+                // スナップショットは表示状態（フィルタ適用済み・既存プロンプトを含む）で保存
+                cacheManager.saveArchiveSnapshot(url, _detailContent.value)
+            }
+        }
+    }
+
+    /**
+     * prior（既存表示）に含まれるプロンプト等を base（新規取得）へ引き継ぐ。
+     * - Image/Video で prompt が空のものに限り、fileName またはURL末尾一致で prior から補完。
+     */
+    private fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
+        if (base.isEmpty() || prior.isEmpty()) return base
+        fun keyForImage(url: String?, fileName: String?): String? =
+            fileName?.takeIf { it.isNotBlank() } ?: url?.substringAfterLast('/')
+
+        val promptByKey: Map<String, String> = buildMap {
+            prior.forEach { dc ->
+                when (dc) {
+                    is DetailContent.Image -> {
+                        val k = keyForImage(dc.imageUrl, dc.fileName)
+                        val p = dc.prompt
+                        if (!k.isNullOrBlank() && !p.isNullOrBlank()) put(k, p)
+                    }
+                    is DetailContent.Video -> {
+                        val k = keyForImage(dc.videoUrl, dc.fileName)
+                        val p = dc.prompt
+                        if (!k.isNullOrBlank() && !p.isNullOrBlank()) put(k, p)
+                    }
+                    else -> {}
+                }
+            }
+        }
+
+        if (promptByKey.isEmpty()) return base
+
+        return base.map { dc ->
+            when (dc) {
+                is DetailContent.Image -> {
+                    if (!dc.prompt.isNullOrBlank()) dc else {
+                        val k = keyForImage(dc.imageUrl, dc.fileName)
+                        val p = if (!k.isNullOrBlank()) promptByKey[k] else null
+                        if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
+                    }
+                }
+                is DetailContent.Video -> {
+                    if (!dc.prompt.isNullOrBlank()) dc else {
+                        val k = keyForImage(dc.videoUrl, dc.fileName)
+                        val p = if (!k.isNullOrBlank()) promptByKey[k] else null
+                        if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
+                    }
+                }
+                else -> dc
             }
         }
     }

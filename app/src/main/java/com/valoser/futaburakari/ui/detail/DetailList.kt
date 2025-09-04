@@ -12,6 +12,9 @@ package com.valoser.futaburakari.ui.detail
  *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
  * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
  * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
+ * - 画像/動画の直下に表示するプロンプト文は選択コピー可能（SelectionContainer）。
+ * - 画像/動画のタップでメディアビューへ遷移（拡大/動画再生、コピー/保存機能はメディア側で提供）。
+ * - プロンプト文はHTML→プレーン化して表示（リンク検出や装飾は行わない）。
  */
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -42,6 +45,7 @@ import androidx.compose.ui.platform.LocalDensity
  
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -282,24 +286,22 @@ fun DetailListCompose(
                         val promptPlain = run {
                             val raw = item.prompt
                             val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
-                            when {
-                                !plain.isNullOrBlank() -> plain
-                                !item.fileName.isNullOrBlank() -> item.fileName
-                                else -> null
-                            }
+                            if (!plain.isNullOrBlank()) plain else null
                         }
                         if (!promptPlain.isNullOrBlank()) {
                             var expanded by remember(item.id) { mutableStateOf(false) }
-                            androidx.compose.material3.Text(
-                                text = promptPlain,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = if (expanded) Int.MAX_VALUE else 3,
-                                overflow = if (expanded) androidx.compose.ui.text.style.TextOverflow.Clip else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                                    .clickable { expanded = !expanded }
-                            )
+                            SelectionContainer {
+                                androidx.compose.material3.Text(
+                                    text = promptPlain,
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = if (expanded) Int.MAX_VALUE else 3,
+                                    overflow = if (expanded) androidx.compose.ui.text.style.TextOverflow.Clip else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .clickable { expanded = !expanded }
+                                )
+                            }
                         }
                     }
                 }
@@ -326,24 +328,22 @@ fun DetailListCompose(
                         val promptPlain = run {
                             val raw = item.prompt
                             val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
-                            when {
-                                !plain.isNullOrBlank() -> plain
-                                !item.fileName.isNullOrBlank() -> item.fileName
-                                else -> null
-                            }
+                            if (!plain.isNullOrBlank()) plain else null
                         }
                         if (!promptPlain.isNullOrBlank()) {
                             var expanded by remember(item.id) { mutableStateOf(false) }
-                            androidx.compose.material3.Text(
-                                text = promptPlain,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = if (expanded) Int.MAX_VALUE else 3,
-                                overflow = if (expanded) androidx.compose.ui.text.style.TextOverflow.Clip else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                                    .clickable { expanded = !expanded }
-                            )
+                            SelectionContainer {
+                                androidx.compose.material3.Text(
+                                    text = promptPlain,
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = if (expanded) Int.MAX_VALUE else 3,
+                                    overflow = if (expanded) androidx.compose.ui.text.style.TextOverflow.Clip else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .clickable { expanded = !expanded }
+                                )
+                            }
                         }
                     }
                 }

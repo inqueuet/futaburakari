@@ -27,13 +27,17 @@ import kotlin.math.min
 // 動画プロンプト解析に関連する外部パーサーは削除
 
 /**
- * 画像ファイルなどからプロンプト/説明テキストを抽出するユーティリティ。
+ * 画像からプロンプト/説明テキストを抽出するユーティリティ。
  *
- * - ローカルURIは先頭〜上限を読み込み種別判定後に抽出
- * - HTTPはセマフォで同時接続を制限し、Range/HEADで必要最小限の取得
- * - JPEG/WEBP: EXIF → JPEGのAPP1(XMP)/APP13(IPTC) → テキスト走査
- * - PNG: tEXt/zTXt/iTXt や XMP をストリーミングで走査（IEND/上限まで）
- * - 動画は対象外（常に null）
+ * - 入力: ローカルURI/ファイル、HTTP(S) URL をサポート（HTTP は `NetworkClient` 経由）。
+ * - 取得戦略: セマフォで同時接続数を制限しつつ、Range/HEAD を用いて必要最小限のバイトのみ取得。
+ * - JPEG/WEBP: EXIF → JPEGの APP1(XMP) / APP13(IPTC) → プレーンテキスト走査の順に試行。
+ * - PNG: tEXt / zTXt / iTXt および XMP をストリーミング走査（IEND まで、または上限まで）。
+ * - 解析: XMP/JSON/単純テキストから `prompt` / `parameters` 相当を正規表現で抽出。
+ * - 非対応: 動画は解析対象外（常に null を返す）。
+ * - 呼び出し元: 詳細画面の段階反映（`DetailViewModel.updateMetadataInBackground`）、メディアビュー（`MediaViewScreen`）。
+ * - 戦略: 失敗時は null を返す（例外を投げない）ため、UI 側で段階反映・リトライ戦略を取りやすい。
+ * - 備考: file://（アーカイブ済みのローカル画像）に対しても同様に抽出可能で、dat落ち履歴からの復元に寄与。
  */
 object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
@@ -44,12 +48,12 @@ object MetadataExtractor {
     private val activeConnectionCount = AtomicInteger(0)
 
     // ====== 既存の設定値 ======
-    private const val CONNECT_TIMEOUT_MS = 5_000
-    private const val READ_TIMEOUT_MS = 5_000
+    private const val CONNECT_TIMEOUT_MS = 10_000
+    private const val READ_TIMEOUT_MS = 10_000
 
-    private const val FIRST_EXIF_BYTES = 64 * 1024
-    private const val PNG_WINDOW_BYTES = 64 * 1024
-    private const val GLOBAL_MAX_BYTES = 256 * 1024
+    private const val FIRST_EXIF_BYTES = 128 * 1024
+    private const val PNG_WINDOW_BYTES = 128 * 1024
+    private const val GLOBAL_MAX_BYTES = 512 * 1024
 
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
@@ -65,7 +69,8 @@ object MetadataExtractor {
                 context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
                     // ローカルは全体（または上限）を読んでタイプ別に抽出
                     val all = input.readBytes(limit = GLOBAL_MAX_BYTES)
-                    return@withContext extractByType(all, uriOrUrl)
+                    // EXIF のみではなく、JPEG の APP1(XMP)/APP13(IPTC)、テキスト走査まで含む経路で抽出
+                    return@withContext extractBySniff(all, uriOrUrl)
                 }
                 return@withContext null
             }

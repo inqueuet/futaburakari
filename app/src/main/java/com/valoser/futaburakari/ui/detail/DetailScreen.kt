@@ -55,15 +55,14 @@ import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 
 /**
- * Compose-based detail screen scaffold.
- * - Renders the thread list with fast scrolling, swipe-to-refresh, and infinite scroll trigger.
- * - Hosts docked search UI with debounced suggestions and a bottom search navigator overlay.
- * - Manages dialogs/sheets: ID menu, NG add flows, media grid sheet, and quote/No. reference sheet.
- * - Supports optional ad banner and reports its height for layout padding.
- * - Heavy aggregations for ID/No./quote/back-reference are offloaded to background
- *   coroutines (Dispatchers.Default) to avoid blocking the main thread; only results
- *   are applied to Compose state.
- * - Note: Media sheet is handled internally; `onOpenMedia` is kept for compatibility.
+ * スレ詳細のComposeスクリーン（土台）。
+ *
+ * - リスト表示: 高速スクロール、スワイプ更新、末尾付近到達での追加読み込みトリガーに対応。
+ * - 検索UI: ドック型の検索バー（遅延サジェスト）と、下部のPrev/Nextナビをホスト。
+ * - ダイアログ/シート: IDメニュー、NG追加、メディアグリッド、引用/No.参照などを管理。
+ * - 広告: バナーの高さを下部インセットとして反映（Composeに状態を供給）。
+ * - 集計負荷: ID/No./引用/被引用の集計は `Dispatchers.Default` で実行し、結果のみをCompose状態に反映。
+ * - メディア: メディアシートは内部で扱い、`onOpenMedia` は後方互換用のダミーとして保持。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

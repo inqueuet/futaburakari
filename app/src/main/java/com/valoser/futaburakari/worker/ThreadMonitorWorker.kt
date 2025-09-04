@@ -26,12 +26,21 @@ import okhttp3.Request
 import java.io.File
 
 /**
- * Background worker that monitors a thread URL, archives media, and updates caches/history.
+ * 背景でスレURLを監視し、媒体のアーカイブとキャッシュ/履歴更新を行うWorker。
  *
- * Scheduling model:
- * - Launched as a unique one-time work per URL; upon successful run, reschedules itself when
- *   background monitoring is enabled in preferences.
- * - Also supports an explicit one-shot snapshot that runs immediately regardless of settings.
+ * スケジューリング:
+ * - URLごとにユニークなOneTimeWorkとして起動。成功後は設定が有効なら再スケジュール。
+ * - 即時スナップショット取得にも対応（設定ON/OFFに関係なく実行）。
+ *
+ * 主な処理:
+ * 1) HTMLを取得・パースして Text/Image/Video の直列リストを作成。
+ * 1.5) 既存のキャッシュ/スナップショットから `prompt` をマージ（nullでの上書きを防止）。
+ * 2) 媒体を内部ストレージへ保存し、URLを file:// に差し替え。
+ * 3) キャッシュ/スナップショットを保存し、履歴（サムネ/最新レス番号）を更新。
+ *
+ * 備考:
+ * - 本Worker自身は新規のメタデータ抽出は行わず、既存の `prompt` を温存する戦略を採用。
+ * - プロンプトの抽出/補完はUI側（`DetailViewModel`）が段階的に行い、保存も併用。
  */
 @HiltWorker
 class ThreadMonitorWorker @AssistedInject constructor(
@@ -41,9 +50,11 @@ class ThreadMonitorWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     /**
-     * Main monitoring task. Fetches the thread page, parses Text/Image/Video entries,
-     * saves an archive snapshot and cache, updates history (thumbnail and latest count),
-     * and reschedules if applicable. Handles 404 as archived; other IO errors are retried.
+     * 監視タスク本体。
+     * - スレHTMLを取得・パースし、媒体をアーカイブ（file://へ置換）。
+     * - 既存キャッシュ/スナップショットの `prompt` をマージしてから保存（nullでの上書きを防止）。
+     * - 履歴（サムネイル/最新レス番号）を更新し、必要に応じて再スケジュール。
+     * - 404はdat落ちとみなし停止。その他のIOエラー時はポリシーに従い再試行。
      */
     override suspend fun doWork(): Result {
         val url = inputData.getString(KEY_URL) ?: return Result.success()
@@ -80,11 +91,41 @@ class ThreadMonitorWorker @AssistedInject constructor(
             // 1) パース（UI側と同等の簡易ロジック）
             val parsed = parseContentFromDocument(doc, url)
 
-            // 2) メディアを内部保存し、ローカル file: URI に差し替え
-            val archived = archiveMedia(applicationContext, url, parsed)
+            // 1.5) 既存キャッシュ/スナップショットのプロンプトをマージ（nullでの上書きを防止）
+            val cacheMgr = DetailCacheManager(applicationContext)
+            val existing: List<DetailContent>? = cacheMgr.loadDetails(url) ?: cacheMgr.loadArchiveSnapshot(url)
+            val merged = if (existing.isNullOrEmpty()) parsed else run {
+                val promptByName: Map<String, String> = existing.mapNotNull { dc ->
+                    when (dc) {
+                        is DetailContent.Image -> dc.fileName?.let { fn -> dc.prompt?.let { fn to it } }
+                        is DetailContent.Video -> dc.fileName?.let { fn -> dc.prompt?.let { fn to it } }
+                        else -> null
+                    }
+                }.toMap()
+                parsed.map { dc ->
+                    when (dc) {
+                        is DetailContent.Image -> {
+                            if (!dc.prompt.isNullOrBlank()) dc else {
+                                val p = dc.fileName?.let { promptByName[it] }
+                                if (p != null) dc.copy(prompt = p) else dc
+                            }
+                        }
+                        is DetailContent.Video -> {
+                            if (!dc.prompt.isNullOrBlank()) dc else {
+                                val p = dc.fileName?.let { promptByName[it] }
+                                if (p != null) dc.copy(prompt = p) else dc
+                            }
+                        }
+                        else -> dc
+                    }
+                }
+            }
+
+            // 2) メディアを内部保存し、ローカル file: URI に差し替え（マージ後のリストを使用）
+            val archived = archiveMedia(applicationContext, url, merged)
 
             // 3) キャッシュへ保存（置き換え保存） + アーカイブスナップショット保存
-            val cm = DetailCacheManager(applicationContext)
+            val cm = cacheMgr
             cm.saveDetails(url, archived)
             cm.saveArchiveSnapshot(url, archived)
 
