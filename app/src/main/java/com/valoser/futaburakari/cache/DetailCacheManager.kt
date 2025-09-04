@@ -4,19 +4,27 @@ import android.content.Context
 import android.util.Log
 import com.valoser.futaburakari.DetailContent
 import com.google.gson.Gson
-import com.google.gson.GsonBuilder // ★ GsonBuilder をインポート
+import com.google.gson.GsonBuilder // GsonBuilder import
 import com.google.gson.reflect.TypeToken
-// DetailContentTypeAdapterFactory をインポート (パッケージ名は適宜修正)
-// import com.valoser.futaburakari.util.DetailContentTypeAdapterFactory
+// DetailContentTypeAdapterFactory が同一パッケージ or 適切にインポートされていることを前提に使用します。
 import java.io.File
 import java.util.concurrent.TimeUnit
 import com.valoser.futaburakari.UrlNormalizer
 
+/**
+ * Container for cached thread details with a timestamp for when they were saved.
+ */
 data class CachedDetails(
     val timestamp: Long,
     val details: List<DetailContent>
 )
 
+/**
+ * Manages on-disk caching for thread detail content and archived media.
+ * - Caches JSON-serialized `DetailContent` lists keyed by normalized thread URL (SHA-256).
+ * - Supports legacy cache keys for backward compatibility.
+ * - Archives media per-thread and can reconstruct minimal details from files.
+ */
 class DetailCacheManager(private val context: Context) {
 
     private val gson: Gson // ★ 初期化を init ブロックに移動
@@ -27,15 +35,21 @@ class DetailCacheManager(private val context: Context) {
         File(context.filesDir, "archive_media").apply { mkdirs() }
     }
 
-    init { // ★ init ブロックを修正
+    /**
+     * Builds a Gson instance that knows how to (de)serialize `DetailContent` via a registered factory.
+     */
+    init {
         gson = GsonBuilder()
-            .registerTypeAdapterFactory(DetailContentTypeAdapterFactory()) // ★ 作成したFactoryを登録
-            // .serializeNulls() // 必要であればnullもJSONに出力する設定
+            .registerTypeAdapterFactory(DetailContentTypeAdapterFactory()) // Factory を登録
+            // .serializeNulls() // 必要であれば null も JSON に出力する設定
             .create()
     }
 
+    /**
+     * Returns the cache file for a given thread `url` using a normalized key hashed with SHA-256.
+     */
     private fun getCacheFile(url: String): File {
-        val key = UrlNormalizer.threadKey(url)   // ★ 正規化キーに変換
+        val key = UrlNormalizer.threadKey(url)   // 正規化キーに変換
         val fileName = key.sha256()
         Log.d("DetailCacheManager", "Key: $key -> FileName: $fileName")
         return File(cacheDir, fileName)
@@ -48,17 +62,26 @@ class DetailCacheManager(private val context: Context) {
         return File(cacheDir, fileName)
     }
 
+    /**
+     * Returns or creates the per-thread archive directory under app files.
+     */
     fun getArchiveDirForUrl(url: String): File {
         val key = UrlNormalizer.threadKey(url)
         val dirName = key.sha256()
         return File(archiveRoot, dirName).apply { mkdirs() }
     }
 
+    /**
+     * Returns the snapshot file path (JSON) inside the archive directory.
+     */
     private fun getArchiveSnapshotFile(url: String): File {
         val dir = getArchiveDirForUrl(url)
         return File(dir, "snapshot.json")
     }
 
+    /**
+     * Saves details for a thread to the cache file and removes any legacy-named file.
+     */
     fun saveDetails(url: String, details: List<DetailContent>) {
         val cacheFile = getCacheFile(url)
         val legacyFile = getLegacyCacheFile(url)
@@ -76,6 +99,10 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    /**
+     * Loads cached details for the thread; falls back to legacy file and migrates if present.
+     * If parsing fails, deletes the corrupt cache and returns null.
+     */
     fun loadDetails(url: String): List<DetailContent>? {
         val cacheFile = getCacheFile(url)
         val legacyFile = getLegacyCacheFile(url)
@@ -117,6 +144,9 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    /**
+     * Deletes the cache file for the given URL (and legacy file if present).
+     */
     fun invalidateCache(url: String) {
         val cacheFile = getCacheFile(url)
         val legacyFile = getLegacyCacheFile(url)
@@ -136,6 +166,9 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    /**
+     * Deletes the entire archive directory tree for the given URL if it exists.
+     */
     fun clearArchiveForUrl(url: String) {
         val dir = getArchiveDirForUrl(url)
         if (dir.exists()) {
@@ -187,6 +220,7 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    /** Loads an archive snapshot if present; returns null on absence or parse failure. */
     fun loadArchiveSnapshot(url: String): List<DetailContent>? {
         val f = getArchiveSnapshotFile(url)
         if (!f.exists()) return null
@@ -200,6 +234,7 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    /** Returns total bytes occupied by cache and archived media. */
     fun totalBytes(): Long {
         fun dirSize(d: File): Long {
             if (!d.exists()) return 0L
@@ -212,6 +247,10 @@ class DetailCacheManager(private val context: Context) {
      * limitBytes を超えている場合、履歴の古い順に各スレのアーカイブ/キャッシュを削除して
      * 全体サイズが (limitBytes * 0.9) を下回るまで間引く。
      * ユーザが未読のスレは最後に回す（未読0を優先的に削除）。
+     */
+    /**
+     * If total bytes exceed `limitBytes`, delete per-thread archives and caches in history order
+     * until the size drops below 90% of the limit. Unread threads are deprioritized for deletion.
      */
     fun enforceLimit(limitBytes: Long, history: List<com.valoser.futaburakari.HistoryEntry>, onEntryCleaned: (com.valoser.futaburakari.HistoryEntry) -> Unit = {}) {
         if (limitBytes <= 0) return
@@ -237,7 +276,7 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
-    // ★★★ ここから追加 ★★★
+    // 追加ユーティリティ群
     /**
      * すべてのスレッド内容キャッシュを削除します。
      */
@@ -263,6 +302,7 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
+    /** SHA-256 hash for strings, returned as a lowercase hex digest. */
     private fun String.sha256(): String {
         return java.security.MessageDigest
             .getInstance("SHA-256")

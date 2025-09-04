@@ -12,26 +12,43 @@ import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonWriter
 import java.io.IOException
 
+/**
+ * Gson factory for polymorphic (de)serialization of `DetailContent` sealed types.
+ * Adds a discriminator field `contentType` when writing, and selects the concrete
+ * subtype based on that field when reading.
+ */
 class DetailContentTypeAdapterFactory : TypeAdapterFactory {
+    /**
+     * Returns a type adapter for `DetailContent` (and its subtypes). For other types, returns null.
+     */
     override fun <T : Any?> create(gson: Gson, type: TypeToken<T>): TypeAdapter<T>? {
         if (!DetailContent::class.java.isAssignableFrom(type.rawType)) {
             return null
         }
 
         @Suppress("UNCHECKED_CAST")
-        return DetailContentTypeAdapter(gson, this) as TypeAdapter<T> // Pass the factory itself
+        return DetailContentTypeAdapter(gson, this) as TypeAdapter<T> // Provide this factory to allow delegate lookup to skip it
     }
 
+    /**
+     * Adapter that injects/extracts the `contentType` discriminator and delegates
+     * actual field (de)serialization to subtype adapters.
+     */
     private class DetailContentTypeAdapter(
         private val gson: Gson,
-        private val skipPastFactory: TypeAdapterFactory // Factory to skip
+        private val skipPastFactory: TypeAdapterFactory // Factory to skip when retrieving delegate adapters to avoid recursion
     ) : TypeAdapter<DetailContent>() {
         companion object {
+            /** JSON discriminator field name added during serialization. */
             private const val TYPE_FIELD = "contentType"
+            /** Discriminator value for `DetailContent.Image`. */
             private const val IMAGE_TYPE = "image"
+            /** Discriminator value for `DetailContent.Text`. */
             private const val TEXT_TYPE = "text"
+            /** Discriminator value for `DetailContent.Video`. */
             private const val VIDEO_TYPE = "video"
-            private const val THREAD_END_TIME_TYPE = "thread_end_time" // Added
+            /** Discriminator value for `DetailContent.ThreadEndTime`. */
+            private const val THREAD_END_TIME_TYPE = "thread_end_time"
         }
 
         @Throws(IOException::class)
@@ -41,27 +58,27 @@ class DetailContentTypeAdapterFactory : TypeAdapterFactory {
                 return
             }
 
-            // Get the delegate adapter for the specific subtype, skipping this factory
+            // Obtain the delegate adapter for the runtime subtype, skipping this factory
             val actualType = TypeToken.get(value.javaClass) // Get actual runtime type
             val delegate = gson.getDelegateAdapter(skipPastFactory, actualType) as TypeAdapter<DetailContent>
 
             val jsonObject = delegate.toJsonTree(value).asJsonObject
 
-            // Add the type identifier field
+            // Add the discriminator field so it can be deserialized later
             when (value) {
                 is DetailContent.Image -> jsonObject.addProperty(TYPE_FIELD, IMAGE_TYPE)
                 is DetailContent.Text -> jsonObject.addProperty(TYPE_FIELD, TEXT_TYPE)
                 is DetailContent.Video -> jsonObject.addProperty(TYPE_FIELD, VIDEO_TYPE)
-                is DetailContent.ThreadEndTime -> jsonObject.addProperty(TYPE_FIELD, THREAD_END_TIME_TYPE) // Added
+                is DetailContent.ThreadEndTime -> jsonObject.addProperty(TYPE_FIELD, THREAD_END_TIME_TYPE)
             }
-            // Use the JsonElement adapter to write the modified JsonObject
+            // Write the modified object using the generic JsonElement adapter
             val jsonElementAdapter = gson.getAdapter(JsonElement::class.java)
             jsonElementAdapter.write(out, jsonObject)
         }
 
         @Throws(IOException::class)
         override fun read(reader: JsonReader): DetailContent? {
-            // Read the entire JSON structure as a JsonElement first
+            // Read the entire structure as a JsonElement first, then inspect the discriminator
             val jsonElementAdapter = gson.getAdapter(JsonElement::class.java)
             val jsonElement = jsonElementAdapter.read(reader) ?: return null
 
@@ -76,18 +93,18 @@ class DetailContentTypeAdapterFactory : TypeAdapterFactory {
             }
             val typeValue = typeElement.asString
 
-            // Determine the specific subtype based on the typeValue
+            // Determine the concrete subtype from the discriminator value
             val specificType: Class<out DetailContent> = when (typeValue) {
                 IMAGE_TYPE -> DetailContent.Image::class.java
                 TEXT_TYPE -> DetailContent.Text::class.java
                 VIDEO_TYPE -> DetailContent.Video::class.java
-                THREAD_END_TIME_TYPE -> DetailContent.ThreadEndTime::class.java // Added
+                THREAD_END_TIME_TYPE -> DetailContent.ThreadEndTime::class.java
                 else -> throw JsonParseException("Unknown DetailContent type: $typeValue")
             }
 
-            // Get the delegate adapter for that specific subtype, skipping this factory
+            // Delegate to the subtype adapter (which ignores the discriminator field)
             val delegate = gson.getDelegateAdapter(skipPastFactory, TypeToken.get(specificType))
-            // Use the delegate to deserialize the JsonObject (which still contains the TYPE_FIELD, but delegate should ignore it)
+            // Use the delegate to deserialize the JsonObject (it may still contain TYPE_FIELD, which the delegate ignores)
             return delegate.fromJsonTree(jsonObject)
         }
     }

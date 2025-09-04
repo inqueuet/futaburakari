@@ -18,8 +18,16 @@ import com.valoser.futaburakari.ui.compose.BookmarkScreen
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.launch
 
+/**
+ * Activity for managing user bookmarks using a Jetpack Compose UI.
+ * Handles add/update/delete/select operations and persists changes via `BookmarkManager`.
+ */
 class BookmarkActivity : BaseActivity() {
 
+    /**
+     * Sets up themed Compose content and wires bookmark actions to persistence.
+     * Shows feedback with a bottom snackbar for each operation.
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -27,9 +35,11 @@ class BookmarkActivity : BaseActivity() {
             .getString("pref_key_color_mode", "green")
 
         setContent {
+            // Apply app theme based on the selected color mode
             FutaburakariTheme(colorMode = colorModePref) {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
+                // In-memory state backed by BookmarkManager storage
                 var bookmarks by remember { mutableStateOf(BookmarkManager.getBookmarks(this@BookmarkActivity)) }
 
                 Box {
@@ -38,6 +48,7 @@ class BookmarkActivity : BaseActivity() {
                         bookmarks = bookmarks,
                         onBack = { onBackPressedDispatcher.onBackPressed() },
                         onAddBookmark = { name, url ->
+                            // Validate inputs, then persist and refresh local state
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
@@ -47,6 +58,7 @@ class BookmarkActivity : BaseActivity() {
                             }
                         },
                         onUpdateBookmark = { oldUrl, name, url ->
+                            // Update storage and selected URL if it was the edited one
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
@@ -59,6 +71,7 @@ class BookmarkActivity : BaseActivity() {
                             }
                         },
                         onDeleteBookmark = { bookmark ->
+                            // Remove from storage and clear selection if it was deleted
                             BookmarkManager.deleteBookmark(this@BookmarkActivity, bookmark)
                             if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == bookmark.url) {
                                 BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, null)
@@ -67,11 +80,13 @@ class BookmarkActivity : BaseActivity() {
                             bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
                         },
                         onSelectBookmark = { bookmark ->
+                            // Persist selected bookmark and close the screen
                             BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, bookmark.url)
                             scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を選択しました") }
                             finish()
                         }
                     )
+                    // Global snackbar host anchored to the bottom of the screen
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
                 }
             }

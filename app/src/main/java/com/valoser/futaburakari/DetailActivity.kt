@@ -37,6 +37,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.valoser.futaburakari.search.RecentSearchStore
 
+/**
+ * Screen that displays a thread's detail content using a Compose UI.
+ *
+ * Responsibilities:
+ * - Loads thread details via `DetailViewModel` and observes updates.
+ * - Persists and restores list scroll position per thread URL.
+ * - Handles replies, deletions, NG filter updates, search, and SODA-NE.
+ * - Updates history (latest reply count and thumbnail) and triggers snapshots.
+ * - Reflects user settings (theme color, ads enabled) and back navigation UX.
+ */
 @AndroidEntryPoint
 class DetailActivity : BaseActivity() {
 
@@ -104,6 +114,10 @@ class DetailActivity : BaseActivity() {
     private val searchBarActiveFlow = searchBarActiveFlowInternal.asStateFlow()
     private val recentSearchStore by lazy { RecentSearchStore(this) }
 
+    /**
+     * Initializes Compose content with theming and wires UI callbacks to ViewModel and stores.
+     * Also records history, triggers a one-shot snapshot, and sets up back-press behavior.
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Title for Compose TopBar and history
@@ -249,12 +263,18 @@ class DetailActivity : BaseActivity() {
         // Legacy UI listeners removed — Compose handles refresh and insets
     }
 
+    /**
+     * Updates the ads-visible state which Compose observes to show/hide the banner.
+     */
     private fun setupAdBanner() {
         // Compose側で表示を制御するため、状態のみ更新
         val enabled = prefs.getBoolean("pref_key_ads_enabled", false)
         adsEnabledFlowInternal.value = enabled
     }
 
+    /**
+     * Starts listening to preference changes and refreshes ad visibility state.
+     */
     override fun onStart() {
         super.onStart()
         // 設定変更（広告ON/OFF）を戻り時にも反映
@@ -266,6 +286,9 @@ class DetailActivity : BaseActivity() {
         isInitialLoad = true
     }
 
+    /**
+     * Stops listening to preference changes.
+     */
     override fun onStop() {
         // 設定変更の監視を停止
         if (this::prefs.isInitialized) {
@@ -283,6 +306,12 @@ class DetailActivity : BaseActivity() {
     // -------------------------
     // Flow監視
     // -------------------------
+    /**
+     * Collects flows and LiveData from the ViewModel and applies side effects:
+     * - Updates history (unread count and thumbnail).
+     * - Builds plain-text cache for search in a background dispatcher.
+     * - Resets one-shot flags used for scroll restoration.
+     */
     private fun observeViewModel() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -346,6 +375,9 @@ class DetailActivity : BaseActivity() {
 
     }
 
+    /**
+     * Forces reloading of details while preserving Compose-managed scroll state.
+     */
     private fun reloadDetails() {
         currentUrl?.let { url ->
             suppressNextRestore = false
@@ -365,6 +397,9 @@ class DetailActivity : BaseActivity() {
     // ViewBindingは撤去済み
 
     // ★ 変更点 4: 返信画面を起動する共通メソッド
+    /**
+     * Launches the reply UI for the current thread with an optional quoted body.
+     */
     private fun launchReplyActivity(quote: String) {
         currentUrl?.let { url ->
             val threadId = url.substringAfterLast("/").substringBefore(".htm")
@@ -380,6 +415,7 @@ class DetailActivity : BaseActivity() {
         }
     }
 
+    /** Opens NG manager and hides thread-title rules when launched from details. */
     private fun openNgManager() {
         ngManagerLauncher.launch(
             Intent(this, NgManagerActivity::class.java).apply {
@@ -402,6 +438,9 @@ class DetailActivity : BaseActivity() {
     // 旧Viewベースのシート表示やメディア一覧はComposeへ移行済み
 
     // Compose リスト用：可視最大序数が通知されたら既読を更新（デバウンスあり）
+    /**
+     * Debounced update of last-viewed reply number based on the max visible ordinal.
+     */
     private fun markViewedByOrdinal(maxOrdinal: Int) {
         if (maxOrdinal <= 0) return
         markViewedRunnable?.let { mainHandler.removeCallbacks(it) }
@@ -423,6 +462,12 @@ class DetailActivity : BaseActivity() {
     // 既読更新（Compose版）は onVisibleMaxOrdinal -> markViewedByOrdinal に統一
 
     // 「No.xxx」「ファイル名」「本文一部」いずれかで対象を検索
+    /**
+     * Finds a content item by query supporting:
+     * 1) "No.<number>" match in text content
+     * 2) Exact filename or URL suffix for images/videos
+     * 3) Case-insensitive substring match in plain text body
+     */
     private fun findContentByText(all: List<DetailContent>, searchText: String): DetailContent? {
         // 1) No.\d+
         Regex("""No\.(\d+)""").find(searchText)?.groupValues?.getOrNull(1)?.let { num ->
@@ -452,6 +497,7 @@ class DetailActivity : BaseActivity() {
     }
 
     // 行頭が '>' 1個の引用行（最初の1つ）を返す（旧：単一版）
+    /** Extracts the first single-level quote line (leading '>') from a text item. */
     private fun extractFirstLevelQuoteCore(item: DetailContent.Text): String? {
         val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         val m = Regex("^>([^>].+)$", RegexOption.MULTILINE).find(plain)
@@ -459,6 +505,7 @@ class DetailActivity : BaseActivity() {
     }
 
     // 行頭が '>' 1個の引用行を「複数」返す（多段で複数候補がある場合に使用）
+    /** Extracts all single-level quote lines (leading '>') from a text item. */
     private fun extractFirstLevelQuoteCores(item: DetailContent.Text): List<String> {
         val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         return Regex("^>([^>].+)$", RegexOption.MULTILINE)
