@@ -46,7 +46,7 @@ class DetailActivity : BaseActivity() {
     private var currentUrl: String? = null
 
     private var isRequestingMore = false   // 追加：多重呼び出し防止
-    private var isInitialLoad = true // ★（未使用）将来削除可
+    private var isInitialLoad = true // 初期ロード復元の制御に使用（再読み込み時にリセット）
 
     // メインスレッドハンドラ / 既読更新デバウンス
     private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -64,7 +64,7 @@ class DetailActivity : BaseActivity() {
         const val EXTRA_TITLE = "extra_title"
     }
 
-    private var suppressNextRestore: Boolean = false // （未使用化）
+    private var suppressNextRestore: Boolean = false // 次回のスクロール復元を抑制するフラグ（使用中）
 
     private lateinit var prefs: SharedPreferences
     private val adsEnabledFlowInternal = MutableStateFlow(false)
