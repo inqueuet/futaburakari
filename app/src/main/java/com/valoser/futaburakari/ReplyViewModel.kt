@@ -165,7 +165,7 @@ class ReplyViewModel @Inject constructor(
     }
 
     /**
-     * 「操作が早すぎます。あとN秒」を検出し、N秒(+400ms)待って1回だけ再試行する。
+     * 「操作が早すぎます。あとN秒」を検出し、N秒(+1000ms)待って1回だけ再試行する。
      */
     private suspend fun retryIfTooFast(block: suspend () -> Result<String>): Result<String> {
         val first = runCatching { block() }.getOrElse { return Result.failure(it) }

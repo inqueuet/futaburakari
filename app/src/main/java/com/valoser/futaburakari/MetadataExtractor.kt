@@ -30,7 +30,7 @@ object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定 ======
-    private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を2に制限
+    private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を1に制限
     private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
     private val activeConnectionCount = AtomicInteger(0)
 

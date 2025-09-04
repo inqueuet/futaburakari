@@ -11,7 +11,7 @@ plugins {
 }
 
 kotlin {
-    // JDK は 11 を使用（必要なら 17 にしてOK）
+    // JDK は 17 を使用（ビルド環境のツールチェーン）
     jvmToolchain(17)
     compilerOptions {
         // 旧 kotlinOptions { jvmTarget = "11" } の代替（deprecated解消）

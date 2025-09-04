@@ -53,8 +53,8 @@ import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 
 /**
- * Hybrid container for gradual Compose migration.
- * Currently embeds the existing XML root inside Compose.
+ * Compose-based detail screen scaffold.
+ * Hosts the thread list, search UI, and optional ad banner.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
