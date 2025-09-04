@@ -164,28 +164,13 @@ fun HistoryScreen(
                 // 安定したキーとして `HistoryEntry.key` を使用
                 items(localEntries, key = { it.key }) { e ->
                     val dismissState = rememberSwipeToDismissBoxState(
-                        // スワイプ確定時にローカルから一時的に削除し、スナックバーで取り消し可能にする
+                        // スワイプ確定時に即時削除（Undoは一旦無効化）
                         confirmValueChange = { value ->
                             if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
-                                val original = localEntries
-                                val idx = original.indexOfFirst { it.key == e.key }
-                                if (idx >= 0) {
-                                    localEntries = original.toMutableList().also { it.removeAt(idx) }
-                                    scope.launch {
-                                        val res = snackbarHostState.showSnackbar(
-                                            message = "削除しました",
-                                            actionLabel = "元に戻す",
-                                            duration = SnackbarDuration.Short
-                                        )
-                                        if (res == SnackbarResult.ActionPerformed) {
-                                            // 取り消しが押された場合は元のリストを復元
-                                            localEntries = original
-                                        } else {
-                                            // 取り消されなければ実際に削除を確定
-                                            onDeleteItem(e)
-                                        }
-                                    }
-                                }
+                                val current = localEntries
+                                val idx = current.indexOfFirst { it.key == e.key }
+                                if (idx >= 0) localEntries = current.toMutableList().also { it.removeAt(idx) }
+                                onDeleteItem(e)
                                 true
                             } else false
                         }
