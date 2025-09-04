@@ -123,6 +123,51 @@ internal fun buildBackReferencesByContent(all: List<DetailContent>, source: Deta
 }
 
 /**
+ * Combine the source Text (and its following media) with all posts that quote it (and their media).
+ */
+internal fun buildSelfAndBackrefItems(all: List<DetailContent>, source: DetailContent.Text): List<DetailContent> {
+    // Build group for the source itself
+    val srcIndex = all.indexOfFirst { it.id == source.id }
+    if (srcIndex < 0) return emptyList()
+    val groups = mutableListOf<List<DetailContent>>()
+    run {
+        val g = mutableListOf<DetailContent>()
+        g += all[srcIndex]
+        var j = srcIndex + 1
+        while (j < all.size) {
+            when (val c = all[j]) {
+                is DetailContent.Image, is DetailContent.Video -> { g += c; j++ }
+                is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+            }
+        }
+        groups += g
+    }
+    // Append back-references
+    val back = buildBackReferencesByContent(all, source)
+    if (back.isNotEmpty()) {
+        var k = 0
+        while (k < back.size) {
+            val first = back[k]
+            val g = mutableListOf<DetailContent>()
+            g += first
+            k++
+            while (k < back.size && back[k] !is DetailContent.Text) {
+                g += back[k]
+                k++
+            }
+            groups += g
+        }
+    }
+    // Deduplicate by first id and flatten while keeping item-level uniqueness
+    val uniqueGroups = groups.distinctBy { it.firstOrNull()?.id }
+    val flat = uniqueGroups.flatten()
+    val seen = HashSet<String>()
+    val out = ArrayList<DetailContent>(flat.size)
+    for (c in flat) if (seen.add(c.id)) out += c
+    return out
+}
+
+/**
  * Build list of posts that contain the given free-text query in their plain text,
  * including the text row and any immediately following media until the next Text/ThreadEndTime.
  */

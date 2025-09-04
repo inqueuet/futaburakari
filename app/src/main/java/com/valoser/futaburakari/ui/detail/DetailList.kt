@@ -437,18 +437,18 @@ private fun buildAnnotatedFromText(text: String, highlight: String?): AnnotatedS
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
         addStringAnnotation("url", m.value, m.range.first, m.range.last + 1)
     }
-    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— ヘッダー行（先頭がNo.）のみを対象にする
+    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行(>)を除き、No.を含む行を対象にする
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
     var start = 0
     while (start <= text.length) {
         val nl = text.indexOf('\n', start)
         val end = if (nl < 0) text.length else nl
         val lineStart = start
-        val lineEnd = end
-        val line = text.substring(lineStart, lineEnd)
+        val line = text.substring(lineStart, end)
         val trimmed = line.trimStart()
-        // ヘッダー行: 先頭（空白除去後）が "No." から始まる行のみ
-        if (trimmed.startsWith("No.")) {
+        val isQuote = trimmed.startsWith(">")
+        val hasNo = Regex("\\bNo\\.\\d+\\b").containsMatchIn(line)
+        if (!isQuote && hasNo) {
             sodaneRegex.findAll(line).forEach { m ->
                 val s = lineStart + m.range.first
                 val e = lineStart + m.range.last + 1
@@ -470,7 +470,7 @@ private fun padTokensForSpacing(src: String): String {
     t = Regex("(No\\.\\d+)(?=(?:[+＋]|そうだね))").replace(t, "$1 ")
     // Normalize multiple spaces
     t = Regex("[ ]{2,}").replace(t, " ")
-    // Ensure a そうだね token exists at end of No. header line if absent (本文や引用行は対象外)
+    // Ensure a そうだね token exists at end of lines that contain No. (本文や引用行は対象外)
     val sb = StringBuilder()
     var start = 0
     while (start < t.length) {
@@ -478,7 +478,9 @@ private fun padTokensForSpacing(src: String): String {
         val end = if (nl < 0) t.length else nl
         val line = t.substring(start, end)
         val trimmed = line.trimStart()
-        if (trimmed.startsWith("No.")) {
+        val isQuote = trimmed.startsWith(">")
+        val hasNo = Regex("\\bNo\\.\\d+\\b").containsMatchIn(line)
+        if (!isQuote && hasNo) {
             if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(line)) {
                 sb.append(line).append(" そうだね")
             } else sb.append(line)

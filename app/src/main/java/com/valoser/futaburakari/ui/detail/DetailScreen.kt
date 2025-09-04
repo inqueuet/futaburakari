@@ -257,7 +257,7 @@ fun DetailScreenScaffold(
                         onBodyClick = onBodyClick,
                         onAddNgFromBody = { body -> pendingNgBody = body },
                         onBodyShowBackRefs = { src ->
-                            val list = buildBackReferencesByContent(items, src)
+                            val list = buildSelfAndBackrefItems(items, src)
                             if (list.isNotEmpty()) {
                                 resRefItems = list
                             } else {
