@@ -2,9 +2,15 @@ package com.valoser.futaburakari.ui.compose
 
 /**
  * NGルール管理画面。
- * - NG ID / NGワード(本文) / スレタイNG の一覧表示・追加・編集・削除を行う。
- * - 右下のFABから追加。`limitType` が指定されている場合は種類選択をスキップし、その種類の編集ダイアログを直接表示する。
- * - ルールは `rules` の内容を表示し、各行のメニューから編集/削除が可能。
+ * - 種別: NG ID / NGワード(本文) / スレタイNG の一覧表示・追加・編集・削除に対応。
+ * - 追加: 右下のFABから。`limitType` 指定時は種類選択をスキップして該当種別の編集ダイアログを直接表示。
+ * - 検索/絞り込み: 画面上部に検索欄（パターン/種類に部分一致）。`limitType == null` の場合は種類チップ（すべて/ID/本文/スレタイ）でフィルタ可能。
+ * - 行操作:
+ *   - カードタップで編集を開く。
+ *   - 右端メニューから編集/削除が可能。
+ *   - 左右スワイプで削除（Undoなし）。
+ * - アプリバー: CenterAlignedTopAppBar + pinned scroll。
+ * - 空状態: 条件に一致しない場合はガイダンス文言を表示。
  */
 
 import androidx.compose.foundation.clickable
@@ -32,6 +38,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -179,10 +188,27 @@ fun NgManagerScreen(
             ) {
                 item { Spacer(Modifier.height(4.dp)) }
                 items(filtered, key = { it.id }) { rule ->
-                    RuleItem(
-                        rule = rule,
-                        onEdit = { editTarget = rule },
-                        onDelete = { deleteTarget = rule }
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { value ->
+                            if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
+                                // 直接削除（メニューと同等の動作）
+                                onDeleteRule(rule.id)
+                                true
+                            } else false
+                        }
+                    )
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        enableDismissFromStartToEnd = true,
+                        enableDismissFromEndToStart = true,
+                        backgroundContent = { NgDismissBackground(state = dismissState) },
+                        content = {
+                            RuleItem(
+                                rule = rule,
+                                onEdit = { editTarget = rule },
+                                onDelete = { deleteTarget = rule }
+                            )
+                        }
                     )
                 }
                 if (filtered.isEmpty()) {
@@ -322,6 +348,11 @@ private fun RuleItem(
 }
 
 @Composable
+/**
+ * 追加時の種類選択ダイアログ。
+ * - `hideTitleOption` が true の場合はスレタイNGを非表示。
+ * - 選択肢はカード行（TypePickRow）で表示し、タップで決定。
+ */
 private fun TypePickerDialog(
     onDismiss: () -> Unit,
     onPick: (RuleType) -> Unit,
@@ -468,6 +499,7 @@ private fun labelForEditTitle(type: RuleType): String = when (type) {
 
 @Composable
 private fun TypeFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    // 種類フィルタ用の補助チップ。選択中は secondaryContainer で強調表示。
     AssistChip(
         onClick = onClick,
         label = { Text(label) },
@@ -480,6 +512,7 @@ private fun TypeFilterChip(label: String, selected: Boolean, onClick: () -> Unit
 
 @Composable
 private fun TypePickRow(label: String, onClick: () -> Unit) {
+    // 種類選択ダイアログの1行。カード行をタップすると該当種類を通知。
     ElevatedCard(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
@@ -489,6 +522,33 @@ private fun TypePickRow(label: String, onClick: () -> Unit) {
         ) {
             Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun NgDismissBackground(state: androidx.compose.material3.SwipeToDismissBoxState) {
+    // スワイプ削除時の背景。左右いずれの方向でも削除アイコンを表示し、確定方向でエラー色背景に変化。
+    val isStart = state.targetValue == SwipeToDismissBoxValue.StartToEnd
+    val isEnd = state.targetValue == SwipeToDismissBoxValue.EndToStart
+    val color = if (isStart || isEnd) MaterialTheme.colorScheme.errorContainer else androidx.compose.ui.graphics.Color.Transparent
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isStart) {
+            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Spacer(modifier = Modifier)
+        } else if (isEnd) {
+            Spacer(modifier = Modifier)
+            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+        } else {
+            Spacer(modifier = Modifier)
+            Spacer(modifier = Modifier)
         }
     }
 }

@@ -8,14 +8,13 @@ package com.valoser.futaburakari.ui.detail
  * - ブロック構造: 1つの Text に続く Image/Video を同一ブロックとして扱い、ブロック末尾のみ区切り線を描画。
  * - 検索: `searchQuery` にマッチする要素のインデックスを算出し、`onProvideSearchNavigator` で Prev/Next 関数を渡す。
  * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> or ＞)、`ID:xxxx`、URL、ファイル名（xxx.jpg 等）、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
- *   - そうだねは引用行を除外。行内に `No.` を含む場合を対象
- *     （行内で見つからない場合は投稿自身の `No.` をフォールバックとして用いて送信可能）。
+ *   - そうだねは引用行を除外。行内に `No.` を含む場合を対象（行内で見つからない場合は投稿自身の `No.` をフォールバックとして用いて送信可能）。
  *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
  * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
  * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
  * - 画像/動画の直下に表示するプロンプト文は選択コピー可能（SelectionContainer）。
  * - 画像/動画のタップでメディアビューへ遷移（拡大/動画再生、コピー/保存機能はメディア側で提供）。
- * - 画像/動画の直下にファイル名があれば表示し、タップでファイル名参照の集計シートを開く。
+ * - ファイル名の「追記表示」は廃止。本文中のファイル名検出・クリックのみをサポート（ファイル名参照の集計シートを開く）。
  * - プロンプト文はHTML→プレーン化して表示（リンク検出や装飾は行わない）。
  * - No の検出は表記ゆれに対応（ドットの有無/全角、No と番号の間の空白/改行）。
  *   また、日付や閉じカッコ `)` の直後に No が隣接してしまう場合、および `ID:` と `No` が隣接する場合は
@@ -318,18 +317,6 @@ fun DetailListCompose(
                                 )
                             }
                         }
-                        // ファイル名（表示してクリック可能に）
-                        val fn = item.fileName
-                        if (!fn.isNullOrBlank()) {
-                            androidx.compose.material3.Text(
-                                text = fn,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall.copy(textDecoration = TextDecoration.Underline),
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp, vertical = 2.dp)
-                                    .clickable { onFileNameClick?.invoke(fn) }
-                            )
-                        }
                     }
                 }
 
@@ -351,18 +338,6 @@ fun DetailListCompose(
                             contentScale = ContentScale.Fit,
                             onSuccess = { onImageLoaded?.invoke() }
                         )
-                        // ファイル名（表示してクリック可能に）
-                        val vfn = item.fileName
-                        if (!vfn.isNullOrBlank()) {
-                            androidx.compose.material3.Text(
-                                text = vfn,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall.copy(textDecoration = TextDecoration.Underline),
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp, vertical = 2.dp)
-                                    .clickable { onFileNameClick?.invoke(vfn) }
-                            )
-                        }
                         // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
                         val promptPlain = run {
                             val raw = item.prompt
