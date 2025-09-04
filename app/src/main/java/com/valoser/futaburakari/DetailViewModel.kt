@@ -31,18 +31,29 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
 
+/**
+ * ViewModel for thread details.
+ *
+ * - Loads and parses thread HTML into `DetailContent` items.
+ * - Persists raw content to cache and exposes NG-filtered content via `StateFlow`.
+ * - Updates history (thumbnail, unread count) and archives snapshots for offline.
+ * - Handles actions: incremental updates, SODA-NE post, deletions, and search state.
+ */
 @HiltViewModel
 class DetailViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
+    /** NG適用後の表示用リストを流すフロー（UI購読用）。 */
     private val _detailContent = MutableStateFlow<List<DetailContent>>(emptyList())
     val detailContent: StateFlow<List<DetailContent>> = _detailContent.asStateFlow()
 
+    /** 画面に表示するエラーメッセージ。null はエラーなし。 */
     private val _error = MutableLiveData<String?>()
     val error: LiveData<String?> = _error
 
+    /** 通信・更新の進行中を表すフロー。 */
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -50,9 +61,8 @@ class DetailViewModel @Inject constructor(
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
     val sodaneUpdate = _sodaneUpdate.asSharedFlow()
 
-    // 「そうだね」送信（UIからはレス番号のみ渡す）
-    // 参照（Referer）は現在のスレURL（currentUrl）を使用して NetworkClient に委譲
-    // 成功時はサーバ返り値のカウントを通知して UI に反映
+    // 「そうだね」送信（UIからはレス番号のみ渡す）。
+    // 参照（Referer）は現在のスレURL（currentUrl）を使用し、成功時は更新通知でUIを反映。
 
     private val cacheManager = DetailCacheManager(appContext)
     private var currentUrl: String? = null
@@ -72,9 +82,13 @@ class DetailViewModel @Inject constructor(
     // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
     private val sodaNeStates = mutableMapOf<String, Boolean>()
 
-    // (F) メタデータ抽出の並列数を制限
+    // メタデータ抽出の並列数を制限
     private val limitedIO = Dispatchers.IO.limitedParallelism(2)
 
+    /**
+     * 詳細を取得して表示を更新する。キャッシュ/スナップショット優先で即時表示し、
+     * 必要に応じてネットワークから取得して差し替える。`forceRefresh=true` で常に再取得。
+     */
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
         viewModelScope.launch {
@@ -126,7 +140,7 @@ class DetailViewModel @Inject constructor(
                 applyNgAndPost()
                 _isLoading.value = false
 
-                // バックグラウンドでメタデータを取得し、完了後に再度更新
+                // バックグラウンドでメタデータを取得し、完了後に段階反映
                 updateMetadataInBackground(progressivelyLoadedContent, url)
 
             } catch (e: Exception) {
@@ -154,7 +168,7 @@ class DetailViewModel @Inject constructor(
                     }
                     _error.value = null
                 } else {
-                    // キャッシュも無い → アーカイブスナップショット or 媒体だけでも再構成
+                    // キャッシュも無い → アーカイブスナップショット or 媒体のみで再構成
                     val reconstructed = withContext(Dispatchers.IO) {
                         cacheManager.loadArchiveSnapshot(url) ?: cacheManager.reconstructFromArchive(url)
                     }
@@ -182,9 +196,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /**
-     * スレッドに新しい更新があるかチェックし、あれば追加する
-     */
+    /** スレッドの差分更新をチェックし、新規アイテムがあれば追加して反映する。*/
     fun checkForUpdates(url: String, currentItemCount: Int, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
@@ -196,15 +208,12 @@ class DetailViewModel @Inject constructor(
                 // 新しいコンテンツをパース
                 val newContentList = parseContentFromDocument(document, url)
 
-                // --- ▼▼▼ ここから修正 ▼▼▼ ---
-
+                // 現在の表示（生データ）のID集合を作成し、差分のみ抽出
                 val currentIds = rawContent.map { it.id }.toSet()
-
-                // 2. 新しく取得したリストの中から、まだ表示されていないIDを持つアイテムだけを抽出する
                 val newItems = newContentList.filter { it.id !in currentIds }
 
                 if (newItems.isNotEmpty()) {
-                    // 3. 生データを更新してキャッシュ保存、表示はNG適用後
+                    // 生データを更新してキャッシュ保存、表示はNG適用後
                     rawContent = rawContent + newItems
                     withContext(Dispatchers.IO) { cacheManager.saveDetails(url, rawContent) }
                     applyNgAndPost()
@@ -214,8 +223,6 @@ class DetailViewModel @Inject constructor(
                     callback(false)
                 }
 
-                // --- ▲▲▲ ここまで修正 ▲▲▲ ---
-
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error checking for updates", e)
                 callback(false)
@@ -223,9 +230,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /**
-     * ドキュメントからコンテンツを解析する共通メソッド（修正版）
-     */
+    /** HTMLドキュメントから `DetailContent` の一覧を構築する。OPと返信を順に処理。 */
     private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> {
         val progressivelyLoadedContent = mutableListOf<DetailContent>()
         var itemIdCounter = 0L
@@ -375,9 +380,7 @@ class DetailViewModel @Inject constructor(
         return progressivelyLoadedContent.toList()
     }
 
-    /**
-     * バックグラウンドでメタデータを更新
-     */
+    /** メタデータ（主に画像の説明など）をバックグラウンドで取得し、バッチで段階反映する。 */
     private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
         // 段階反映: 各ジョブ完了ごとにチャンネルへ送り、一定間隔でまとめて適用
         val updates = Channel<Pair<String, String?>>(Channel.UNLIMITED)
@@ -401,7 +404,7 @@ class DetailViewModel @Inject constructor(
                     sendJobs.add(job)
                 }
                 is DetailContent.Video -> {
-                    // 動画のプロンプト取得は廃止
+                    // 動画のプロンプト取得は行わない
                 }
                 else -> {}
             }
@@ -418,7 +421,7 @@ class DetailViewModel @Inject constructor(
             }
         }
 
-        // 受信・段階反映（200–300ms間隔でバッチ適用）
+        // 受信・段階反映（250ms間隔でバッチ適用）
         viewModelScope.launch(Dispatchers.Default) {
             val batch = mutableMapOf<String, String?>()
             var lastFlush = System.currentTimeMillis()
@@ -462,6 +465,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** 指定レス番号に「そうだね」を送信し、成功時にUIへカウント更新を通知。 */
     fun postSodaNe(resNum: String) {
         val url = currentUrl
         if (url == null) {
@@ -485,17 +489,17 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    // そうだねの状態を取得
+    /** そうだねの押下状態を返す（同一レスの重複送信抑止用）。 */
     fun getSodaNeState(resNum: String): Boolean {
         return sodaNeStates[resNum] ?: false
     }
 
-    // そうだねの状態をリセット（新しいページを読み込む時など）
+    /** そうだねの状態をリセット（新しいページ読み込み時など）。 */
     fun resetSodaNeStates() {
         sodaNeStates.clear()
     }
 
-    // 削除
+    /** 通常の削除（画像のみ/本文含む）を実行し、成功時は再取得する。 */
     fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String, onlyImage: Boolean) {
         viewModelScope.launch {
             try {
@@ -528,7 +532,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    // del.php 経由の削除
+    /** del.php 経由での削除を実行し、成功時は再取得する。 */
     fun deleteViaDelPhp(resNum: String, reason: String = "110") {
         viewModelScope.launch {
             try {
@@ -576,10 +580,12 @@ class DetailViewModel @Inject constructor(
 
     // ===== NG filtering =====
 
+    /** 現在のNGルールでフィルタを再適用し、表示と検索状態を更新。 */
     fun reapplyNgFilter() {
         applyNgAndPost()
     }
 
+    /** NGルールを適用した結果を `detailContent` に反映し、スナップショットも保存。 */
     private fun applyNgAndPost() {
         ngStore.cleanup()
         val rules = ngStore.getRules()
@@ -600,6 +606,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** NGルールに基づきテキストと直後のメディア列を間引いた一覧を返す。 */
     private fun filterByNgRules(src: List<DetailContent>, rules: List<NgRule>): List<DetailContent> {
         if (src.isEmpty()) return src
         val out = ArrayList<DetailContent>(src.size)
@@ -635,6 +642,7 @@ class DetailViewModel @Inject constructor(
         return out
     }
 
+    /** 指定のマッチ種別で文字列照合するユーティリティ。 */
     private fun match(target: String, pattern: String, type: MatchType, ignoreCase: Boolean): Boolean {
         return when (type) {
             MatchType.EXACT -> target.equals(pattern, ignoreCase)
@@ -644,6 +652,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** HTMLから ID: xxx を抽出。タグ境界とテキスト両方を考慮して安定化。 */
     private fun extractIdFromHtml(html: String): String? {
         // 0) まず HTML 上で抽出（タグ境界で確実に切れる）
         run {
@@ -676,6 +685,7 @@ class DetailViewModel @Inject constructor(
         return pm?.groupValues?.getOrNull(1)?.trim()
     }
 
+    /** 検索用のプレーン本文を生成（付帯情報やファイル行を除去）。 */
     private fun extractPlainBody(html: String): String {
         val plain = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
         val dateRegex = Regex("""\d{2}/\d{2}/\d{2}\([^)]+\)\d{2}:\d{2}:\d{2}""")
@@ -706,6 +716,7 @@ class DetailViewModel @Inject constructor(
     }
 
     // ===== Search: public APIs and internals =====
+    /** 検索を開始し、最初のヒット位置に移動できるよう状態を更新。 */
     fun performSearch(query: String) {
         currentSearchQuery = query
         _currentQueryFlow.value = query
@@ -718,6 +729,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** 検索状態をクリア。 */
     fun clearSearch() {
         val wasActive = currentSearchQuery != null
         currentSearchQuery = null
@@ -730,6 +742,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** 検索ヒットの前の項目へ循環移動。 */
     fun navigateToPrevHit() {
         if (searchResultPositions.isEmpty()) return
         currentSearchHitIndex--
@@ -737,6 +750,7 @@ class DetailViewModel @Inject constructor(
         publishSearchState()
     }
 
+    /** 検索ヒットの次の項目へ循環移動。 */
     fun navigateToNextHit() {
         if (searchResultPositions.isEmpty()) return
         currentSearchHitIndex++
@@ -744,6 +758,7 @@ class DetailViewModel @Inject constructor(
         publishSearchState()
     }
 
+    /** 現在の表示リストから検索ヒット位置を再計算して公開。 */
     private fun recomputeSearchState() {
         searchResultPositions.clear()
         val q = currentSearchQuery?.trim().orEmpty()
@@ -766,6 +781,7 @@ class DetailViewModel @Inject constructor(
         publishSearchState()
     }
 
+    /** 検索UI表示用の集計（アクティブ/現在位置/総数）をフローに反映。 */
     private fun publishSearchState() {
         val active = (currentSearchQuery != null) && searchResultPositions.isNotEmpty()
         val currentDisp = if (active && currentSearchHitIndex in searchResultPositions.indices) currentSearchHitIndex + 1 else 0

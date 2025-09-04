@@ -60,10 +60,21 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import dagger.hilt.android.EntryPointAccessors
 
+/**
+ * 画像にモザイク/消しゴムを適用できるComposeベースの簡易編集アクティビティ。
+ *
+ * - インテントの `EXTRA_IMAGE_URI` を読み込み、ビットマップを非同期でデコード
+ * - `EditingEngine` を生成し、`ImageEditorCanvas` 上で描画/ジェスチャを処理
+ * - ツール（モザイク/消しゴム）、ブラシ太さ、モザイク強さ、操作ロックをUIで切り替え
+ * - 保存時は最終合成画像をギャラリーへ書き出し、可能ならEXIFにプロンプト（ユーザーコメント）を付与
+ * - APIに応じてMediaStore/外部ストレージを使い分け、API 28以下では書込権限を確認
+ */
 class ImageEditActivity : BaseActivity() {
 
     companion object {
+        // 編集対象画像のURIを受け取るためのキー
         const val EXTRA_IMAGE_URI = "com.valoser.futaburakari.EXTRA_IMAGE_URI"
+        // API 28以下でのWRITE_EXTERNAL_STORAGE権限リクエスト用コード
         private const val REQUEST_WRITE_EXTERNAL_STORAGE = 1001
     }
 
@@ -71,7 +82,7 @@ class ImageEditActivity : BaseActivity() {
     // Compose表示トリガー用の状態（Bitmapローディング完了を通知）
     private val editorBitmapState = androidx.compose.runtime.mutableStateOf<Bitmap?>(null)
 
-    // Canvas-based editor handles rendering/gestures
+    // 描画/ジェスチャは ImageEditorCanvas 側で扱う。ここではロック状態のみ保持。
     private var isLocked = false
 
     private enum class Tool { NONE, MOSAIC, ERASER }
@@ -82,6 +93,7 @@ class ImageEditActivity : BaseActivity() {
 
     private var imageUri: Uri? = null
 
+    // メタデータ抽出（プロンプト取得）に用いるネットワーククライアントを EntryPoint から取得
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
@@ -135,8 +147,8 @@ class ImageEditActivity : BaseActivity() {
                             .fillMaxSize()
                             .padding(inner)
                     ) {
-                        // Canvas (Zoom + Overlays) - Compose-only
-                        // Controls state (must be defined before overlay to be captured)
+                        // キャンバス（ズーム/オーバーレイはComposeで完結）
+                        // コントロール用状態（オーバーレイから参照されるため先に定義）
                         var brushSize by rememberSaveable { mutableIntStateOf(currentBrushSizePx) }
                         var mosaicAlpha by rememberSaveable { mutableIntStateOf(currentMosaicAlpha) }
                         var toolName by rememberSaveable { mutableStateOf(currentTool.name) }
@@ -163,11 +175,11 @@ class ImageEditActivity : BaseActivity() {
 
                         Spacer(Modifier.height(8.dp))
 
-                        // Controls (Compose)
+                        // コントロール（Compose）
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                // Brush size
+                                // ブラシ太さ
                                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                     Text("太さ: ${brushSize}px")
                                     Spacer(Modifier.width(12.dp))
@@ -184,7 +196,7 @@ class ImageEditActivity : BaseActivity() {
 
                                 Spacer(Modifier.height(8.dp))
 
-                                // Mosaic alpha
+                                // モザイク強さ
                                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                     val pct = (mosaicAlpha / 255f * 100).toInt()
                                     Text("強さ: ${pct}%")
@@ -225,7 +237,7 @@ class ImageEditActivity : BaseActivity() {
                                     OutlinedButton(onClick = {
                                         locked = !locked
                                         isLocked = locked
-                                        // Compose canvas handles interaction lock
+                                        // ロック解除時はツールをNONEへ（誤操作防止）
                                         if (!locked) {
                                             applyTool(Tool.NONE)
                                         }
@@ -241,11 +253,11 @@ class ImageEditActivity : BaseActivity() {
                 }
             }
         }
-        // Compose-only rendering and interaction
+        // レンダリング/操作はComposeのみで完結
 
         if (savedInstanceState != null) {
             isLocked = savedInstanceState.getBoolean("lock_state", false)
-            // Compose controls handle lock UI state
+            // ロックUI状態はComposeの状態で管理
         }
 
         // 画像読み込みと編集エンジンの構築をバックグラウンドで
@@ -265,7 +277,7 @@ class ImageEditActivity : BaseActivity() {
                     if (isFinishing) return@withContext
                     viewModel.setPreparedEngine(bmp, engine)
                     editorBitmapState.value = bmp
-                    // Compose canvas reads source/engine directly
+                    // ImageEditorCanvas はこのBitmapとEngineを直接参照して描画する
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -275,15 +287,19 @@ class ImageEditActivity : BaseActivity() {
         }
     }
 
+    // 現在のツールを切り替える（Compose側の保存状態初期値にも反映される）
     private fun applyTool(tool: Tool) {
         currentTool = tool
     }
 
-    // Legacy save/lock/button setup methods removed (Compose handles UI)
+    // 従来の（非Compose）UI初期化は不要。保存/ロック/ボタンはComposeで完結。
 
     @SuppressLint("MissingPermission")
     private fun saveImageToGallery() {
-        // On API < 29, ensure WRITE_EXTERNAL_STORAGE is granted before saving
+        // 画像をギャラリーへ保存する。
+        // - API < 29: WRITE_EXTERNAL_STORAGE 権限を事前確認
+        // - API >= 29: MediaStore へ相対パス指定で保存
+        // - 可能ならEXIFの UserComment にプロンプト文字列を埋め込む
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -390,6 +406,7 @@ class ImageEditActivity : BaseActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        // ロック状態のみ保存して復元時に反映
         outState.putBoolean("lock_state", isLocked)
     }
 
