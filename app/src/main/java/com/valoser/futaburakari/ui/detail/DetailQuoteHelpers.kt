@@ -63,7 +63,9 @@ internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): 
 
 /**
  * Build list of posts that quote the given source Text's body lines (first-level quote content),
- * including the text row and any immediately following media until the next Text/ThreadEndTime.
+ * matching quote lines that are exactly equal to any normalized candidate.
+ * If `extraCandidates` is provided, also allow exact matches against plain body lines (non-'>' lines).
+ * Includes the matched text row and any immediately following media until the next Text/ThreadEndTime.
  */
 internal fun buildBackReferencesByContent(
     all: List<DetailContent>,

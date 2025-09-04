@@ -140,8 +140,8 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * ドキュメントからImageItemのリストを解析する
-     * URLに応じて適切なパーサーに処理を振り分ける
+     * ドキュメントから ImageItem のリストを解析する。
+     * 構造に応じて処理を振り分ける（#cattable 優先、準備ページは空、なければ cgi 風フォールバック）。
      */
     private fun parseItemsFromDocument(document: Document, url: String): List<ImageItem> {
         // 1) まず #cattable を最優先（cgi でも普通に存在する）

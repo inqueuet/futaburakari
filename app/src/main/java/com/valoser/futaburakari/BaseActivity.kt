@@ -8,10 +8,24 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.preference.PreferenceManager
 
+/**
+ * Base activity that applies user UI preferences:
+ * - Respects font scale from shared preferences via a wrapped base context.
+ * - Applies theme mode (light/dark/system) and color theme per user setting.
+ * - Recreates on resume if font scale, theme, or color settings changed.
+ * Also standardizes the ActionBar "Up" indicator across screens.
+ */
 open class BaseActivity : AppCompatActivity() {
+    /** Last applied font scale. */
     private var lastAppliedScale: Float? = null
+    /** Last applied theme mode used to detect changes on resume. */
     private var lastAppliedThemeMode: String? = null
+    /** Last applied color mode used to detect changes on resume. */
     private var lastAppliedColorMode: String? = null
+    /**
+     * Wraps the base context with a configuration reflecting the stored font scale.
+     * Reads `pref_key_font_scale` (default "1.0") and sets `Configuration.fontScale` before attaching.
+     */
     override fun attachBaseContext(newBase: Context) {
         val prefs = PreferenceManager.getDefaultSharedPreferences(newBase)
         val scaleStr = prefs.getString("pref_key_font_scale", "1.0") ?: "1.0"
@@ -27,6 +41,7 @@ open class BaseActivity : AppCompatActivity() {
         super.attachBaseContext(ctx)
     }
 
+    /** Applies theme preferences before standard creation and enables edge-to-edge. */
     override fun onCreate(savedInstanceState: Bundle?) {
         applyThemePreferences()
         super.onCreate(savedInstanceState)
@@ -34,6 +49,10 @@ open class BaseActivity : AppCompatActivity() {
         enableEdgeToEdge()
     }
 
+    /**
+     * Applies theme mode and color theme based on shared preferences.
+     * Persists the "last applied" values for change detection on resume.
+     */
     private fun applyThemePreferences() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         val themeMode = prefs.getString("pref_key_theme_mode", "system")
@@ -55,6 +74,10 @@ open class BaseActivity : AppCompatActivity() {
         lastAppliedColorMode = colorMode
     }
 
+    /**
+     * Standardizes the Up indicator and recreates the activity if preferences changed
+     * while in background (font scale, theme mode, or color mode).
+     */
     override fun onResume() {
         super.onResume()
         // Unify Up indicator icon across activities that show it
@@ -75,11 +98,13 @@ open class BaseActivity : AppCompatActivity() {
         }
     }
 
+    /** Handles ActionBar Up navigation by delegating to the back dispatcher. */
     override fun onSupportNavigateUp(): Boolean {
         onBackPressedDispatcher.onBackPressed()
         return true
     }
 
+    /** Handles toolbar/home button presses; treats Home as back navigation. */
     override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
         return if (item.itemId == android.R.id.home) {
             onBackPressedDispatcher.onBackPressed()

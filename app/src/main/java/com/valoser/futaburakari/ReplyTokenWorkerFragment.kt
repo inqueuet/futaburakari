@@ -110,7 +110,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
         }?.invoke(Result.failure(IllegalStateException("cancelled by new fetchTokens")))
 
         webView.post {
-            // restrict navigation to the same host as post page
+            // restrict navigation to the same base domain as the post page
             runCatching {
                 val host = android.net.Uri.parse(postPageUrl).host
                 // base domain = 最後の2ラベル（例: may.2chan.net → 2chan.net）
