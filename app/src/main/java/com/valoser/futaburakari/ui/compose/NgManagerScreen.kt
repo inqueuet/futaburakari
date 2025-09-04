@@ -16,16 +16,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -34,10 +40,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
@@ -47,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.MatchType
@@ -68,22 +75,24 @@ fun NgManagerScreen(
     var showTypePicker by remember { mutableStateOf(false) }
     var editTarget: NgRule? by remember { mutableStateOf(null) }
     var deleteTarget: NgRule? by remember { mutableStateOf(null) }
+    var query by remember { mutableStateOf("") }
+    var activeTypeFilter by remember { mutableStateOf<RuleType?>(null) }
+
+    // スクロール時にトップバーを縮める
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val listState = rememberLazyListState()
 
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                scrollBehavior = scrollBehavior
             )
         },
         floatingActionButton = {
@@ -100,36 +109,98 @@ fun NgManagerScreen(
             }
         }
     ) { inner ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(inner),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(inner)
         ) {
-            item { Spacer(Modifier.height(4.dp)) }
-            items(rules, key = { it.id }) { rule ->
-                RuleItem(
-                    rule = rule,
-                    onEdit = { editTarget = rule },
-                    onDelete = { deleteTarget = rule }
+            // 検索とタイプフィルタ（limitType が未指定の時のみ表示）
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("検索（パターン/種類）") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "クリア")
+                            }
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors()
                 )
-            }
-            if (rules.isEmpty()) {
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // 空状態のガイダンス
-                        Text("NGがありません")
-                        Spacer(Modifier.height(8.dp))
-                        Text("右下の＋から追加できます")
+
+                if (limitType == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TypeFilterChip(
+                            label = "すべて",
+                            selected = activeTypeFilter == null,
+                            onClick = { activeTypeFilter = null }
+                        )
+                        TypeFilterChip(
+                            label = "ID",
+                            selected = activeTypeFilter == RuleType.ID,
+                            onClick = { activeTypeFilter = RuleType.ID }
+                        )
+                        TypeFilterChip(
+                            label = "本文",
+                            selected = activeTypeFilter == RuleType.BODY,
+                            onClick = { activeTypeFilter = RuleType.BODY }
+                        )
+                        if (!hideTitleOption) {
+                            TypeFilterChip(
+                                label = "スレタイ",
+                                selected = activeTypeFilter == RuleType.TITLE,
+                                onClick = { activeTypeFilter = RuleType.TITLE }
+                            )
+                        }
                     }
                 }
             }
-            item { Spacer(Modifier.height(8.dp)) }
+
+            val filtered = rules.filter { r ->
+                val matchesType = activeTypeFilter?.let { it == r.type } ?: true
+                val q = query.trim()
+                val matchesQuery = if (q.isEmpty()) true else run {
+                    val typeLabel = when (r.type) { RuleType.ID -> "ID"; RuleType.BODY -> "本文"; RuleType.TITLE -> "スレタイ" }
+                    r.pattern.contains(q, ignoreCase = true) || typeLabel.contains(q, ignoreCase = true)
+                }
+                matchesType && matchesQuery
+            }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item { Spacer(Modifier.height(4.dp)) }
+                items(filtered, key = { it.id }) { rule ->
+                    RuleItem(
+                        rule = rule,
+                        onEdit = { editTarget = rule },
+                        onDelete = { deleteTarget = rule }
+                    )
+                }
+                if (filtered.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("該当するNGがありません", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(8.dp))
+                            Text("検索条件を見直すか、右下の＋で追加", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+            }
         }
     }
 
@@ -180,13 +251,13 @@ private fun RuleItem(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    // 1行分のNGルール表示。カードのクリックまたは右端メニューから編集/削除を実行
+    // 1行分のNGルール表示。カードのクリックで編集、右端メニューから編集/削除
     var menu by remember { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .clickable { menu = true }
+            .clickable { onEdit() }
     ) {
         Row(
             modifier = Modifier
@@ -212,9 +283,24 @@ private fun RuleItem(
                     MatchType.SUBSTRING -> "部分一致"
                     MatchType.REGEX -> "正規表現"
                 }
-                Text(text = "$typeLabel（$matchLabel）", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
-                Text(text = rule.pattern, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text(typeLabel) },
+                        colors = AssistChipDefaults.assistChipColors()
+                    )
+                    AssistChip(
+                        onClick = {},
+                        label = { Text(matchLabel) }
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = rule.pattern,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             IconButton(onClick = { menu = true }) {
                 Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
@@ -246,21 +332,10 @@ private fun TypePickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("NGの種類") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    modifier = Modifier.fillMaxWidth().clickable { onPick(RuleType.ID) },
-                    text = "ID"
-                )
-                Text(
-                    modifier = Modifier.fillMaxWidth().clickable { onPick(RuleType.BODY) },
-                    text = "本文ワード"
-                )
-                if (!hideTitleOption) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth().clickable { onPick(RuleType.TITLE) },
-                        text = "スレタイ"
-                    )
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                TypePickRow(label = "ID") { onPick(RuleType.ID) }
+                TypePickRow(label = "本文ワード") { onPick(RuleType.BODY) }
+                if (!hideTitleOption) TypePickRow(label = "スレタイ") { onPick(RuleType.TITLE) }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } }
@@ -389,4 +464,31 @@ private fun labelForEditTitle(type: RuleType): String = when (type) {
     RuleType.ID -> "NG IDを編集"
     RuleType.BODY -> "NGワードを編集"
     RuleType.TITLE -> "スレタイNGを編集"
+}
+
+@Composable
+private fun TypeFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    AssistChip(
+        onClick = onClick,
+        label = { Text(label) },
+        colors = if (selected) AssistChipDefaults.assistChipColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            labelColor = MaterialTheme.colorScheme.onSecondaryContainer
+        ) else AssistChipDefaults.assistChipColors()
+    )
+}
+
+@Composable
+private fun TypePickRow(label: String, onClick: () -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
