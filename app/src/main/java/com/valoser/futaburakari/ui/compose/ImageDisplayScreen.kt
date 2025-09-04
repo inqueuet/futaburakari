@@ -34,6 +34,12 @@ import com.valoser.futaburakari.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * 画像とプロンプト（説明文）を表示する画面。
+ * - 画像は 1:1 の正方形エリアに `ContentScale.Crop` で表示（未指定時はプレースホルダー）。
+ * - 下部にスクロール可能なプロンプト表示と「プロンプトをコピー」ボタンを配置。
+ * - プロンプトが空の場合は文言を補い、コピーは無効化します。
+ */
 fun ImageDisplayScreen(
     imageUri: String?,
     prompt: String?,
@@ -64,7 +70,7 @@ fun ImageDisplayScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // square image area similar to original (1:1)
+            // 画像表示エリア（1:1 の正方形）
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
                 if (!imageUri.isNullOrBlank()) {
                     AsyncImage(
@@ -74,12 +80,14 @@ fun ImageDisplayScreen(
                         contentScale = ContentScale.Crop
                     )
                 } else {
+                    // 画像が無い場合のプレースホルダー
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceVariant) {}
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // プロンプト表示カード（本文はスクロール可能）
             Surface(
                 tonalElevation = 1.dp,
                 shape = MaterialTheme.shapes.medium
@@ -103,6 +111,7 @@ fun ImageDisplayScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // プロンプトをクリップボードへコピー（空の場合はボタン無効）
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Button(
                     onClick = {

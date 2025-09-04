@@ -14,23 +14,34 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 
+/**
+ * 画像/動画/テキストを表示するメディアビューア。
+ *
+ * - `MediaViewScreen` に種類（画像/動画/テキスト）とURL/テキストを渡して表示
+ * - 画像/動画は保存ボタンを提供（API 28以下は書き込み権限を事前確認）
+ * - 配色はユーザー設定（`pref_key_color_mode`）を反映
+ */
 class MediaViewActivity : BaseActivity() {
 
     private var currentType: String? = null
     private var currentUrl: String? = null
     private var currentText: String? = null // テキスト用（画像メタ/明示テキスト）
 
+    // ネットワークアクセス（表示/保存時の取得等）に利用するクライアントを EntryPoint から取得
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
 
     companion object {
+        // 表示種別: 画像/動画/テキスト
         const val EXTRA_TYPE = "EXTRA_TYPE"
+        // 表示/保存対象のURL（画像/動画の場合）
         const val EXTRA_URL = "EXTRA_URL"
-        const val EXTRA_TEXT = "EXTRA_TEXT" // テキスト表示用
+        // テキスト表示用の内容（プロンプト等）
+        const val EXTRA_TEXT = "EXTRA_TEXT"
         const val TYPE_IMAGE = "image"
         const val TYPE_VIDEO = "video"
-        const val TYPE_TEXT = "text" // プロンプト表示用
+        const val TYPE_TEXT = "text"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,6 +51,7 @@ class MediaViewActivity : BaseActivity() {
         currentUrl = intent.getStringExtra(EXTRA_URL)
         currentText = intent.getStringExtra(EXTRA_TEXT)
 
+        // 配色モード（テーマカラー）設定を取得
         val colorModePref = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_color_mode", "green")
 
@@ -51,6 +63,7 @@ class MediaViewActivity : BaseActivity() {
                     TYPE_TEXT -> "テキスト"
                     else -> getString(R.string.app_name)
                 }
+                // Composeのメディア表示画面へ必要情報とコールバックを渡す
                 MediaViewScreen(
                     title = title,
                     type = currentType ?: TYPE_TEXT,
@@ -66,6 +79,7 @@ class MediaViewActivity : BaseActivity() {
     }
 
     private fun saveImage() {
+        // API < 29 では WRITE_EXTERNAL_STORAGE 権限が必要
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -80,6 +94,7 @@ class MediaViewActivity : BaseActivity() {
                 return
             }
         }
+        // URL が存在する場合のみMediaSaverで保存
         currentUrl?.let { url ->
             lifecycleScope.launch {
                 MediaSaver.saveImage(this@MediaViewActivity, url, networkClient)
@@ -88,6 +103,7 @@ class MediaViewActivity : BaseActivity() {
     }
 
     private fun saveVideo() {
+        // API < 29 では WRITE_EXTERNAL_STORAGE 権限が必要
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -102,6 +118,7 @@ class MediaViewActivity : BaseActivity() {
                 return
             }
         }
+        // URL が存在する場合のみMediaSaverで保存
         currentUrl?.let { url ->
             lifecycleScope.launch {
                 MediaSaver.saveVideo(this@MediaViewActivity, url, networkClient)

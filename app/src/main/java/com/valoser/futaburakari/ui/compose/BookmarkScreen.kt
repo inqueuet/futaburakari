@@ -41,6 +41,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.Bookmark
 
+/**
+ * ブックマーク一覧と追加/編集/削除 UI を提供する画面コンポーザブル。
+ * - 右下の FAB から新規追加ダイアログを表示します。
+ * - 各行の編集/削除アイコンで編集ダイアログ・削除確認を表示します。
+ * - 行のタップで `onSelectBookmark` を呼び出します。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookmarkScreen(
@@ -79,6 +85,7 @@ fun BookmarkScreen(
             )
         },
         floatingActionButton = {
+            // 新規追加ダイアログを開く
             FloatingActionButton(onClick = {
                 editorTitle.value = "ブックマークを追加"
                 nameState.value = ""
@@ -96,10 +103,12 @@ fun BookmarkScreen(
                 .padding(innerPadding),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
+            // URL をキーとして安定ソートし、行を描画
             items(bookmarks, key = { it.url }) { bm ->
                 BookmarkRow(
                     bookmark = bm,
                     onEdit = {
+                        // 既存ブックマークを編集するためにダイアログへ値を投入
                         editorTitle.value = "ブックマークを編集"
                         nameState.value = bm.name
                         urlState.value = bm.url
@@ -107,6 +116,7 @@ fun BookmarkScreen(
                         showEditor.value = true
                     },
                     onDelete = {
+                        // 削除確認ダイアログ表示のために対象を保持
                         pendingDelete.value = bm
                         showDeleteConfirm.value = true
                     },
@@ -117,6 +127,7 @@ fun BookmarkScreen(
     }
 
     if (showEditor.value) {
+        // 追加/編集共通の入力ダイアログ
         EditBookmarkDialog(
             title = editorTitle.value,
             nameState = nameState,
@@ -137,6 +148,7 @@ fun BookmarkScreen(
     if (showDeleteConfirm.value) {
         val target = pendingDelete.value
         if (target != null) {
+            // 削除確認ダイアログ
             ConfirmDialog(
                 message = "\"${target.name}\" を削除しますか？",
                 onConfirm = {
@@ -150,6 +162,10 @@ fun BookmarkScreen(
 }
 
 @Composable
+/**
+ * ブックマークリストの 1 行を表示。
+ * 行のタップで `onClick`、右側アイコンで編集/削除を行います。
+ */
 private fun BookmarkRow(
     bookmark: Bookmark,
     onEdit: () -> Unit,
@@ -181,6 +197,10 @@ private fun BookmarkRow(
 }
 
 @Composable
+/**
+ * ブックマークの追加/編集用ダイアログ。
+ * `nameState` と `urlState` は呼び出し元で保持して双方向バインドします。
+ */
 private fun EditBookmarkDialog(
     title: String,
     nameState: MutableState<String>,
@@ -218,6 +238,9 @@ private fun EditBookmarkDialog(
 }
 
 @Composable
+/**
+ * 汎用の確認ダイアログ。メッセージと確定/キャンセルのコールバックを受け取ります。
+ */
 private fun ConfirmDialog(
     message: String,
     onConfirm: () -> Unit,

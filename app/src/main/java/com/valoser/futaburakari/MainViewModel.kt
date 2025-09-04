@@ -18,20 +18,31 @@ import java.net.URL
 import javax.inject.Inject
 
 @HiltViewModel
+/**
+ * カタログ取得・解析・整形を担う ViewModel。
+ *
+ * - HTMLを取得し、`#cattable` 優先で解析（なければ cgi 風フォールバック）
+ * - プレビュー画像URLの検証/補正、フルサイズ画像URLの推測・補完を行う
+ * - 進行状態とエラーを LiveData で公開
+ */
 class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
     private val _images = MutableLiveData<List<ImageItem>>()
+    // 画面表示用アイテム一覧
     val images: LiveData<List<ImageItem>> = _images
 
     private val _error = MutableLiveData<String>()
+    // エラー時のメッセージ
     val error: LiveData<String> = _error
 
     private val _isLoading = MutableLiveData<Boolean>()
+    // 通信/解析中フラグ
     val isLoading: LiveData<Boolean> = _isLoading
 
+    // プレビューURLからフル画像URLを推測（thumb/cat -> src、末尾の s. を通常拡張に）
     private fun guessFullFromPreview(previewUrl: String): String? {
         return try {
             var s = previewUrl
@@ -44,6 +55,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    // HEADでURLの存在確認（IOディスパッチャ実行）
     private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(url).head().build()
         runCatching {
@@ -53,6 +65,7 @@ class MainViewModel @Inject constructor(
         }.getOrDefault(false)
     }
 
+    // フル画像URLを補完：推測→HEAD検証→不足分は詳細HTMLから /src/ を抽出
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
@@ -91,7 +104,7 @@ class MainViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val document = networkClient.fetchDocument(url)
-                // ★修正点: urlを渡して解析方法を切り替え
+                // URLに応じて解析手段を切り替え（#cattable 優先 → 準備ページは空 → cgi フォールバック）
                 val baseItems = parseItemsFromDocument(document, url)
                 val previewSafe = validatePreviewUrls(baseItems)
                 val enriched = enrichWithFullImages(previewSafe)
@@ -108,7 +121,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val document = networkClient.fetchDocument(url)
-                // ★修正点: urlを渡して解析方法を切り替え
+                // 解析手段の切り替えは同様。既存のfullImageUrlを引き継ぎ、不足分のみ補完する。
                 val newItemList = parseItemsFromDocument(document, url)
                 val currentItems = _images.value ?: emptyList()
                 val currentMapByDetail = currentItems.associateBy { it.detailUrl }
@@ -141,7 +154,7 @@ class MainViewModel @Inject constructor(
 
     /**
      * ドキュメントから ImageItem のリストを解析する。
-     * 構造に応じて処理を振り分ける（#cattable 優先、準備ページは空、なければ cgi 風フォールバック）。
+     * 構造に応じて処理を振り分け（#cattable 優先、準備ページは空、なければ cgi 風フォールバック）。
      */
     private fun parseItemsFromDocument(document: Document, url: String): List<ImageItem> {
         // 1) まず #cattable を最優先（cgi でも普通に存在する）
@@ -155,7 +168,8 @@ class MainViewModel @Inject constructor(
         return parseCgiFallback(document)
     }
 
-    // 追加：#cattable 用パーサ（旧 parseForStandardServer の実質改名）
+    // #cattable 用パーサ（旧実装の整理版）。
+    // <img> が無い行は res/{id}.htm からIDを抜き、候補URLを1つ構築（後段で検証）。
     private fun parseFromCattable(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
         val cells = document.select("#cattable td")
@@ -201,6 +215,7 @@ class MainViewModel @Inject constructor(
         return parsedItems
     }
 
+    // サムネイル候補（cat/thumb の拡張子違い）を列挙
     private fun buildCatalogThumbCandidates(detailUrl: String): List<String> {
         val m = Regex("""/res/(\d+)\.htm""").find(detailUrl) ?: return emptyList()
         val id = m.groupValues[1]
@@ -215,6 +230,7 @@ class MainViewModel @Inject constructor(
         )
     }
 
+    // プレビューURLをHEADで検証し、無効なら候補から有効なものに置換
     private suspend fun validatePreviewUrls(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val limited = Dispatchers.IO.limitedParallelism(4)
@@ -259,8 +275,7 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 標準的なサーバーおよびお絵かき系サーバー用のパーサー
-     * #cattable を探し、タグの欠損に寛容なロジックで解析する
+     * [Legacy] 旧・標準サーバー用パーサ（未使用）。互換のため残置。
      */
     private fun parseForStandardServer(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
@@ -296,8 +311,7 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * cgi.2chan.net サーバー用のパーサー
-     * こちらは #cattable を持たないため、異なるセレクタで解析する
+     * [Legacy] 旧・cgi サーバー用パーサ（未使用）。互換のため残置。
      */
     private fun parseForCgiServer(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()

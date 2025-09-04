@@ -26,6 +26,15 @@ import kotlin.math.min
 
 // 動画プロンプト解析に関連する外部パーサーは削除
 
+/**
+ * 画像ファイルなどからプロンプト/説明テキストを抽出するユーティリティ。
+ *
+ * - ローカルURIは先頭〜上限を読み込み種別判定後に抽出
+ * - HTTPはセマフォで同時接続を制限し、Range/HEADで必要最小限の取得
+ * - JPEG/WEBP: EXIF → JPEGのAPP1(XMP)/APP13(IPTC) → テキスト走査
+ * - PNG: tEXt/zTXt/iTXt や XMP をストリーミングで走査（IEND/上限まで）
+ * - 動画は対象外（常に null）
+ */
 object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
@@ -46,6 +55,10 @@ object MetadataExtractor {
     private val GSON = Gson()
 
     // ====== Public API ======
+    /**
+     * URI/URL からプロンプトらしき文字列を抽出して返す。見つからなければ null。
+     * 種別に応じて、先頭範囲のみ取得やチャンク走査を行う。
+     */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
             if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
@@ -122,6 +135,7 @@ object MetadataExtractor {
     }
 
     // ====== PNG: 同時接続数制限付きストリーミング処理 ======
+    // 初回は固定サイズを取得し、必要に応じて窓を広げて tEXt/zTXt/iTXt や XMP を検出する。
     private suspend fun extractPngPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
         var windowSize = PNG_WINDOW_BYTES
         var totalFetched = 0
@@ -182,6 +196,7 @@ object MetadataExtractor {
 
     // ====== 既存の処理ロジック（変更なし） ======
 
+    // バイト列の種類に応じて抽出方法を切り替える簡易ルータ
     private fun extractByType(fileBytes: ByteArray, uriOrUrl: String): String? {
         return when {
             // 動画のプロンプト取得は廃止
@@ -190,6 +205,7 @@ object MetadataExtractor {
         }
     }
 
+    // バイト先頭を嗅ぎ分けてEXIF/JPEGセグメント/テキストを順に試すフォールバック
     private fun extractBySniff(bytes: ByteArray, @Suppress("UNUSED_PARAMETER") uriOrUrl: String): String? {
         if (isPng(bytes)) {
             return extractFromPngChunks(bytes)
@@ -205,6 +221,7 @@ object MetadataExtractor {
 
     
 
+    // テキスト中から prompt/workflow/CLIPTextEncode 由来の候補を正規表現で抽出
     private fun scanTextForPrompts(text: String): String? {
         val promptPattern = Pattern.compile("""prompt"\s*:\s*("([^"\\]*(\\.[^"\\]*)*)"|\{.*?\})""", Pattern.DOTALL)
         promptPattern.matcher(text).apply {
@@ -226,6 +243,7 @@ object MetadataExtractor {
 
     // ====== 以下、既存のメソッドをそのまま保持 ======
 
+    // EXIF の UserComment/ImageDescription/XPComment から最初に見つかったものを返す
     private fun extractFromExif(fileBytes: ByteArray): String? {
         return try {
             val exif = ExifInterface(ByteArrayInputStream(fileBytes))
@@ -241,6 +259,7 @@ object MetadataExtractor {
 
     
 
+    // XPComment は UTF-16LE を ISO-8859-1 として受け取るため、UTF-16LE で復号
     private fun decodeXpString(raw: String): String? {
         val bytes = raw.toByteArray(StandardCharsets.ISO_8859_1)
         return try {
@@ -263,6 +282,7 @@ object MetadataExtractor {
                 fileBytes[7] == 10.toByte()
     }
 
+    // PNG の tEXt/zTXt/iTXt からキー(parameters/description/comment/prompt)や XMP を抽出
     private fun extractFromPngChunks(bytes: ByteArray): String? {
         if (!isPng(bytes)) return null
         val prompts = mutableListOf<String>()
@@ -549,6 +569,7 @@ object MetadataExtractor {
         return null
     }
 
+    // JPEG の APP1(XMP) と APP13(Photoshop IRB/IPTC) を簡易パース
     private fun extractFromJpegAppSegments(bytes: ByteArray): String? {
         // JPEGシグネチャ確認
         if (bytes.size < 4 || bytes[0] != 0xFF.toByte() || bytes[1] != 0xD8.toByte()) return null
@@ -582,6 +603,7 @@ object MetadataExtractor {
         return null
     }
 
+    // Photoshop IRB ブロックから IPTC(IIM) を取り出し、説明に相当する項目を抽出
     private fun parsePhotoshopIrbForIptc(app13: ByteArray): String? {
         val header = "Photoshop 3.0\u0000".toByteArray(StandardCharsets.ISO_8859_1)
         if (app13.size < header.size || !app13.copyOfRange(0, header.size).contentEquals(header)) return null
@@ -612,6 +634,7 @@ object MetadataExtractor {
         return null
     }
 
+    // IPTC IIM の見出し(2:xxx)から説明/キャプション相当を抽出
     private fun parseIptcIimForPrompt(data: ByteArray): String? {
         var p = 0
         while (p + 5 <= data.size) {

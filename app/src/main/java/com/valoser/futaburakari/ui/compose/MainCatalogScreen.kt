@@ -44,6 +44,13 @@ import com.valoser.futaburakari.RuleType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * 画像カタログの一覧画面。
+ * - プルリフレッシュおよび端での強いオーバースクロール（バウンス）で再読み込みを実行。
+ * - 検索欄の表示切替、ブックマーク選択/管理、履歴、設定などのメニュー操作を提供。
+ * - NG タイトルルールとクエリで一覧をフィルタし、グリッド表示します。
+ * - 可視範囲＋先読み分の軽量プリフェッチでスクロール体験を滑らかにします。
+ */
 fun MainCatalogScreen(
     modifier: Modifier = Modifier,
     title: String,
@@ -66,7 +73,7 @@ fun MainCatalogScreen(
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
 
-    // Filter items by NG rules and query
+    // NG タイトルルールとクエリで絞り込み
     val filtered = remember(items, query, ngRules) {
         val titleRules = ngRules.filter { it.type == RuleType.TITLE }
         items.asSequence()
@@ -82,12 +89,12 @@ fun MainCatalogScreen(
 
     val gridState = rememberLazyGridState()
 
-    // バウンス検出用の状態
+    // バウンス（端でのオーバースクロール）検出用の状態
     val density = LocalDensity.current
-    val minBouncePx = with(density) { 120.dp.toPx() }.coerceAtLeast(48f)
-    var continuousOverscrollPx by remember { mutableStateOf(0f) }
-    var lastScrollDirection by remember { mutableStateOf(0) } // 1: down, -1: up, 0: none
-    var autoUpdatePending by remember { mutableStateOf(false) }
+    val minBouncePx = with(density) { 120.dp.toPx() }.coerceAtLeast(48f) // トリガーに必要な最小距離
+    var continuousOverscrollPx by remember { mutableStateOf(0f) } // 連続オーバースクロール距離の累積
+    var lastScrollDirection by remember { mutableStateOf(0) } // 1: 下方向, -1: 上方向, 0: なし
+    var autoUpdatePending by remember { mutableStateOf(false) } // 誤連発防止のディレイ中フラグ
 
     val bounceConnection = remember(isLoading) {
         object : NestedScrollConnection {
@@ -113,7 +120,7 @@ fun MainCatalogScreen(
         }
     }
 
-    // スクロール停止検知 → 自動更新トリガー
+    // スクロール停止検知 → 端に到達して十分に引っ張られていたら自動更新
     LaunchedEffect(gridState, isLoading, items) {
         snapshotFlow { gridState.isScrollInProgress }
             .distinctUntilChanged()
@@ -125,7 +132,7 @@ fun MainCatalogScreen(
                     val atBoundary = (atTop && lastScrollDirection > 0) || (atBottom && lastScrollDirection < 0)
                     if (!isLoading && atBoundary && continuousOverscrollPx >= minBouncePx && !autoUpdatePending) {
                         autoUpdatePending = true
-                        // 少し待ってから実際の更新（誤判定の連発を避ける）
+                        // 少し待ってから実際の更新（誤判定や連発を避ける）
                         launch {
                             delay(1000L)
                             onReload()
@@ -137,7 +144,7 @@ fun MainCatalogScreen(
             }
     }
 
-    // 軽量プリフェッチ（可視範囲＋先の少量）
+    // 軽量プリフェッチ（可視範囲＋先読み分の少量だけ）
     val context = LocalContext.current
     LaunchedEffect(items, gridState) {
         snapshotFlow {
@@ -235,6 +242,7 @@ fun MainCatalogScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(padding)
+                // 端でのオーバースクロール距離を計測するための NestedScroll を追加
                 .nestedScroll(bounceConnection),
             state = pullState,
             isRefreshing = isLoading,
@@ -249,6 +257,7 @@ fun MainCatalogScreen(
                 columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
                 contentPadding = PaddingValues(4.dp)
             ) {
+                // 安定キーに detailUrl を使用
                 items(filtered, key = { it.detailUrl }) { item ->
                     CatalogCard(item = item, onClick = { onItemClick(item) })
                 }
@@ -263,6 +272,9 @@ fun MainCatalogScreen(
 }
 
 @Composable
+/**
+ * 右上「その他」メニュー。画像編集・ローカル画像・履歴・設定を提供。
+ */
 private fun MoreMenu(
     onImageEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
@@ -291,17 +303,17 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
         onClick = onClick
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            // Square thumbnail ensures uniform item height
+            // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
             AsyncImage(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Rectangular aspect to unify item size (width : height = 3 : 4)
+                    // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
                     .aspectRatio(3f / 4f),
                 model = item.fullImageUrl ?: item.previewUrl,
                 contentDescription = item.title
             )
 
-            // Center play indicator for videos
+            // 動画の場合は中央に再生アイコンを重ねる
             val isVideo = (item.fullImageUrl ?: item.previewUrl).let { url ->
                 url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
             }
@@ -321,7 +333,7 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                 )
             }
 
-            // Reply count badge (bottom end)
+            // 返信数バッジ（右下）
             if (!item.replyCount.isNullOrBlank()) {
                 Text(
                     text = item.replyCount,
@@ -335,12 +347,12 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                 )
             }
 
-            // Title overlay (fixed height) to keep grid uniform
+            // タイトル用のオーバーレイ（固定高さでレイアウトを安定化）
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    // Taller overlay to support two title lines
+                    // 2 行のタイトルに対応するため少し高めにする
                     .height(56.dp)
                     .background(
                         Brush.verticalGradient(
@@ -365,6 +377,9 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
     }
 }
 
+/**
+ * タイトルに対して NG ルールを適用してマッチ判定する。
+ */
 private fun matchTitle(title: String, rule: NgRule): Boolean {
     val pattern = rule.pattern
     val mt = rule.match ?: MatchType.SUBSTRING

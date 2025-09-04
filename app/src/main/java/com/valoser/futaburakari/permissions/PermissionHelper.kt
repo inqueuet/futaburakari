@@ -9,9 +9,10 @@ import androidx.core.content.ContextCompat
 object PermissionHelper {
 
     /**
-     * Returns the set of media permissions needed on this platform version.
-     * - API 33+ (Tiramisu): READ_MEDIA_IMAGES and READ_MEDIA_VIDEO
-     * - API 32- (S): READ_EXTERNAL_STORAGE
+     * このプラットフォームバージョンで必要なメディア系パーミッションのセットを返します。
+     * - API 34+ (UpsideDownCake 以降): READ_MEDIA_IMAGES, READ_MEDIA_VIDEO, READ_MEDIA_VISUAL_USER_SELECTED
+     * - API 33 (Tiramisu): READ_MEDIA_IMAGES, READ_MEDIA_VIDEO
+     * - API 32 以下: READ_EXTERNAL_STORAGE
      */
     fun requiredMediaPermissions(): Array<String> {
         return when {
@@ -32,9 +33,15 @@ object PermissionHelper {
         }
     }
 
+    /**
+     * すべての必要なメディア系パーミッションが付与されているかどうか。
+     */
     fun hasAllMediaPermissions(context: Context): Boolean =
         missingMediaPermissions(context).isEmpty()
 
+    /**
+     * 未付与のメディア系パーミッション一覧を返します。
+     */
     fun missingMediaPermissions(context: Context): Array<String> =
         requiredMediaPermissions().filterNot { perm ->
             ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED

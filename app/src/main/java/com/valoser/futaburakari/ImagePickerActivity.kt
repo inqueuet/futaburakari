@@ -37,9 +37,17 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
+/**
+ * 画像をユーザーに選択させ、編集画面へ受け渡すアクティビティ。
+ *
+ * - Android 13以降: システムのPhoto Pickerを使用（追加のストレージ権限は不要）
+ * - Android 12以下: SAFのGetContentを使用（必要に応じてREAD_EXTERNAL_STORAGEを要求）
+ * - 起動時に自動でピッカーを開き、キャンセル時は本アクティビティを終了
+ * - 取得したURIは読み取り権限を付与しつつ `ImageEditActivity` に渡す
+ */
 class ImagePickerActivity : BaseActivity() {
 
-    // Android 13+ Photo Picker (no storage permission needed)
+    // Android 13+ のPhoto Picker（追加のストレージ権限は不要）
     private val pickVisualMediaLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -51,12 +59,12 @@ class ImagePickerActivity : BaseActivity() {
         }
     }
 
-    // Fallback for Android 12- (SAF GetContent)
+    // Android 12以下向けのフォールバック（SAF GetContent）
     private val getContentLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            // For SAF uris, transient read permission is already granted to our app.
+            // SAFのURIは、一時的な読み取り権限が呼び出し先に付与される
             openEditorWithUri(uri)
         } else {
             Toast.makeText(this, "画像選択がキャンセルされました", Toast.LENGTH_SHORT).show()
@@ -71,7 +79,7 @@ class ImagePickerActivity : BaseActivity() {
                 launchGallery()
             } else {
                 Toast.makeText(this, "ストレージへのアクセス権限が拒否されました", Toast.LENGTH_SHORT).show()
-                finish() // Finish if permission is denied
+                finish() // 権限がない場合はこの画面を終了
             }
         }
 
@@ -118,13 +126,13 @@ class ImagePickerActivity : BaseActivity() {
             }
         }
 
-        // 起動時に自動でギャラリーを開く
+        // 起動時に自動でギャラリー（ピッカー）を開く
         checkAndOpenGallery()
     }
 
     private fun checkAndOpenGallery() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Photo Picker does not require storage permissions
+            // Photo Pickerはストレージ権限が不要
             launchGallery()
             return
         }
@@ -143,17 +151,18 @@ class ImagePickerActivity : BaseActivity() {
 
     private fun launchGallery() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Use modern Photo Picker
+            // システムのPhoto Pickerを使用
             pickVisualMediaLauncher.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
             )
         } else {
-            // Use SAF GetContent for broad compatibility with Google Photos etc.
+            // SAFのGetContentを使用（Google フォト等との互換のため広く利用可能）
             getContentLauncher.launch("image/*")
         }
     }
 
     private fun openEditorWithUri(it: Uri) {
+        // 取得したURIを編集画面に渡す。読み取り権限を付与し、ClipDataにも設定して確実に権限伝播させる。
         val intent = Intent(this, ImageEditActivity::class.java).apply {
             data = it
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

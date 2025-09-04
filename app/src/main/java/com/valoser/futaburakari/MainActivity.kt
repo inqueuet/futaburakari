@@ -47,6 +47,15 @@ import kotlin.coroutines.resume
 import java.net.URL
 
 @AndroidEntryPoint
+/**
+ * メイン画面（カタログ一覧）。
+ *
+ * - ブックマーク選択・管理、設定/履歴/画像編集への遷移を提供
+ * - カタログ（画像リスト）を取得・表示し、アイテムタップで詳細画面へ遷移
+ * - NGルール、グリッド列数、フォントスケール、配色モードなどの設定変更を反映
+ * - Futabaの catset（カタログ表示設定）を板単位で適用し、3日間のTTLで再適用を抑制
+ * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応
+ */
 class MainActivity : BaseActivity() {
     private val viewModel: MainViewModel by viewModels()
     private var currentSelectedUrl: String? = null
@@ -58,13 +67,14 @@ class MainActivity : BaseActivity() {
     // 自動更新機能用のフィールド（改良版）
     private var isAutoUpdateEnabled = false
     private lateinit var prefs: SharedPreferences
+    // 設定変更の反映（列数/フォントスケール/NGルール/配色モード）
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "pref_key_grid_span" -> {
                 spanCountState.intValue = getGridSpanCount()
             }
             "pref_key_font_scale" -> {
-                // Recreate to apply new font scale immediately
+                // フォントスケールの反映には再生成が必要
                 recreate()
             }
             // NGルール変更（設定画面など）
@@ -97,12 +107,14 @@ class MainActivity : BaseActivity() {
     private val ngRulesState = mutableStateOf<List<NgRule>>(emptyList())
     private val colorModeState = mutableStateOf<String?>(null)
 
+    // ブックマーク画面から戻った後にデータ再取得
     private val bookmarkActivityResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         loadAndFetchInitialData()
     }
 
+    // 端末内のローカル画像を選択（GetContent）し、メタデータを抽出して表示画面へ渡す
     private val pickImageLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             if (uri != null) {
@@ -215,7 +227,7 @@ class MainActivity : BaseActivity() {
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
-        // 端末再起動後も catset 適用済みボードをスキップできるように永続化されたセットを読み込み
+        // 端末再起動後も catset 適用済みボードをスキップできるよう、永続化されたセットを読み込み
         restoreAppliedBoards()
 
         observeViewModel()
@@ -239,7 +251,7 @@ class MainActivity : BaseActivity() {
         ngRulesState.value = ngStore.getRules()
     }
 
-    // no-op: kept for backward compatibility during transition
+    // no-op: 旧実装との互換のために残置（Compose移行で不要）
     private fun configureSwipeRefreshIndicatorPosition() { }
     // RecyclerView時代の処理はComposeへ移行済み
     private fun cancelAutoUpdate() {
@@ -261,6 +273,7 @@ class MainActivity : BaseActivity() {
                 val absoluteUrl = URL(URL(baseUrlString), imageUrlString).toString()
                 Log.d("MainActivity_Prefetch", "Resolved absolute URL: $absoluteUrl")
 
+                // 詳細画面での表示体験向上のため、画像を事前にプリフェッチ（Coil）
                 val imageLoader = this.imageLoader
                 val request = ImageRequest.Builder(this)
                     .data(absoluteUrl)
@@ -285,26 +298,30 @@ class MainActivity : BaseActivity() {
 
     // region Compose-friendly helpers (migrated from View-era)
 
+    // 設定からグリッド列数を取得（1..8 の範囲に丸め込み）
     private fun getGridSpanCount(): Int {
         val value = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_grid_span", "4") ?: "4"
         return value.toIntOrNull()?.coerceIn(1, 8) ?: 4
     }
 
+    // 初期ブックマークと副題を設定し、対象URLのデータ取得を開始
     private fun loadAndFetchInitialData() {
         currentSelectedUrl = BookmarkManager.getSelectedBookmarkUrl(this)
         toolbarSubtitleState.value = getCurrentBookmarkName()
         fetchDataForCurrentUrl()
     }
 
+    // 現在のURLで画像一覧を取得。catsetを必要に応じて適用し、
+    // 初回適用だった場合は再度フェッチして表示内容を反映する。
     private fun fetchDataForCurrentUrl() {
         val url = currentSelectedUrl
         if (url.isNullOrBlank()) return
         viewModel.fetchImagesFromUrl(url)
 
-        // Apply catalog settings asynchronously after first frame; if newly applied, refetch once
+        // 初回フレーム描画後に非同期で catset を適用。新規適用時のみ再フェッチする。
         lifecycleScope.launch {
-            // Let the first frame draw to avoid jank during transitions
+            // 先に1フレーム描画して遷移時のカクつきを避ける
             awaitNextFrame()
             val boardBaseUrl = url.substringBefore("futaba.php")
             if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
@@ -316,6 +333,7 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    // 次の描画フレームを待機するサスペンド関数
     private suspend fun awaitNextFrame() = suspendCancellableCoroutine { cont ->
         val choreographer = Choreographer.getInstance()
         val callback = Choreographer.FrameCallback { if (!cont.isCompleted) cont.resume(Unit) }
@@ -323,6 +341,7 @@ class MainActivity : BaseActivity() {
         cont.invokeOnCancellation { choreographer.removeFrameCallback(callback) }
     }
 
+    // 板のカタログ設定(catset)を適用し、適用済み情報を永続化
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
         val boardKey = boardBaseUrl.trimEnd('/')
         if (isCatsetAppliedRecent(boardKey)) return
@@ -335,6 +354,7 @@ class MainActivity : BaseActivity() {
         persistAppliedBoards()
     }
 
+    // 起動時に、適用済みボード情報を読み込む（TTL内のもののみ有効）
     private fun restoreAppliedBoards() {
         val sp = getSharedPreferences(catsetPrefsName, MODE_PRIVATE)
         val legacy = sp.getStringSet(catsetPrefsKey, null)
@@ -361,6 +381,7 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    // 適用済みボード情報を永続化
     private fun persistAppliedBoards() {
         val sp = getSharedPreferences(catsetPrefsName, MODE_PRIVATE)
         sp.edit().putStringSet(catsetPrefsKey, catsetAppliedBoards).apply()
@@ -368,6 +389,7 @@ class MainActivity : BaseActivity() {
         sp.edit().putString(catsetPrefsTsKey, json).apply()
     }
 
+    // TTL内に catset が適用済みかどうか
     private fun isCatsetAppliedRecent(boardKey: String): Boolean {
         val ts = catsetAppliedTimestamps[boardKey] ?: return false
         return (System.currentTimeMillis() - ts) < CATSET_TTL_MS
@@ -398,7 +420,7 @@ class MainActivity : BaseActivity() {
         return bookmarks.find { it.url == currentSelectedUrl }?.name ?: "ブックマーク未選択"
     }
 
-    // Legacy dialog removed in favor of Compose AlertDialog inside setContent
+    // 旧ダイアログは廃止。setContent 内の Compose AlertDialog を使用
 
     // endregion
 

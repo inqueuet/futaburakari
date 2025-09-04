@@ -7,8 +7,18 @@ import android.text.style.StyleSpan
 import org.json.JSONObject
 import org.json.JSONException
 
+/**
+ * プロンプト文字列（JSON/プレーンテキスト/ComfyUI 形式）を解析し、
+ * 画面表示向けのデータおよび `Spannable` を生成するユーティリティ。
+ */
 object PromptFormatter {
 
+    /**
+     * 画面表示用に分解されたプロンプトデータ。
+     *
+     * - `positive` / `negative`: タグごとのリスト（必要に応じて重み表記を正規化）。
+     * - `settings`: 生成時の設定値（Steps, Sampler, CFG, Seed, Model, Size など）。
+     */
     data class PromptViewData(
         val positive: List<String>,
         val negative: List<String>,
@@ -80,6 +90,13 @@ object PromptFormatter {
     // --------------------
     // ComfyUI JSON 解析
     // --------------------
+    /**
+     * ComfyUI のワークフロー JSON からプロンプトと設定を抽出します。
+     *
+     * - KSampler ノードを起点に Positive/Negative のテキスト入力を辿ります。
+     * - モデル名、スケジューラ、seed、ステップ数、サイズなどを `settings` に格納します。
+     * - ComfyUI 形式でない場合は `null` を返します。
+     */
     private fun parseComfyUiJson(raw: String): PromptViewData? {
         try {
             val json = JSONObject(raw)
@@ -152,6 +169,12 @@ object PromptFormatter {
     // --------------------
     // JSON 解析 (元々のコード)
     // --------------------
+    /**
+     * 文字列中に含まれる JSON オブジェクトを検出して解析します。
+     *
+     * - 既知のキー（`prompt` / `negative_prompt` など）から各値を抽出します。
+     * - `settings` には存在するもののみを追加します。
+     */
     private fun parseJson(raw: String): PromptViewData? {
         val json = findJsonObject(raw) ?: return null
 
@@ -195,6 +218,10 @@ object PromptFormatter {
         return PromptViewData(positive, negative, settings)
     }
 
+    /**
+     * 文字列の先頭の `{` と末尾の `}` で囲まれた部分を取り出して
+     * `JSONObject` 化を試みます。失敗時は `null`。
+     */
     private fun findJsonObject(text: String): JSONObject? {
         val start = text.indexOf('{')
         val end = text.lastIndexOf('}')
@@ -205,6 +232,10 @@ object PromptFormatter {
         return null
     }
 
+    /**
+     * 指定のラベルで、最初に見つかったキーの値を `settings` に追加します。
+     * 値が空や null の場合は無視されます。
+     */
     private fun appendIfExists(dst: MutableMap<String, String>, label: String, json: JSONObject, vararg keys: String) {
         for (k in keys) {
             val v = json.opt(k)
@@ -218,6 +249,13 @@ object PromptFormatter {
     // --------------------
     // レガシーテキスト解析
     // --------------------
+    /**
+     * プレーンテキスト形式のプロンプトを解析します。
+     *
+     * - `Negative prompt` 見出しを境にポジ/ネガを分割。
+     * - ヘッダ風の設定行を除去してからタグを分割。
+     * - 正規表現で Steps/Sampler/CFG/Seed/Size/Model などを抽出します。
+     */
     private fun parseLegacyText(raw: String): PromptViewData {
         val settings = linkedMapOf<String, String>()
 
@@ -267,6 +305,9 @@ object PromptFormatter {
         return PromptViewData(positive, negative, settings)
     }
 
+    /**
+     * 設定値のような行（`Xxx: value` 形式）を削除します。
+     */
     private fun stripSettingsLines(text: String?): String {
         if (text.isNullOrBlank()) return text ?: ""
         val headerLike = Regex("""(?im)^[ \t]*[A-Z][\w ]+:\s?.*$\r?\n?""")
@@ -276,6 +317,12 @@ object PromptFormatter {
     // --------------------
     // タグ分割
     // --------------------
+    /**
+     * タグ文字列をカンマで分割します。
+     *
+     * - 括弧 `()` や山括弧 `<>` の内部、エスケープされたカンマは分割しません。
+     * - 重み表記は `normalizeWeight` でユーザー向け表記に整えます。
+     */
     private fun splitTags(src: String?): List<String> {
         if (src.isNullOrBlank()) return emptyList()
         val out = mutableListOf<String>()
@@ -307,6 +354,12 @@ object PromptFormatter {
         return out.map { it.replace("\\(", "(").replace("\\)", ")").replace("\\,", ",") }
     }
 
+    /**
+     * 重み表記をユーザー向けに正規化します。
+     *
+     * - `(tag: 1.2)` または `tag: 1.2` を `tag (×1.2)` に変換。
+     * - `<>` で囲まれた特殊タグ（例: LoRA 表記）はそのまま返します。
+     */
     private fun normalizeWeight(tag: String): String {
         val t = tag.trim()
         if (t.startsWith("<") && t.endsWith(">")) return t

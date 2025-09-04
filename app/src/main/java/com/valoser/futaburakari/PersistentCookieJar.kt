@@ -12,6 +12,15 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * OkHttp 用の永続化対応 CookieJar。
+ *
+ * - セッション Cookie はメモリにのみ保持（アプリ再起動で消える）。
+ * - 永続 Cookie（有効期限付き）は `SharedPreferences` にドメイン別の JSON として保存・復元。
+ * - WebView との Cookie 同期も行い、UI スレッドで `CookieManager` に反映します。
+ * - スレッドセーフにするため主要メソッドは `@Synchronized` で保護しています。
+ * - 利用前に `init(context)` を必ず呼び出してください。
+ */
 object PersistentCookieJar : CookieJar {
 
     private const val PREFS_NAME = "CookiePrefs"
@@ -25,6 +34,10 @@ object PersistentCookieJar : CookieJar {
     @Volatile
     private var isInitialized = false
 
+    /**
+     * SharedPreferences を初期化し、過去の永続 Cookie を読み込みます。
+     * 既に初期化済みの場合は何もしません（ダブルチェックロッキング）。
+     */
     fun init(context: Context) {
         if (isInitialized) return
         synchronized(this) {
@@ -36,12 +49,24 @@ object PersistentCookieJar : CookieJar {
         }
     }
 
+    /**
+     * 未初期化時に使用されるのを防ぐためのチェック。
+     * 初期化されていない場合は例外を投げます。
+     */
     private fun ensureInitialized() {
         if (!isInitialized) {
             throw IllegalStateException("PersistentCookieJar has not been initialized. Call init() first.")
         }
     }
 
+    /**
+     * サーバー応答から受け取った Cookie を保存します。
+     *
+     * - ホスト限定（hostOnly）Cookie はリクエストホストにのみ適用。
+     * - 永続 Cookie は有効期限が切れていなければ保存、期限切れは破棄。
+     * - セッション Cookie はメモリのみで保持し、Preferences には保存しません。
+     * - 保存後、WebView 側の `CookieManager` にも同期します。
+     */
     @Synchronized
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         ensureInitialized()
@@ -69,7 +94,7 @@ object PersistentCookieJar : CookieJar {
         }
         saveCookiesToPrefs()
 
-        // WebViewへのCookie同期 (UIスレッドで実行)
+        // WebView への Cookie 同期（UI スレッドで実行）
         try {
             val cm = android.webkit.CookieManager.getInstance()
             val cookieStrings = cookies.map { it.toString() }
@@ -84,6 +109,12 @@ object PersistentCookieJar : CookieJar {
         } catch (_: Exception) { /* ignore */ }
     }
 
+    /**
+     * リクエストに付与すべき Cookie を返します。
+     *
+     * - 期限切れの永続 Cookie はこのタイミングで破棄し、Preferences を更新。
+     * - ドメインとパスのマッチング、`secure` 属性、hostOnly を考慮します。
+     */
     @Synchronized
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         ensureInitialized()
@@ -119,6 +150,9 @@ object PersistentCookieJar : CookieJar {
         return matchingCookies
     }
 
+    /**
+     * すべての Cookie（メモリと Preferences）を削除します。
+     */
     @Synchronized
     fun clearAllCookies() {
         ensureInitialized()
@@ -128,6 +162,11 @@ object PersistentCookieJar : CookieJar {
     }
 
     @Synchronized
+    /**
+     * 指定ホストに関連する Cookie を削除します。
+     *
+     * - 同一ドメイン、またはそのサブドメインに対応する保存領域を全て削除します。
+     */
     fun clearCookiesForHost(host: String) {
         ensureInitialized()
         val domainsToRemove = mutableListOf<String>()
@@ -150,6 +189,10 @@ object PersistentCookieJar : CookieJar {
         }
     }
 
+    /**
+     * メモリ上の永続 Cookie を `SharedPreferences` に保存します。
+     * 永続 Cookie が存在しないドメインのキーは削除します。
+     */
     private fun saveCookiesToPrefs() {
         val editor = sharedPreferences.edit()
         // remove keys which are no longer present or have no persistent cookies
@@ -171,6 +214,9 @@ object PersistentCookieJar : CookieJar {
         editor.apply()
     }
 
+    /**
+     * `SharedPreferences` から永続 Cookie を読み込み、期限切れは取り除きます。
+     */
     private fun loadCookiesFromPrefs() {
         cookieStore.clear()
         sharedPreferences.all.forEach { (key, value) ->
@@ -198,6 +244,10 @@ object PersistentCookieJar : CookieJar {
         }
     }
 
+    /**
+     * Cookie のドメインがリクエストホストに適合するかを判定します。
+     * hostOnly の場合は完全一致、それ以外はサブドメインも許可します。
+     */
     private fun domainMatches(cookieDomain: String, hostOnly: Boolean, requestHost: String): Boolean {
         val cd = normalizeDomain(cookieDomain)
         val rh = normalizeDomain(requestHost)
@@ -205,14 +255,24 @@ object PersistentCookieJar : CookieJar {
         return rh == cd || rh.endsWith(".$cd")
     }
     
+    /**
+     * 先頭のドットを除去してドメイン表記を正規化します。
+     */
     private fun normalizeDomain(domain: String): String {
         return domain.trimStart('.')
     }
 
+    /**
+     * Cookie のパス属性がリクエストパスに適合するかを判定します（前方一致）。
+     */
     private fun pathMatches(cookiePath: String, requestPath: String): Boolean {
         return requestPath.startsWith(cookiePath)
     }
 
+    /**
+     * `SharedPreferences` 保存用にシリアライズ可能な Cookie 表現。
+     * OkHttp の `Cookie` と相互変換します。
+     */
     private data class SerializableCookie(
         val name: String,
         val value: String,
@@ -224,6 +284,7 @@ object PersistentCookieJar : CookieJar {
         val persistent: Boolean,
         val hostOnly: Boolean
     ) {
+        /** OkHttp の `Cookie` に復元します。 */
         fun toOkHttpCookie(): Cookie {
             val builder = Cookie.Builder()
                 .name(name)
@@ -240,6 +301,7 @@ object PersistentCookieJar : CookieJar {
         }
 
         companion object {
+            /** OkHttp の `Cookie` からシリアライズ用の表現に変換します。 */
             fun fromOkHttpCookie(cookie: Cookie): SerializableCookie {
                 return SerializableCookie(
                     name = cookie.name,

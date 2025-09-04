@@ -57,10 +57,21 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import com.valoser.futaburakari.R
 
+/**
+ * 履歴の並び替えモード。
+ * - MIXED: 新着優先（未読や更新を加味した混在順）
+ * - UPDATED: 最終更新時刻順
+ * - VIEWED: 最終閲覧時刻順
+ * - UNREAD: 未読件数順
+ */
 enum class HistorySortMode { MIXED, UPDATED, VIEWED, UNREAD }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * 閲覧履歴の一覧画面。
+ * 未読のみ表示の切り替え、並び替え、全削除、スワイプによる削除（取り消し付き）を提供します。
+ */
 fun HistoryScreen(
     title: String,
     entries: List<HistoryEntry>,
@@ -73,9 +84,11 @@ fun HistoryScreen(
     onClickItem: (HistoryEntry) -> Unit,
     onDeleteItem: (HistoryEntry) -> Unit,
 ) {
+    // 右上のメニュー開閉状態
     var menuExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    // スワイプ削除の即時反映と取り消しのためのローカル表示用リスト
     var localEntries by remember(entries) { mutableStateOf(entries) }
     LaunchedEffect(entries) { localEntries = entries }
 
@@ -89,6 +102,7 @@ fun HistoryScreen(
                     }
                 },
                 actions = {
+                    // 未読のみのトグルとその他メニュー
                     IconButton(onClick = onToggleUnreadOnly) {
                         Icon(Icons.Default.FilterList, contentDescription = if (showUnreadOnly) "未読のみ（ON）" else "未読のみ（OFF）")
                     }
@@ -96,6 +110,7 @@ fun HistoryScreen(
                         Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        // メニュー: 全削除と並び替えモードの選択（選択状態の表示は持たない）
                         DropdownMenuItem(
                             text = { Text("履歴をすべて削除") },
                             onClick = { menuExpanded = false; onClearAll() },
@@ -127,6 +142,7 @@ fun HistoryScreen(
                 )
             )
         },
+        // スワイプ削除の取り消し操作を提示するスナックバー
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         if (localEntries.isEmpty()) {
@@ -145,8 +161,10 @@ fun HistoryScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
+                // 安定したキーとして `HistoryEntry.key` を使用
                 items(localEntries, key = { it.key }) { e ->
                     val dismissState = rememberSwipeToDismissBoxState(
+                        // スワイプ確定時にローカルから一時的に削除し、スナックバーで取り消し可能にする
                         confirmValueChange = { value ->
                             if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
                                 val original = localEntries
@@ -160,8 +178,10 @@ fun HistoryScreen(
                                             duration = SnackbarDuration.Short
                                         )
                                         if (res == SnackbarResult.ActionPerformed) {
+                                            // 取り消しが押された場合は元のリストを復元
                                             localEntries = original
                                         } else {
+                                            // 取り消されなければ実際に削除を確定
                                             onDeleteItem(e)
                                         }
                                     }
@@ -188,6 +208,10 @@ fun HistoryScreen(
 }
 
 @Composable
+/**
+ * 履歴の 1 行を表示する行コンポーザブル。
+ * サムネイル、タイトル、URL、時刻、未読バッジを表示し、タップで `onClick` を呼びます。
+ */
 private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
     Row(
         modifier = Modifier
@@ -200,6 +224,7 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             .clip(MaterialTheme.shapes.medium)
             .background(Color(0xFFBDBDBD))
 
+        // サムネイルが無い場合はプレースホルダーのボックスを表示
         if (entry.thumbnailUrl.isNullOrBlank()) {
             Box(thumbModifier)
         } else {
@@ -224,6 +249,7 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             )
         }
 
+        // 未読がある場合のみバッジを表示（1000 以上は "999+"）
         if (entry.unreadCount > 0) {
             Spacer(modifier = Modifier.size(8.dp))
             Surface(
@@ -244,6 +270,9 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
 }
 
 @Composable
+/**
+ * スワイプ削除時の背景コンテンツ。左右いずれの方向でも削除アイコンを表示します。
+ */
 private fun DismissBackground(state: androidx.compose.material3.SwipeToDismissBoxState) {
     val isStart = state.targetValue == SwipeToDismissBoxValue.StartToEnd
     val isEnd = state.targetValue == SwipeToDismissBoxValue.EndToStart
@@ -269,6 +298,10 @@ private fun DismissBackground(state: androidx.compose.material3.SwipeToDismissBo
     }
 }
 
+/**
+ * 行に表示する時刻テキストを組み立てる。
+ * アーカイブ > 未読ありの更新時刻 > 最終閲覧時刻 の優先順で表示。
+ */
 private fun buildTimeText(item: HistoryEntry): String {
     val df = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
     return if (item.isArchived && item.archivedAt > 0L) {
