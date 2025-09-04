@@ -47,6 +47,8 @@ import com.valoser.futaburakari.DetailContent
 import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.ui.detail.FastScroller
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
@@ -58,6 +60,9 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  * - Hosts docked search UI with debounced suggestions and a bottom search navigator overlay.
  * - Manages dialogs/sheets: ID menu, NG add flows, media grid sheet, and quote/No. reference sheet.
  * - Supports optional ad banner and reports its height for layout padding.
+ * - Heavy aggregations for ID/No./quote/back-reference are offloaded to background
+ *   coroutines (Dispatchers.Default) to avoid blocking the main thread; only results
+ *   are applied to Compose state.
  * - Note: Media sheet is handled internally; `onOpenMedia` is kept for compatibility.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -178,6 +183,8 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
+            // Scope for non-blocking UI interactions (heavy aggregations run off main thread)
+            val scope = rememberCoroutineScope()
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
             // Hoisted "そうだね" 表示カウント
             val sodaneCounts = remember { androidx.compose.runtime.mutableStateMapOf<String, Int>() }
@@ -244,12 +251,17 @@ fun DetailScreenScaffold(
                         searchQuery = searchQuery,
                         threadTitle = title,
                         onQuoteClick = { token ->
-                            // 引用先タップ時: 引用元（一致行を含むレス）と、そのレスを引用している投稿の両方を表示
-                            val list = buildQuoteAndBackrefItems(items, token, threadTitle = title)
-                            if (list.isNotEmpty()) {
-                                resRefItems = list
-                            } else {
-                                onQuoteClick?.invoke(token)
+                            // 重い集計はバックグラウンドで実行
+                            val snapshot = items
+                            scope.launch {
+                                val list = withContext(Dispatchers.Default) {
+                                    buildQuoteAndBackrefItems(snapshot, token, threadTitle = title)
+                                }
+                                if (list.isNotEmpty()) {
+                                    resRefItems = list
+                                } else {
+                                    onQuoteClick?.invoke(token)
+                                }
                             }
                         },
                         onSodaneClick = onSodaneClick,
@@ -258,12 +270,18 @@ fun DetailScreenScaffold(
                             if (resBody.isEmpty()) deleteTarget = resNum else onResNumClick?.invoke(resNum, resBody)
                         },
                         onResNumConfirmClick = { resNum ->
-                            val list = buildResReferencesItems(items, resNum)
-                            if (list.isNotEmpty()) {
-                                resRefItems = list
-                            } else {
-                                // fallback to original if needed
-                                onResNumConfirmClick?.invoke(resNum)
+                            // No.参照の集計は重いためバックグラウンドで実施し、完了後にシートへ反映
+                            val snapshot = items
+                            scope.launch {
+                                val list = withContext(Dispatchers.Default) {
+                                    buildResReferencesItems(snapshot, resNum)
+                                }
+                                if (list.isNotEmpty()) {
+                                    resRefItems = list
+                                } else {
+                                    // fallback to original if needed
+                                    onResNumConfirmClick?.invoke(resNum)
+                                }
                             }
                         },
                         onResNumDelClick = { resNum -> reportTarget = resNum },
@@ -271,11 +289,17 @@ fun DetailScreenScaffold(
                         onBodyClick = onBodyClick,
                         onAddNgFromBody = { body -> pendingNgBody = body },
                         onBodyShowBackRefs = { src ->
-                            val list = buildSelfAndBackrefItems(items, src)
-                            if (list.isNotEmpty()) {
-                                resRefItems = list
-                            } else {
-                                // fallback: 何もヒットしなければ何もしない（必要ならToastなど）
+                            // 本文タップの「被引用」探索も重いためバックグラウンドで実行
+                            val snapshot = items
+                            scope.launch {
+                                val list = withContext(Dispatchers.Default) {
+                                    buildSelfAndBackrefItems(snapshot, src)
+                                }
+                                if (list.isNotEmpty()) {
+                                    resRefItems = list
+                                } else {
+                                    // fallback: 何もヒットしなければ何もしない（必要ならToastなど）
+                                }
                             }
                         },
                         getSodaneState = getSodaneState,
@@ -356,10 +380,16 @@ fun DetailScreenScaffold(
                     confirmButton = {
                         Row {
                             androidx.compose.material3.TextButton(onClick = {
-                                // 同一IDの投稿一覧を作成し、シートを開く
-                                val list = buildIdPostsItems(items, idTarget)
-                                idMenuTarget = null
-                                idSheetItems = list
+                                // 同一IDの投稿一覧をバックグラウンドで作成し、完了後にシートを開く（UIをブロックしない）
+                                val snapshot = items
+                                val target = idTarget
+                                scope.launch {
+                                    val list = withContext(Dispatchers.Default) {
+                                        buildIdPostsItems(snapshot, target)
+                                    }
+                                    idMenuTarget = null
+                                    idSheetItems = list
+                                }
                             }) { Text("同一IDの投稿") }
                             androidx.compose.material3.TextButton(onClick = {
                                 pendingNgId = idTarget
@@ -477,6 +507,8 @@ fun DetailScreenScaffold(
             }
 
             // 引用/No.参照一覧のシート（Compose）
+            // If aggregation results are present, show them in a bottom sheet.
+            // All heavy work has already completed by the time this renders.
             val refItems = resRefItems
             if (refItems != null) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
@@ -511,6 +543,7 @@ fun DetailScreenScaffold(
             // メディア一覧（Compose ModalBottomSheet）
             if (openMediaSheet) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                // Local scope for sheet interactions (e.g., scroll to parent on item click)
                 val scope = rememberCoroutineScope()
                 androidx.compose.material3.ModalBottomSheet(
                     onDismissRequest = { openMediaSheet = false },
