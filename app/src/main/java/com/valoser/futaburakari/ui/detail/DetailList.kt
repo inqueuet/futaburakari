@@ -7,13 +7,14 @@ package com.valoser.futaburakari.ui.detail
  * - 表示要素は `DetailContent` の列（Text / Image / Video / ThreadEndTime）。
  * - ブロック構造: 1つの Text に続く Image/Video を同一ブロックとして扱い、ブロック末尾のみ区切り線を描画。
  * - 検索: `searchQuery` にマッチする要素のインデックスを算出し、`onProvideSearchNavigator` で Prev/Next 関数を渡す。
- * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> or ＞)、`ID:xxxx`、URL、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
+ * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> or ＞)、`ID:xxxx`、URL、ファイル名（xxx.jpg 等）、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
  *   - そうだねは引用行を除外し、同じ行に `No.` が含まれる場合のみ有効。
  *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
  * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
  * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
  * - 画像/動画の直下に表示するプロンプト文は選択コピー可能（SelectionContainer）。
  * - 画像/動画のタップでメディアビューへ遷移（拡大/動画再生、コピー/保存機能はメディア側で提供）。
+ * - 画像/動画の直下にファイル名があれば表示し、タップでファイル名参照の集計シートを開く。
  * - プロンプト文はHTML→プレーン化して表示（リンク検出や装飾は行わない）。
  */
 import androidx.compose.foundation.layout.fillMaxSize
@@ -68,7 +69,7 @@ import androidx.compose.foundation.layout.Column
 fun DetailListCompose(
     items: List<DetailContent>,
     searchQuery: String?,
-    // Callbacks — mirror DetailAdapter listeners
+    // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
     onThreadEndTimeClick: (() -> Unit)? = null,
@@ -80,7 +81,9 @@ fun DetailListCompose(
     onAddNgFromBody: ((String) -> Unit)? = null,
     // 本文タップで引用元（このレスを引用している投稿）を表示
     onBodyShowBackRefs: ((DetailContent.Text) -> Unit)? = null,
-    // Free text search when clicking body (non-quote areas)
+    // ファイル名クリックで引用まとめ
+    onFileNameClick: ((String) -> Unit)? = null,
+    // "そうだね" 済みかの状態問い合わせ（重複押下の抑止用）
     getSodaneState: ((String) -> Boolean)? = null,
     onImageLoaded: (() -> Unit)? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
@@ -91,7 +94,7 @@ fun DetailListCompose(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Compose側で検索Prev/Nextナビを提供するためのコールバック
     onProvideSearchNavigator: (((() -> Unit), (() -> Unit)) -> Unit)? = null,
-    // Hoisted "そうだね" 表示カウント（resNum -> count）
+    // 上位で保持する "そうだね" 表示カウント（resNum -> count）
     sodaneCounts: Map<String, Int> = emptyMap(),
     onSetSodaneCount: ((String, Int) -> Unit)? = null,
     // スレタイトル（タイトル行を引用扱いにするためのヒント）
@@ -99,9 +102,9 @@ fun DetailListCompose(
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    // Callbacks are passed directly; no legacy adapter dependency
+    // コールバックは直接受け渡し（レガシーなアダプタ依存は無し）
 
-    // Dialog state for No. actions
+    // No. アクション用ダイアログの状態
     var resNumForDialog by remember { mutableStateOf<String?>(null) }
     // "そうだね" 表示カウントは親から受け取る
 
@@ -156,7 +159,7 @@ fun DetailListCompose(
         )
     }
 
-    // Report max visible ordinal (50%以上見えているText単位の最大序数)
+    // 最大既読序数の通知（50%以上見えている Text 単位の最大序数）
     LaunchedEffect(items, internalState) {
         snapshotFlow { internalState.layoutInfo }
             .map { info ->
@@ -204,12 +207,12 @@ fun DetailListCompose(
                     val selfResNum = remember(plain) {
                         Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)
                     }
-                    // Recompute when optimistic overrides change by keying on a snapshot of entries
+                    // 楽観表示の変更に追随するよう、エントリのスナップショットをキーに再計算
                     // 表示用にトークン周りの空白を補正し、そうだねの楽観カウントを適用
                     val displayText = remember(plain, sodaneCounts.toList()) {
                         applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts)
                     }
-                    // クリック可能領域（No./引用/ID/URL/そうだね/検索ハイライト）を付与
+                    // クリック可能領域（No./引用/ID/URL/ファイル名/そうだね/検索ハイライト）を付与
                     val annotated = remember(displayText, searchQuery, threadTitle) { buildAnnotatedFromText(displayText, searchQuery, threadTitle) }
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
@@ -225,6 +228,7 @@ fun DetailListCompose(
                         ClickableText(text = annotated, onClick = { offset ->
                             val tags = annotated.getStringAnnotations(start = offset, end = offset)
                             val res = tags.firstOrNull { it.tag == "res" }?.item
+                            val filename = tags.firstOrNull { it.tag == "filename" }?.item
                             val quote = tags.firstOrNull { it.tag == "quote" }?.item
                             val id = tags.firstOrNull { it.tag == "id" }?.item
                             val url = tags.firstOrNull { it.tag == "url" }?.item
@@ -232,6 +236,8 @@ fun DetailListCompose(
                             when {
                                 // No. タップで「引用元（このレスを引用している投稿）」の一覧シートを直接表示
                                 res != null -> onResNumConfirmClick?.invoke(res)
+                                // 引用行内にファイル名が存在する場合はファイル名集計を優先
+                                filename != null -> onFileNameClick?.invoke(filename)
                                 quote != null -> onQuoteClick?.invoke(quote)
                                 id != null -> onIdClick?.invoke(id)
                                 url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
@@ -256,7 +262,7 @@ fun DetailListCompose(
                                 }
                             }
                             // 本文（いずれのタグにも該当しない領域）タップで、当該レスを引用している投稿一覧を表示
-                            if (res == null && quote == null && id == null && url == null && sodane == null) {
+                            if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
                                 onBodyShowBackRefs?.invoke(item)
                             }
                         })
@@ -303,6 +309,18 @@ fun DetailListCompose(
                                 )
                             }
                         }
+                        // ファイル名（表示してクリック可能に）
+                        val fn = item.fileName
+                        if (!fn.isNullOrBlank()) {
+                            androidx.compose.material3.Text(
+                                text = fn,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall.copy(textDecoration = TextDecoration.Underline),
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                                    .clickable { onFileNameClick?.invoke(fn) }
+                            )
+                        }
                     }
                 }
 
@@ -324,6 +342,18 @@ fun DetailListCompose(
                             contentScale = ContentScale.Fit,
                             onSuccess = { onImageLoaded?.invoke() }
                         )
+                        // ファイル名（表示してクリック可能に）
+                        val vfn = item.fileName
+                        if (!vfn.isNullOrBlank()) {
+                            androidx.compose.material3.Text(
+                                text = vfn,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall.copy(textDecoration = TextDecoration.Underline),
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                                    .clickable { onFileNameClick?.invoke(vfn) }
+                            )
+                        }
                         // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
                         val promptPlain = run {
                             val raw = item.prompt
@@ -421,7 +451,7 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
 }
 
 // 本文用の AnnotatedString を構築。
-// - クリック可能: No.xxxx, 引用行(> または 全角＞), スレタイ行, ID:xxxx, URL, そうだねトークン。
+// - クリック可能: No.xxxx, 引用行(> または 全角＞), スレタイ行, ID:xxxx, URL, ファイル名（xxx.jpg 等）, そうだねトークン。
 // - 検索語は背景色でハイライト。
 private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle: String?): AnnotatedString = buildAnnotatedString {
     append(text)
@@ -489,6 +519,15 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
         addStringAnnotation("url", m.value, m.range.first, m.range.last + 1)
     }
+    // ファイル名トークン（拡張子を含むものを検出しクリック可能に）
+    run {
+        val ext = "(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)"
+        val pat = Regex("""(?i)([A-Za-z0-9._-]+\.$ext)""")
+        pat.findAll(text).forEach { m ->
+            addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+            addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
+        }
+    }
     // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行(>)を除き、No.を含む行を対象にする
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
     var start = 0
@@ -516,14 +555,14 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
 // No. を含む非引用行の末尾に そうだね トークンが存在しない場合は付与する。
 private fun padTokensForSpacing(src: String): String {
     var t = src.replace("\u200B", "")
-    // Ensure a space between ID:xxxx and No.xxxx regardless of order
+    // ID:xxxx と No.xxxx の間に順不同で必ず空白を入れる
     t = Regex("(ID[:：][\\w./+]+)\\s*(?=No\\.)").replace(t, "$1 ")
     t = Regex("(No\\.\\d+)\\s*(?=ID[:：])").replace(t, "$1 ")
-    // Space between No.xxxx and plus/そうだね tokens
+    // No.xxxx と +/そうだね トークンの間に空白を入れる
     t = Regex("(No\\.\\d+)(?=(?:[+＋]|そうだね))").replace(t, "$1 ")
-    // Normalize multiple spaces
+    // 複数の空白を1つに正規化
     t = Regex("[ ]{2,}").replace(t, " ")
-    // Ensure a そうだね token exists at end of lines that contain No. (本文や引用行は対象外)
+    // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（本文や引用行は対象外）
     val sb = StringBuilder()
     var start = 0
     while (start < t.length) {

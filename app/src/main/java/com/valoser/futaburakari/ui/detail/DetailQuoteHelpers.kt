@@ -5,16 +5,23 @@ import com.valoser.futaburakari.DetailContent
 import java.text.Normalizer
 
 /**
- * Build items that reference the given res number.
- * - Normalizes plain text (removes ZWSP, converts full‑width space and ＞/≫ to '>', applies NFKC).
- * - A hit is any Text whose plain body contains:
- *   - case‑insensitive "No. <num>", or
- *   - a quote line starting with '>' optionally containing "No. <num>", or
- *   - the bare number not adjacent to other digits.
- * - For each hit, includes the Text row and any immediately following Image/Video
- *   until the next Text or ThreadEndTime.
- * - De‑duplicates by the first item's id, sorts groups by extracted `No.<n>` ascending
- *   when available, then flattens.
+ * 引用/参照の集計ヘルパ関数群。
+ *
+ * 提供機能:
+ * - No.参照（`buildResReferencesItems`）
+ * - 本文内容を引用した被引用の探索（`buildBackReferencesByContent`）
+ * - 引用元（自身）＋被引用の結合（`buildSelfAndBackrefItems`）
+ * - フリーテキスト検索（`buildTextSearchItems`）
+ * - ファイル名参照（`buildFilenameReferencesItems`）
+ */
+/**
+ * No.（投稿番号）参照の一覧を構築します。
+ * - 本文プレーンテキストを正規化（ZWSP除去、全角空白/＞/≫→半角、NFKC）し、以下のいずれかに該当する Text をヒットとみなします:
+ *   - 大文字小文字無視で「No. <num>」を含む
+ *   - 行頭または本文中の引用（'>'）に「No. <num>」が含まれる
+ *   - 数字の前後が他の数字でない素の <num>
+ * - ヒットごとに Text 行と直後の Image/Video を次の Text/ThreadEndTime までまとめます。
+ * - 先頭要素の id で重複排除し、可能なら抽出した No. 昇順でグループを並べ替えてからフラット化します。
  */
 internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): List<DetailContent> {
     if (resNum.isBlank()) return emptyList()
@@ -70,19 +77,12 @@ internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): 
 }
 
 /**
- * Build items that quote the given source Text's body content.
- * - Candidates are derived from the source's plain lines after normalization, excluding
- *   header‑like lines such as "No." and "ID:", and requiring length ≥ 2. `extraCandidates`
- *   are normalized and added to this set.
- * - A post matches if any quote line (leading '>' removed, regardless of nesting level)
- *   is exactly equal to a candidate. When `extraCandidates` is non‑empty, exact matches
- *   in non‑quote plain lines are also allowed.
- * - Normalization removes ZWSP, converts full‑width space and ＞/≫ to '>', applies NFKC,
- *   collapses consecutive whitespace, and trims.
- * - For each match, includes the Text row and any immediately following Image/Video
- *   until the next Text or ThreadEndTime.
- * - De‑duplicates by the first item's id, sorts groups by extracted `No.<n>` ascending
- *   when available, then flattens.
+ * 指定した Text の本文を引用している投稿（被引用）を集計します。
+ * - ソース本文（正規化後）の行から候補文を抽出（「No.」「ID:」などのヘッダ風は除外、長さ>=2）。`extraCandidates` があれば同様に正規化の上で追加。
+ * - 任意の引用行（先頭の '>' は段数無視で剥がす）が候補文に完全一致する投稿をヒットとする。
+ *   `extraCandidates` が空でない場合は、非引用行の完全一致も許容。
+ * - 正規化は ZWSP 除去、全角空白/＞/≫→半角、NFKC、連続空白の圧縮、trim を行う。
+ * - ヒットごとに Text 行と直後の Image/Video を次の Text/ThreadEndTime までまとめ、No. 昇順で整列のうえフラット化。
  */
 internal fun buildBackReferencesByContent(
     all: List<DetailContent>,
@@ -94,7 +94,7 @@ internal fun buildBackReferencesByContent(
         Normalizer.Form.NFKC
     ).replace(Regex("\\s+"), " ").trim()
 
-    // Extract candidate lines from source body (non-empty, not header-like, length >= 4)
+    // ソース本文から候補行を抽出（空でない/ヘッダ風でない/長さ>=2）
     val srcPlain = Html.fromHtml(source.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
     val candidates: Set<String> = srcPlain.lines()
         .map { normalize(it) }
@@ -106,7 +106,7 @@ internal fun buildBackReferencesByContent(
         }
     if (candidates.isEmpty()) return emptyList()
 
-    // Find posts that contain a quote line exactly equal to any candidate
+    // 候補と完全一致する引用行を含む投稿を抽出
     val hitIndexes = all.withIndex().filter { (idx, c) ->
         if (c !is DetailContent.Text) return@filter false
         if (c.id == source.id) return@filter false
@@ -118,7 +118,7 @@ internal fun buildBackReferencesByContent(
             .toSet()
         if (quoteLines.any { it in candidates }) return@filter true
 
-        // If extraCandidates are present, also allow exact matches in plain body lines
+        // extraCandidates がある場合は、プレーン本文行での完全一致も許容
         if (extraCandidates.isNotEmpty()) {
             val plainLines = plain.lines().map { normalize(it) }.filter { it.isNotBlank() }
             if (plainLines.any { it in candidates }) {
@@ -160,10 +160,9 @@ internal fun buildBackReferencesByContent(
 }
 
 /**
- * Combine the source Text (and its following media) with all posts that quote it (and their media).
- * - Builds the source group (Text + following media), then appends groups from
- *   `buildBackReferencesByContent`.
- * - De‑duplicates by the first item's id and flattens while keeping unique items by id.
+ * ソース本文（自身の Text + 直下メディア）と、その被引用の一覧を結合して返します。
+ * - まずソース自身のグループを作成し、続いて `buildBackReferencesByContent` の結果グループを連結。
+ * - グループ先頭 id で重複排除し、アイテム単位でも id で一意化しつつフラット化します。
  */
 internal fun buildSelfAndBackrefItems(
     all: List<DetailContent>,
@@ -186,7 +185,7 @@ internal fun buildSelfAndBackrefItems(
         }
         groups += g
     }
-    // Append back-references
+    // 被引用のグループを後ろに連結
     val back = buildBackReferencesByContent(all, source, extraCandidates = extraCandidates)
     if (back.isNotEmpty()) {
         var k = 0
@@ -202,7 +201,7 @@ internal fun buildSelfAndBackrefItems(
             groups += g
         }
     }
-    // Deduplicate by first id and flatten while keeping item-level uniqueness
+    // 先頭 id でグループ重複を除去し、要素単位でも id で一意化しつつフラット化
     val uniqueGroups = groups.distinctBy { it.firstOrNull()?.id }
     val flat = uniqueGroups.flatten()
     val seen = HashSet<String>()
@@ -212,12 +211,9 @@ internal fun buildSelfAndBackrefItems(
 }
 
 /**
- * Build items whose normalized plain text contains the given free‑text query (case‑insensitive).
- * - Normalizes plain text (removes ZWSP, converts full‑width space and ＞/≫ to '>', applies NFKC).
- * - For each hit, includes the Text row and any immediately following Image/Video
- *   until the next Text or ThreadEndTime.
- * - De‑duplicates by the first item's id, sorts groups by extracted `No.<n>` ascending
- *   (handles ASCII and full‑width variants), then flattens.
+ * フリーテキスト（大文字小文字無視）で本文を検索して一致した投稿を返します。
+ * - 本文は正規化（ZWSP 除去、全角空白/＞/≫→半角、NFKC）。
+ * - ヒット単位で Text 行＋直後のメディアをまとめ、No. 昇順で整列後にフラット化します。
  */
 internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List<DetailContent> {
     val q = query.trim()
@@ -239,6 +235,109 @@ internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List
 
     val groups = mutableListOf<List<DetailContent>>()
     for (i in hitIndexes) {
+        val group = mutableListOf<DetailContent>()
+        group += all[i]
+        var j = i + 1
+        while (j < all.size) {
+            when (val c = all[j]) {
+                is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
+                is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+            }
+        }
+        groups += group
+    }
+
+    fun extractResNo(c: DetailContent): Int? = when (c) {
+        is DetailContent.Text -> {
+            val plain = android.text.Html.fromHtml(c.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+            Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
+                .find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        }
+        else -> null
+    }
+
+    return groups
+        .distinctBy { it.firstOrNull()?.id }
+        .sortedWith(compareBy<List<DetailContent>> { grp -> extractResNo(grp.firstOrNull() ?: return@compareBy Int.MAX_VALUE) ?: Int.MAX_VALUE })
+        .flatten()
+}
+
+/**
+ * ファイル名に関連する投稿を集計します。
+ *
+ * 集計対象:
+ * - ソース投稿: 指定ファイル名（大文字小文字無視、URL末尾セグメントに正規化）と一致する Image/Video を直後に持つ Text。
+ * - 参照投稿: 本文（正規化後）にファイル名を含む、または引用行のコアがファイル名に一致/部分一致する Text。
+ *
+ * いずれも Text 行と直後の Image/Video を次の Text/ThreadEndTime までまとめ、
+ * 先頭 id で重複排除してから、可能なら No. 昇順に並べ替えてフラット化します。
+ * URL のクエリ/フラグメントは無視し、末尾セグメントで比較します。
+ */
+internal fun buildFilenameReferencesItems(all: List<DetailContent>, fileName: String): List<DetailContent> {
+    val needle = fileName.trim()
+    if (needle.isEmpty()) return emptyList()
+
+    fun normalize(s: String): String = java.text.Normalizer.normalize(
+        s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
+        java.text.Normalizer.Form.NFKC
+    ).trim()
+
+    fun plainOf(t: DetailContent.Text): String =
+        android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+
+    fun parentTextIndex(from: Int): Int {
+        var i = from
+        while (i >= 0) {
+            if (all[i] is DetailContent.Text) return i
+            i--
+        }
+        return -1
+    }
+
+    fun lastSegmentNoQuery(s: String?): String? = s?.substringAfterLast('/')?.substringBefore('?')?.substringBefore('#')
+    val normalizedNeedle = lastSegmentNoQuery(needle) ?: needle
+    val lower = normalizedNeedle.lowercase()
+
+    // 1) Source groups: media items whose filename or URL suffix matches
+    val sourceTextIdx = all.withIndex().mapNotNull { (i, c) ->
+        when (c) {
+            is DetailContent.Image -> {
+                val fn = lastSegmentNoQuery(c.fileName)
+                val urlSeg = lastSegmentNoQuery(c.imageUrl)
+                val hit = (fn != null && fn.equals(normalizedNeedle, ignoreCase = true)) || (urlSeg != null && urlSeg.equals(normalizedNeedle, ignoreCase = true))
+                if (hit) parentTextIndex(i).takeIf { it >= 0 } else null
+            }
+            is DetailContent.Video -> {
+                val fn = lastSegmentNoQuery(c.fileName)
+                val urlSeg = lastSegmentNoQuery(c.videoUrl)
+                val hit = (fn != null && fn.equals(normalizedNeedle, ignoreCase = true)) || (urlSeg != null && urlSeg.equals(normalizedNeedle, ignoreCase = true))
+                if (hit) parentTextIndex(i).takeIf { it >= 0 } else null
+            }
+            else -> null
+        }
+    }.toMutableSet()
+
+    // 2) Reference posts: text that mentions the filename (in body or as quote-line)
+    val refTextIdx = all.withIndex().mapNotNull { (i, c) ->
+        if (c !is DetailContent.Text) return@mapNotNull null
+        val plain = plainOf(c)
+        val hasInBody = plain.contains(normalizedNeedle, ignoreCase = true)
+        val hasInQuote = plain.lines().any { line ->
+            val trimmed = line.trim()
+            if (!trimmed.startsWith(">")) return@any false
+            val core = trimmed.replaceFirst(Regex("^>+"), "").trim()
+            val norm = normalize(core)
+            norm.equals(normalizedNeedle, ignoreCase = true) || norm.contains(lower, ignoreCase = true)
+        }
+        if (hasInBody || hasInQuote) i else null
+    }.toSet()
+
+    val allTextIdx = (sourceTextIdx + refTextIdx).toMutableSet()
+    if (allTextIdx.isEmpty()) return emptyList()
+
+    // Build groups from each text index
+    val groups = mutableListOf<List<DetailContent>>()
+    for (i in allTextIdx) {
         val group = mutableListOf<DetailContent>()
         group += all[i]
         var j = i + 1

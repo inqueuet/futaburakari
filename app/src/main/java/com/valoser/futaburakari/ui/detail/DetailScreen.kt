@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -59,9 +60,9 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  *
  * - リスト表示: 高速スクロール、スワイプ更新、末尾付近到達での追加読み込みトリガーに対応。
  * - 検索UI: ドック型の検索バー（遅延サジェスト）と、下部のPrev/Nextナビをホスト。
- * - ダイアログ/シート: IDメニュー、NG追加、メディアグリッド、引用/No.参照などを管理。
+ * - ダイアログ/シート: IDメニュー、NG追加、メディアグリッド、引用/No./ファイル名参照などを管理。
  * - 広告: バナーの高さを下部インセットとして反映（Composeに状態を供給）。
- * - 集計負荷: ID/No./引用/被引用の集計は `Dispatchers.Default` で実行し、結果のみをCompose状態に反映。
+ * - 集計負荷: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみをCompose状態に反映。
  * - メディア: メディアシートは内部で扱い、`onOpenMedia` は後方互換用のダミーとして保持。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -122,7 +123,7 @@ fun DetailScreenScaffold(
         { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
     }
 
-    // Hoisted UI states for dialogs/sheets so both topBar and content can access
+    // ダイアログ/シート用のUI状態を上位（topBar/本文の両方）で共有できるように保持
     var titleClickPending by remember { mutableStateOf(false) }
     var openMediaSheet by remember { mutableStateOf(false) }
             var idMenuTarget by remember { mutableStateOf<String?>(null) }
@@ -162,7 +163,7 @@ fun DetailScreenScaffold(
                     IconButton(onClick = onOpenNg) {
                         Icon(Icons.Filled.Block, contentDescription = "NG Manage")
                     }
-                    // Prefer a Compose-driven media sheet; keep the callback param available for compatibility
+                    // メディア一覧はComposeのシートで内製。互換のためコールバック引数は保持
                     IconButton(onClick = { openMediaSheet = true }) {
                         Icon(Icons.Filled.Image, contentDescription = "Media List")
                     }
@@ -182,7 +183,7 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
-            // Scope for non-blocking UI interactions (heavy aggregations run off main thread)
+            // UIをブロックしないためのスコープ（重い集計はメインスレッド外で実行）
             val scope = rememberCoroutineScope()
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
             // Hoisted "そうだね" 表示カウント
@@ -192,10 +193,10 @@ fun DetailScreenScaffold(
                     flow.collect { (rn, count) -> sodaneCounts[rn] = count }
                 }
             }
-            // Hoist items/listState so they are visible to dialogs/sheets below
+            // 下のダイアログ/シートからも参照できるよう items/listState を上位に保持
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
-            // Share list state between list and fast scroller
+            // リストと高速スクロールで同じ listState を共有
             val listState = rememberLazyListState(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
                 initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
@@ -208,7 +209,7 @@ fun DetailScreenScaffold(
                 val refreshing = isRefreshingFlow?.collectAsStateWithLifecycle(false)?.value ?: false
                 val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
                 var fastScrollActive by remember { mutableStateOf(false) }
-                // Bottom padding: legacy Flow があれば使用。無ければ広告高さから算出
+                // 下部余白: 既存の Flow があればそれを優先。無ければ広告の実測高さから算出
                 val legacyPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value
                 var adPx by remember { mutableStateOf(0) }
                 val bottomPx = legacyPx ?: adPx
@@ -216,14 +217,14 @@ fun DetailScreenScaffold(
                 var deleteTarget by remember { mutableStateOf<String?>(null) }
 
                 // 無限スクロール検知：末尾のコンテンツ(Text/Image/Video)近辺に到達したら通知
-                // 同一サイズのitemsに対しては1回だけ発火する（重複抑止）
+                // 同一サイズの items に対しては1回だけ発火（重複抑止）
                 var lastTriggeredSize by remember { mutableStateOf(-1) }
                 LaunchedEffect(items, refreshing, fastScrollActive) {
                     if (refreshing || fastScrollActive) return@LaunchedEffect
                     val li = listState.layoutInfo
                     val lastVisible = li.visibleItemsInfo.lastOrNull()?.index ?: -1
                     if (lastVisible < 0) return@LaunchedEffect
-                    // 実質末尾（ThreadEndTimeを除く）
+                    // 実質末尾（ThreadEndTime を除く）
                     val lastContentIndex = run {
                         var idx = -1
                         for (i in items.indices.reversed()) {
@@ -250,11 +251,14 @@ fun DetailScreenScaffold(
                         searchQuery = searchQuery,
                         threadTitle = title,
                         onQuoteClick = { token ->
-                            // 重い集計はバックグラウンドで実行
+                            // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先
                             val snapshot = items
+                            val core = token.trimStart().dropWhile { it == '>' || it == '＞' }.trim()
+                            val isFilename = Regex("""(?i)^[A-Za-z0-9._-]+\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)$""").matches(core)
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    buildQuoteAndBackrefItems(snapshot, token, threadTitle = title)
+                                    if (isFilename) buildFilenameReferencesItems(snapshot, core)
+                                    else buildQuoteAndBackrefItems(snapshot, token, threadTitle = title)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -269,7 +273,7 @@ fun DetailScreenScaffold(
                             if (resBody.isEmpty()) deleteTarget = resNum else onResNumClick?.invoke(resNum, resBody)
                         },
                         onResNumConfirmClick = { resNum ->
-                            // No.参照の集計は重いためバックグラウンドで実施し、完了後にシートへ反映
+                            // No. 参照の集計は重いためバックグラウンドで実施し、完了後にシートへ反映
                             val snapshot = items
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
@@ -278,7 +282,7 @@ fun DetailScreenScaffold(
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
                                 } else {
-                                    // fallback to original if needed
+                                    // フォールバック（必要なら従来の処理へ委譲）
                                     onResNumConfirmClick?.invoke(resNum)
                                 }
                             }
@@ -287,6 +291,18 @@ fun DetailScreenScaffold(
                         onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
                         onAddNgFromBody = { body -> pendingNgBody = body },
+                        // ファイル名参照の集計もバックグラウンドで実施し、完了後にシートへ反映
+                        onFileNameClick = { fn ->
+                            val snapshot = items
+                            scope.launch {
+                                val list = withContext(Dispatchers.Default) {
+                                    buildFilenameReferencesItems(snapshot, fn)
+                                }
+                                if (list.isNotEmpty()) {
+                                    resRefItems = list
+                                }
+                            }
+                        },
                         onBodyShowBackRefs = { src ->
                             // 本文タップの「被引用」探索も重いためバックグラウンドで実行
                             val snapshot = items
@@ -297,7 +313,7 @@ fun DetailScreenScaffold(
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
                                 } else {
-                                    // fallback: 何もヒットしなければ何もしない（必要ならToastなど）
+                                    // フォールバック: 何もヒットしなければ何もしない（必要ならToastなど）
                                 }
                             }
                         },
@@ -317,7 +333,7 @@ fun DetailScreenScaffold(
                         }
                     )
                 }
-                // Delete confirmation (Compose)
+                // 削除確認（Compose）
                 val pendingDelete = deleteTarget
                 if (pendingDelete != null) {
                     androidx.compose.material3.AlertDialog(
@@ -341,7 +357,7 @@ fun DetailScreenScaffold(
                         }
                     )
                 }
-                // Compose FastScroller overlay (right edge)
+                // 高速スクロール（右端オーバーレイ）
                 FastScroller(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
@@ -366,10 +382,10 @@ fun DetailScreenScaffold(
                         onBottomPaddingChange?.invoke(0)
                     }
                 }
-                // Accompanist SwipeRefresh draws its own indicator inside SwipeRefresh
+                // Accompanist SwipeRefresh は自身でインジケータを描画する
             }
 
-            // IDメニュー（Composeダイアログ）
+            // ID メニュー（Composeダイアログ）
             val idTarget = idMenuTarget
             if (idTarget != null) {
                 androidx.compose.material3.AlertDialog(
@@ -379,7 +395,7 @@ fun DetailScreenScaffold(
                     confirmButton = {
                         Row {
                             androidx.compose.material3.TextButton(onClick = {
-                                // 同一IDの投稿一覧をバックグラウンドで作成し、完了後にシートを開く（UIをブロックしない）
+                                // 同一IDの投稿一覧をバックグラウンドで作成し、完了後にシートを開く（UIブロックを避ける）
                                 val snapshot = items
                                 val target = idTarget
                                 scope.launch {
@@ -483,31 +499,34 @@ fun DetailScreenScaffold(
                     onDismissRequest = { idSheetItems = null },
                     sheetState = sheetState
                 ) {
-                    DetailListCompose(
-                        items = idItems,
-                        searchQuery = null,
-                        onQuoteClick = onQuoteClick,
-                        onSodaneClick = null,
-                        onThreadEndTimeClick = null,
-                        onResNumClick = null,
-                        onResNumConfirmClick = null,
-                        onResNumDelClick = null,
-                        onIdClick = null,
-                        onBodyClick = null,
-                        onAddNgFromBody = null,
-                        getSodaneState = { false },
-                        sodaneCounts = emptyMap(),
-                        onSetSodaneCount = null,
-                        onImageLoaded = onImageLoaded,
-                        onVisibleMaxOrdinal = null,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                    )
+                    val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+                    val maxHeight = with(LocalDensity.current) { (screenHeight * 0.9f).dp }
+                    androidx.compose.foundation.layout.Box(modifier = Modifier.heightIn(max = maxHeight)) {
+                        DetailListCompose(
+                            items = idItems,
+                            searchQuery = null,
+                            onQuoteClick = onQuoteClick,
+                            onSodaneClick = null,
+                            onThreadEndTimeClick = null,
+                            onResNumClick = null,
+                            onResNumConfirmClick = null,
+                            onResNumDelClick = null,
+                            onIdClick = null,
+                            onBodyClick = null,
+                            onAddNgFromBody = null,
+                            getSodaneState = { false },
+                            sodaneCounts = emptyMap(),
+                            onSetSodaneCount = null,
+                            onImageLoaded = onImageLoaded,
+                            onVisibleMaxOrdinal = null,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                        )
+                    }
                 }
             }
 
-            // 引用/No.参照一覧のシート（Compose）
-            // If aggregation results are present, show them in a bottom sheet.
-            // All heavy work has already completed by the time this renders.
+            // 引用/No./ファイル名参照の一覧シート（Compose）
+            // 集計結果があればボトムシートで表示（描画時点では重い処理は完了済み）
             val refItems = resRefItems
             if (refItems != null) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
@@ -515,40 +534,44 @@ fun DetailScreenScaffold(
                     onDismissRequest = { resRefItems = null },
                     sheetState = sheetState
                 ) {
-                    DetailListCompose(
-                        items = refItems,
-                        searchQuery = null,
-                        onQuoteClick = onQuoteClick,
-                        onSodaneClick = null,
-                        onThreadEndTimeClick = null,
-                        onResNumClick = null,
-                        onResNumConfirmClick = null,
-                        onResNumDelClick = null,
-                        onIdClick = null,
-                        onBodyClick = null,
-                        onAddNgFromBody = null,
-                        getSodaneState = { false },
-                        sodaneCounts = emptyMap(),
-                        onSetSodaneCount = null,
-                        onImageLoaded = onImageLoaded,
-                        onVisibleMaxOrdinal = null,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                    )
+                    val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+                    val maxHeight = with(LocalDensity.current) { (screenHeight * 0.9f).dp }
+                    androidx.compose.foundation.layout.Box(modifier = Modifier.heightIn(max = maxHeight)) {
+                        DetailListCompose(
+                            items = refItems,
+                            searchQuery = null,
+                            onQuoteClick = onQuoteClick,
+                            onSodaneClick = null,
+                            onThreadEndTimeClick = null,
+                            onResNumClick = null,
+                            onResNumConfirmClick = null,
+                            onResNumDelClick = null,
+                            onIdClick = null,
+                            onBodyClick = null,
+                            onAddNgFromBody = null,
+                            getSodaneState = { false },
+                            sodaneCounts = emptyMap(),
+                            onSetSodaneCount = null,
+                            onImageLoaded = onImageLoaded,
+                            onVisibleMaxOrdinal = null,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                        )
+                    }
                 }
             }
 
-            // Helpers are defined at file bottom as top-level functions
+            // 本ファイル末尾に補助的なトップレベル関数を定義
 
             // メディア一覧（Compose ModalBottomSheet）
             if (openMediaSheet) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
-                // Local scope for sheet interactions (e.g., scroll to parent on item click)
+                // シート内の操作用のローカルスコープ（例: クリックで親リストへスクロール）
                 val scope = rememberCoroutineScope()
                 androidx.compose.material3.ModalBottomSheet(
                     onDismissRequest = { openMediaSheet = false },
                     sheetState = sheetState
                 ) {
-                    // Compose純正のグリッドで表示
+                    // Compose 標準のグリッドで表示
                     val images = remember(items) {
                         data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
                         fun findParentTextPosition(from: Int): Int {
@@ -587,7 +610,7 @@ fun DetailScreenScaffold(
                 }
             }
 
-            // Compose検索バー（DockedSearchBar）: 虫眼鏡で表示/非表示をトグル
+            // 検索バー（DockedSearchBar）: 虫眼鏡で表示/非表示をトグル
             if (searchActive) {
                 DockedSearchBar(
                     modifier = Modifier
@@ -704,7 +727,7 @@ fun DetailScreenScaffold(
                             .padding(bottom = bottomDp),
                         current = s.currentIndexDisplay,
                         total = s.total,
-                        // If VM callbacks are provided, invoke them AND scroll via local navigator.
+                        // VM側のコールバックがあればそれも呼びつつ、ローカルナビゲータでスクロール
                         onPrev = {
                             onSearchPrev?.invoke()
                             navPrev?.invoke()
@@ -722,7 +745,7 @@ fun DetailScreenScaffold(
                         val src = items[firstIdx] as DetailContent.Text
                         // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
                         val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title))
-                        // 2) OPのNo.を使った引用先（>>No など番号参照）
+                        // 2) OP の No. を使った引用先（>>No など番号参照）
                         val rn = src.resNum
                         val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn) else emptyList()
                         // 3) 結合 + 重複排除（表示順は byContent → byNumber）
