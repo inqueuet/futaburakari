@@ -5,8 +5,8 @@ import com.valoser.futaburakari.DetailContent
 import java.text.Normalizer
 
 // Build items list for a quote token like "> xxx" or ">> No.1234".
-// Strategy: extract the core text (without leading '>') and find Text items whose plain
-// text contains it (ignore spacing and width variants). Include subsequent media until next Text/End.
+// Strategy: extract the core text (without leading '>') and find Text items that have
+// a line exactly equal to it (after normalization). Include subsequent media until next Text/End.
 internal fun buildQuoteItems(all: List<DetailContent>, token: String): List<DetailContent> {
     // Normalize token: strip leading spaces, convert full-width variants to ASCII
     val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
