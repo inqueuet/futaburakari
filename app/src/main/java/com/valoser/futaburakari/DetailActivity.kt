@@ -221,7 +221,18 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                     },
                     isRefreshingLive = viewModel.isLoading,
                     onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) },
-                    threadUrl = currentUrl
+                    threadUrl = currentUrl,
+                    onNearListEnd = {
+                        val url = currentUrl ?: return@DetailScreenScaffold
+                        if (isRequestingMore) return@DetailScreenScaffold
+                        // Compose側でファストスクロール中は抑制済み
+                        isRequestingMore = true
+                        suppressNextRestore = true
+                        val postCount = countPostItems()
+                        viewModel.checkForUpdates(url, postCount) { _ ->
+                            isRequestingMore = false
+                        }
+                    }
                 )
             }
         }

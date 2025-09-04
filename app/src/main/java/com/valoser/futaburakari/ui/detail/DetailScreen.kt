@@ -113,6 +113,8 @@ fun DetailScreenScaffold(
     onImageLoaded: (() -> Unit)? = null,
     isRefreshingLive: androidx.lifecycle.LiveData<Boolean>? = null,
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
+    // 末尾近辺に到達したときに呼ばれる（無限スクロール用）
+    onNearListEnd: (() -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf("") }
     val localSearchActive = remember { mutableStateOf(false) }
@@ -203,6 +205,35 @@ fun DetailScreenScaffold(
                 val bottomPx = legacyPx ?: adPx
                 val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
                 var deleteTarget by remember { mutableStateOf<String?>(null) }
+
+                // 無限スクロール検知：末尾のコンテンツ(Text/Image/Video)近辺に到達したら通知
+                // 同一サイズのitemsに対しては1回だけ発火する（重複抑止）
+                var lastTriggeredSize by remember { mutableStateOf(-1) }
+                LaunchedEffect(items, refreshing, fastScrollActive) {
+                    if (refreshing || fastScrollActive) return@LaunchedEffect
+                    val li = listState.layoutInfo
+                    val lastVisible = li.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    if (lastVisible < 0) return@LaunchedEffect
+                    // 実質末尾（ThreadEndTimeを除く）
+                    val lastContentIndex = run {
+                        var idx = -1
+                        for (i in items.indices.reversed()) {
+                            when (items[i]) {
+                                is com.valoser.futaburakari.DetailContent.Text,
+                                is com.valoser.futaburakari.DetailContent.Image,
+                                is com.valoser.futaburakari.DetailContent.Video -> { idx = i; break }
+                                else -> {}
+                            }
+                        }
+                        idx
+                    }
+                    if (lastContentIndex < 0) return@LaunchedEffect
+                    val threshold = 1
+                    if (items.size != lastTriggeredSize && lastVisible >= lastContentIndex - threshold) {
+                        lastTriggeredSize = items.size
+                        onNearListEnd?.invoke()
+                    }
+                }
                 SwipeRefresh(state = swipeState, onRefresh = onReload) {
                     val endPadding = DefaultFastScrollerWidth + 8.dp
                     DetailListCompose(
