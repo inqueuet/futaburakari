@@ -74,6 +74,14 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * アプリの設定画面コンポーザブル。
+ * - 表示/NG/投稿/キャッシュ/広告/その他の各セクションで設定を編集し、`SharedPreferences` に保存します。
+ * - テーマやフォント倍率の変更は `Activity#recreate()` を呼び即時反映します。
+ *
+ * 引数:
+ * - `onBack`: 上部ナビゲーション「戻る」押下時に呼ばれるハンドラ（画面を閉じる等）。
+ */
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { PreferenceManager.getDefaultSharedPreferences(ctx) }
@@ -224,9 +232,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
             // removed: background monitoring toggle (always enabled)
 
+            // その他セクション（必要な1本だけ区切り線を表示）
             item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
             item { SectionHeader(text = "その他") }
             item {
@@ -270,6 +278,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
+/** セクション見出しのテキスト表示。設定グループの区切りに使用。 */
 private fun SectionHeader(text: String) {
     // セクションタイトル
     Text(
@@ -280,6 +289,10 @@ private fun SectionHeader(text: String) {
 }
 
 @Composable
+/**
+ * 単純な設定行（タイトル＋任意サマリ）。
+ * 行全体がクリック対象となり、押下時に `onClick` を呼び出します。
+ */
 private fun ListRow(title: String, summary: String, onClick: () -> Unit) {
     // 設定の1行（タイトル＋サマリ）。クリックで `onClick` 実行
     Column(
@@ -297,6 +310,10 @@ private fun ListRow(title: String, summary: String, onClick: () -> Unit) {
 }
 
 @Composable
+/**
+ * ドロップダウンで値を選択する設定行。
+ * `entries` は表示ラベル、`values` は保存値。`value` が現在値で、変更時に `onValueChange` をコール。
+ */
 private fun DropdownPreferenceRow(
     title: String,
     entries: List<String>,
@@ -342,6 +359,7 @@ private fun DropdownPreferenceRow(
 }
 
 @Composable
+/** タイトル＋任意サマリ＋トグルスイッチの設定行。`checked` の変化は `onToggle` で受け取ります。 */
 private fun SwitchRow(title: String, checked: Boolean, summary: String = "", onToggle: (Boolean) -> Unit) {
     // タイトル＋サマリ＋スイッチの1行
     Row(

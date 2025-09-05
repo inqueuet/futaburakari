@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -45,14 +46,15 @@ import com.valoser.futaburakari.RuleType
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 /**
- * 画像カタログの一覧画面。
+ * 画像カタログの一覧画面（メイン画面）。
  *
  * 機能概要:
  * - 更新: プルリフレッシュに加え、端での強いオーバースクロール（バウンス）でも再読み込みを実行（連発抑止あり）。
- * - 操作: 検索欄の表示切替、ブックマーク選択/管理、履歴、設定メニューを提供。
+ * - 操作: トップバーに「再読み込み／ブックマーク選択／履歴／検索」を配置。
+ *         右上メニューには「ブックマーク管理 → 設定 → ローカル画像を開く → 画像編集」を用意。
  * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
  * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
- * - 表示: 各カードは下部にグラデーション、タイトルを重ね、返信数は右下バッジでタイトルより上のレイヤーに表示。
+ * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
  *
  * パラメータ:
  * - `modifier`: ルートレイアウト用の修飾子。
@@ -62,11 +64,13 @@ import com.valoser.futaburakari.RuleType
  * - `spanCount`: グリッド列数。
  * - `query`/`onQueryChange`: 検索クエリと変更ハンドラ。
  * - `onReload`: 更新アクション（プル/バウンス発火時も呼ぶ）。
- * - `onSelectBookmark`/`onManageBookmarks`: ブックマークの選択/管理アクション。
- * - `onOpenSettings`/`onOpenHistory`: 設定/履歴画面を開くアクション。
- * - `onImageEdit`/`onBrowseLocalImages`: その他メニューの操作。
+ * - `onSelectBookmark`: ブックマーク選択ダイアログ等を開くアクション。
+ * - `onManageBookmarks`: ブックマーク管理画面を開くアクション（メニューから呼び出し）。
+ * - `onOpenSettings`: 設定画面を開くアクション（メニューから呼び出し）。
+ * - `onOpenHistory`: 履歴画面を開くアクション（トップバーのアイコン）。
+ * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
  * - `onItemClick`: アイテムタップ時のハンドラ。
- * - `ngRules`: NG タイトルルール一覧（TITLE 以外は無視）。
+ * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  */
 fun MainCatalogScreen(
     modifier: Modifier = Modifier,
@@ -232,16 +236,16 @@ fun MainCatalogScreen(
                     IconButton(onClick = onSelectBookmark) {
                         Icon(Icons.Rounded.BookmarkBorder, contentDescription = "ブックマーク選択")
                     }
-                    IconButton(onClick = onManageBookmarks) {
-                        Icon(Icons.Rounded.Bookmarks, contentDescription = "ブックマーク管理")
+                    IconButton(onClick = onOpenHistory) {
+                        Icon(Icons.Rounded.History, contentDescription = "履歴")
                     }
                     IconButton(onClick = { searching = !searching }) {
                         Icon(Icons.Rounded.Search, contentDescription = "検索")
                     }
                     MoreMenu(
+                        onManageBookmarks = onManageBookmarks,
                         onImageEdit = onImageEdit,
                         onBrowseLocalImages = onBrowseLocalImages,
-                        onHistory = onOpenHistory,
                         onSettings = onOpenSettings,
                     )
                 },
@@ -290,13 +294,13 @@ fun MainCatalogScreen(
 
 @Composable
 /**
- * 右上「その他」メニュー。画像編集・ローカル画像・履歴・設定を提供。
+ * 右上「その他」メニュー。ブックマーク管理・設定・ローカル画像・画像編集を提供。
  * 選択時はメニューを閉じてから各ハンドラを呼び出す。
  */
 private fun MoreMenu(
+    onManageBookmarks: () -> Unit,
     onImageEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
-    onHistory: () -> Unit,
     onSettings: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -305,10 +309,10 @@ private fun MoreMenu(
             Icon(Icons.Rounded.MoreVert, contentDescription = "その他")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("画像編集") }, onClick = { expanded = false; onImageEdit() })
-            DropdownMenuItem(text = { Text("ローカル画像を開く") }, onClick = { expanded = false; onBrowseLocalImages() })
-            DropdownMenuItem(text = { Text("履歴") }, onClick = { expanded = false; onHistory() })
+            DropdownMenuItem(text = { Text("ブックマーク管理") }, onClick = { expanded = false; onManageBookmarks() })
             DropdownMenuItem(text = { Text("設定") }, onClick = { expanded = false; onSettings() })
+            DropdownMenuItem(text = { Text("ローカル画像を開く") }, onClick = { expanded = false; onBrowseLocalImages() })
+            DropdownMenuItem(text = { Text("画像編集") }, onClick = { expanded = false; onImageEdit() })
         }
     }
 }
