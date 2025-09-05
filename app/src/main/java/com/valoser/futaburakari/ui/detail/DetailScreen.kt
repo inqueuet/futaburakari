@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Reply
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DockedSearchBar
@@ -66,11 +67,12 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
- * - AppBar: 戻る/返信/更新/検索/NG 管理/メディア一覧/画像編集（`onImageEdit` が非 null の場合）を提供。
+ * - AppBar: 戻る/更新/検索/メディア一覧のアイコンに加え、
+ *            右上メニュー（More）から「返信 → NG 管理 → 画像編集（任意）」を提供。
  *
  * パラメータ要約:
  * - `title`: AppBar に表示するタイトル。
- * - `onBack`/`onReply`/`onReload`/`onOpenNg`: ナビゲーションと主要アクションのハンドラ。
+ * - `onBack`/`onReply`/`onReload`/`onOpenNg`: ナビゲーションと主要アクションのハンドラ（返信/NG はメニューから）。
  * - `onOpenMedia`: 互換維持用（内部でメディアシートを表示するため実体は未使用）。
  * - `onImageEdit`: 画像編集画面への遷移ハンドラ（null の場合は非表示）。
  * - `onSodaneClick`: 「そうだね」押下時のハンドラ（null で非表示）。
@@ -175,26 +177,38 @@ fun DetailScreenScaffold(
                 }
             },
             actions = {
-                IconButton(onClick = onReply) {
-                    Icon(Icons.Rounded.Reply, contentDescription = "Reply")
-                }
                 IconButton(onClick = onReload) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Reload")
                 }
                 IconButton(onClick = { setSearchActive(!searchActive) }) {
                     Icon(Icons.Rounded.Search, contentDescription = "Search")
                 }
-                IconButton(onClick = onOpenNg) {
-                    Icon(Icons.Rounded.Block, contentDescription = "NG Manage")
-                }
                 // メディア一覧はComposeのシートで内製。互換のためコールバック引数は保持
                 IconButton(onClick = { openMediaSheet = true }) {
                     Icon(Icons.Rounded.Image, contentDescription = "Media List")
                 }
-                // 画像編集（任意）: 呼び出し側で `onImageEdit` を指定した場合のみ表示
-                if (onImageEdit != null) {
-                    IconButton(onClick = onImageEdit) {
-                        Icon(Icons.Rounded.Edit, contentDescription = "Image Edit")
+                // 返信/NG/画像編集をオーバーフローメニューに集約
+                var moreExpanded by remember { mutableStateOf(false) }
+                IconButton(onClick = { moreExpanded = true }) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = "More")
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = moreExpanded,
+                    onDismissRequest = { moreExpanded = false }
+                ) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("返信") },
+                        onClick = { moreExpanded = false; onReply() }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("NG 管理") },
+                        onClick = { moreExpanded = false; onOpenNg() }
+                    )
+                    if (onImageEdit != null) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("画像編集") },
+                            onClick = { moreExpanded = false; onImageEdit() }
+                        )
                     }
                 }
             },
