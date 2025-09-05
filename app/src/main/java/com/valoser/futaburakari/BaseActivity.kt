@@ -13,17 +13,16 @@ import androidx.preference.PreferenceManager
  *
  * 機能概要:
  * - フォントサイズ: 共有設定の `pref_key_font_scale` を参照して `attachBaseContext` で反映。
- * - テーマ: ライト/ダーク/システムのモードと、色テーマを起動前に適用。
- * - 変更検知: バックグラウンド中にフォント/テーマ/カラーが変わった場合は復帰時に再生成。
+ * - テーマ: ライト/ダーク/システムのモードを起動前に適用（色テーマは固定）。
+ * - 変更検知: バックグラウンド中にフォント/テーマが変わった場合は復帰時に再生成。
  * - 戻る操作: ActionBar の Up 操作を一貫して「戻る」動作として扱う（アイコン自体の表示/非表示は各画面側で管理）。
  */
 open class BaseActivity : AppCompatActivity() {
-    /** Last applied font scale. */
+    /** 最後に適用したフォント倍率。 */
     private var lastAppliedScale: Float? = null
-    /** Last applied theme mode used to detect changes on resume. */
+    /** 復帰時の変更検知に使用する、最後に適用したテーマモード。 */
     private var lastAppliedThemeMode: String? = null
-    /** Last applied color mode used to detect changes on resume. */
-    private var lastAppliedColorMode: String? = null
+    // メモ: カラーモードの個別追跡は不要（現状はテーマに準拠）
     /**
      * 共有設定のフォント倍率を反映した `Configuration` でベースコンテキストをラップする。
      * `pref_key_font_scale`（既定値 "1.0"）を読み取り、`Configuration.fontScale` を設定してからアタッチする。
@@ -52,7 +51,7 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     /**
-     * 共有設定に基づいてテーマモードと色テーマを適用する。
+     * 共有設定に基づいてテーマモードを適用する。
      * 復帰時の変更検知のため、適用した値を保持する。
      */
     private fun applyThemePreferences() {
@@ -64,37 +63,25 @@ open class BaseActivity : AppCompatActivity() {
             else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
         }
 
-        val colorMode = prefs.getString("pref_key_color_mode", "green")
-        when (colorMode) {
-            "purple" -> setTheme(R.style.Theme_Futaburakari_Purple)
-            "blue" -> setTheme(R.style.Theme_Futaburakari_Blue)
-            "orange" -> setTheme(R.style.Theme_Futaburakari_Orange)
-            else -> setTheme(R.style.Theme_Futaburakari_Green)
-        }
-
         lastAppliedThemeMode = themeMode
-        lastAppliedColorMode = colorMode
     }
 
     /**
-     * バックグラウンド中にフォント倍率/テーマモード/カラーモードが変更された場合、
+     * バックグラウンド中にフォント倍率/テーマモードが変更された場合、
      * 復帰時に `recreate()` して最新設定を反映する。
      */
     override fun onResume() {
         super.onResume()
         // Material3 のナビゲーションアイコン/色はテーマに準拠させる（カスタム上書きは行わない）
-        // If preference changed while this activity was in background, recreate to apply.
+        // バックグラウンド中に設定が変更されていた場合は再生成して反映する
         val targetScale = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_font_scale", "1.0")?.toFloatOrNull() ?: 1.0f
         val current = resources.configuration.fontScale
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         val themeModeNow = prefs.getString("pref_key_theme_mode", "system")
-        val colorModeNow = prefs.getString("pref_key_color_mode", "green")
 
         val themeChanged = lastAppliedThemeMode != null && lastAppliedThemeMode != themeModeNow
-        val colorChanged = lastAppliedColorMode != null && lastAppliedColorMode != colorModeNow
-
-        if (current != targetScale || themeChanged || colorChanged) {
+        if (current != targetScale || themeChanged) {
             recreate()
         }
     }

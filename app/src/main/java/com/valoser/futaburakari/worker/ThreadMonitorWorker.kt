@@ -60,13 +60,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
         val url = inputData.getString(KEY_URL) ?: return Result.success()
         val oneShot = inputData.getBoolean(KEY_ONE_SHOT, false)
 
-        // 設定が無効なら即終了
-        val prefs = applicationContext.getSharedPreferences(PREFS_BG, Context.MODE_PRIVATE)
-        if (!oneShot) {
-            if (!prefs.getBoolean(KEY_BG_ENABLED, false)) {
-                return Result.success()
-            }
-        }
+        // 常時有効（ユーザー設定での無効化はなし）
 
         // 履歴に無いスレッドは監視しない（存在しない場合はユニーク作業も停止）
         val key = UrlNormalizer.threadKey(url)
@@ -176,23 +170,18 @@ class ThreadMonitorWorker @AssistedInject constructor(
     companion object {
         private const val KEY_URL = "url"
         private const val KEY_ONE_SHOT = "one_shot"
-        const val PREFS_BG = "com.valoser.futaburakari.bg"
-        const val KEY_BG_ENABLED = "pref_key_bg_monitor_enabled"
+        // removed: background toggle prefs (always enabled)
 
         private fun uniqueName(url: String): String = "monitor-" + UrlNormalizer.threadKey(url)
         private fun uniqueNameLegacy(url: String): String = "monitor-" + UrlNormalizer.legacyThreadKey(url)
         private fun uniqueNameFromKey(key: String): String = "monitor-" + key
 
         /**
-         * Schedule a one-time monitoring run for the given thread URL.
-         * - Requires `KEY_BG_ENABLED` in `PREFS_BG` to be true; otherwise, no-op.
-         * - Uses a unique work name derived from the normalized thread key and replaces existing work.
-         * - Adds a short initial delay and requires CONNECTED network.
+         * 指定したスレURLの監視を一回分スケジュールする。
+         * - 正規化したスレッドキーからユニーク名を生成し、既存の同名Workを置き換える。
+         * - 短い初期待機を設定し、ネットワーク接続（CONNECTED）を要求する。
          */
         fun schedule(context: Context, url: String) {
-            val prefs = context.getSharedPreferences(PREFS_BG, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean(KEY_BG_ENABLED, false)) return
-
             val data = workDataOf(KEY_URL to url)
             val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
                 .setInitialDelay(1, TimeUnit.MINUTES)
@@ -213,7 +202,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
         }
 
         /**
-         * 即時に単発のスナップショット取得（設定ON/OFFに関係なく実行）。
+         * 即時に単発のスナップショット取得。
          * - Expedited リクエスト（クォータ不足時は非Expeditedで実行）。
          * - ユニーク名は `snapshot-<threadKey>` を使用し、既存を置き換える。
          */
@@ -257,8 +246,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
         }
     }
 
-    /** Returns true if the URL ends with a supported image/video extension. */
-    private fun isMediaUrl(href: String): Boolean {
+        /** サポートされている画像/動画拡張子で終わるURLなら true を返す。 */
+        private fun isMediaUrl(href: String): Boolean {
         val lower = href.lowercase()
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
                 lower.endsWith(".gif") || lower.endsWith(".webp") ||
@@ -266,12 +255,11 @@ class ThreadMonitorWorker @AssistedInject constructor(
     }
 
     /**
-     * Parse the thread HTML into a linear list of DetailContent items.
-     * - OP block (index 0) plus each reply block extracted via the table around `.rtd`.
-     * - Text HTML is captured with inline <img> tags removed.
-     * - If a `target=_blank` anchor points to a supported media file, append one Image/Video item
-     *   resolved to an absolute URL.
-     * - Attempts to detect the thread end time by scanning script tags for `contdisp`.
+     * スレッドHTMLを直列の `DetailContent` リストへ変換する。
+     * - 先頭のOPブロック（index 0）と、`.rtd` 周辺の table をたどって各返信ブロックを抽出
+     * - 本文テキストはインラインの <img> を除去してHTML文字列として保持
+     * - `target=_blank` かつメディア拡張子を指すリンクがあれば、絶対URLに解決した Image/Video を1件追加
+     * - `contdisp` を含む script タグを走査してスレ終了時刻をベストエフォートで検出
      */
     private fun parseContentFromDocument(document: Document, baseUrl: String): List<DetailContent> {
         val result = mutableListOf<DetailContent>()
@@ -312,7 +300,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             }
         }
 
-        // Thread end time (best-effort; optional)
+        // スレ終了時刻の検出（ベストエフォート・任意）
         val scriptElements = document.select("script")
         for (script in scriptElements) {
             val data = script.data()
@@ -331,9 +319,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
     }
 
     /**
-     * Download media to the per-thread archive directory and rewrite URLs to local file URIs.
-     * Uses SHA-256 of the original URL plus the original extension (lowercased) for file names.
-     * Skips downloading if a non-empty file already exists.
+     * 媒体をスレッド別のアーカイブディレクトリに保存し、URLをローカル file URI に差し替える。
+     * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略。
      */
     private suspend fun archiveMedia(context: Context, threadUrl: String, list: List<DetailContent>): List<DetailContent> {
         val cache = DetailCacheManager(context)
@@ -371,7 +358,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
         }
     }
 
-    /** Hex-encoded SHA-256 hash of the string (used as filename). */
+    /** 文字列のSHA-256（16進表現）。アーカイブのファイル名に使用。 */
     private fun String.sha256(): String {
         return java.security.MessageDigest
             .getInstance("SHA-256")

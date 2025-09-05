@@ -10,8 +10,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.Shapes
 
-// Base (Purple) scheme, aligned to legacy XML theme values
+// ベース（パープル）配色。旧XMLテーマ値に合わせた定義。
 private val DarkPurpleScheme = darkColorScheme(
     primary = Color(0xFF3700B3), // purple_700
     onPrimary = Color(0xFFFFFFFF),
@@ -28,7 +29,7 @@ private val LightPurpleScheme = lightColorScheme(
     tertiary = Color(0xFF018786),
 )
 
-// Green scheme (from legacy XML overlays/themes)
+// グリーン配色（旧XMLのオーバーレイ/テーマ由来）
 private val LightGreenScheme = lightColorScheme(
     primary = Color(0xFF004D2D), // green_primary
     onPrimary = Color(0xFFFFFFFF),
@@ -45,7 +46,7 @@ private val DarkGreenScheme = darkColorScheme(
     tertiary = Color(0xFF018786),
 )
 
-// Blue scheme (from legacy XML)
+// ブルー配色（旧XML由来）
 private val LightBlueScheme = lightColorScheme(
     primary = Color(0xFF1565C0),
     onPrimary = Color(0xFFFFFFFF),
@@ -62,7 +63,7 @@ private val DarkBlueScheme = darkColorScheme(
     tertiary = Color(0xFF00796B),
 )
 
-// Orange scheme (from legacy XML)
+// オレンジ配色（旧XML由来）
 private val LightOrangeScheme = lightColorScheme(
     primary = Color(0xFFEF6C00),
     onPrimary = Color(0xFFFFFFFF),
@@ -80,9 +81,9 @@ private val DarkOrangeScheme = darkColorScheme(
 )
 
 /**
- * Resolve a concrete color scheme for a given optional `colorMode` and dark flag.
- * Supported modes: "purple" (default), "green", "blue", "orange".
- * Falls back to the purple scheme when the mode is null/unknown.
+ * `colorMode`（省略可）とダーク/ライト指定に応じて配色スキームを解決する。
+ * サポート: "purple"（既定）/ "green" / "blue" / "orange"。
+ * 未指定/不明な場合はパープルをフォールバックとして使用する。
  */
 private fun schemeFor(colorMode: String?, dark: Boolean): androidx.compose.material3.ColorScheme {
     return when (colorMode) {
@@ -95,24 +96,23 @@ private fun schemeFor(colorMode: String?, dark: Boolean): androidx.compose.mater
 }
 
 /**
- * App theme entry point.
- * - If `colorMode` is specified (case-insensitive), use the corresponding fixed scheme
- *   and ignore dynamic colors.
- * - Else if `dynamicColor` is true and API ≥ 31 (Android 12+), use Material 3 dynamic
- *   color scheme based on the user's wallpaper (dark/light variant selected by `darkTheme`).
- * - Else, fall back to the fixed purple scheme (dark/light).
- * Applies `Typography` from this module and passes `content` to `MaterialTheme`.
+ * アプリのテーマ適用エントリ。
+ * - `colorMode` が指定されていれば対応する固定配色を使用（動的カラーは無視）
+ * - そうでなく `dynamicColor` が true かつ API 31+ なら、壁紙ベースの動的カラーを使用
+ * - それ以外は固定のパープル配色（ダーク/ライト）を使用
+ * 併せて Typography/Shapes を適用して `MaterialTheme` に内容を渡す。
  */
 @Composable
 fun FutaburakariTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     colorMode: String? = null,
     dynamicColor: Boolean = true,
+    expressive: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = run {
         val cm = colorMode?.lowercase()
-        // If colorMode is explicitly specified, prefer it over dynamic colors
+        // colorMode が明示されていれば動的カラーより優先
         if (!cm.isNullOrBlank()) {
             schemeFor(cm, darkTheme)
         } else if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -123,9 +123,13 @@ fun FutaburakariTheme(
         }
     }
 
+    val typography = if (expressive) ExpressiveTypography else Typography
+    val shapes: Shapes = if (expressive) ExpressiveShapes else BaselineShapes
+
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
+        typography = typography,
+        shapes = shapes,
         content = content
     )
 }

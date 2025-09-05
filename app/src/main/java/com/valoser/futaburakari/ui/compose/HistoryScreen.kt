@@ -25,6 +25,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -32,6 +34,7 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.SwipeToDismissBox
@@ -54,6 +57,11 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.valoser.futaburakari.HistoryEntry
 import kotlinx.coroutines.launch
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import com.valoser.futaburakari.ui.expressive.SplitButton
 import androidx.compose.ui.platform.LocalContext
 import com.valoser.futaburakari.R
 
@@ -158,47 +166,113 @@ fun HistoryScreen(
         // 将来的な Undo 提示に利用予定のスナックバー（現状は未使用）
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
-        if (localEntries.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) {
-                val ctx = LocalContext.current
-                Text(ctx.getString(R.string.no_history), style = MaterialTheme.typography.bodyMedium)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                // 安定したキーとして `HistoryEntry.key` を使用（表示順は渡された `entries` に従う）
-                items(localEntries, key = { it.key }) { e ->
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        // スワイプ確定時に即時削除（Undoは一旦無効化）
-                        confirmValueChange = { value ->
-                            if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
-                                val current = localEntries
-                                val idx = current.indexOfFirst { it.key == e.key }
-                                if (idx >= 0) localEntries = current.toMutableList().also { it.removeAt(idx) }
-                                onDeleteItem(e)
-                                true
-                            } else false
+        AnimatedContent(
+            targetState = localEntries.isEmpty(),
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "history-empty-switch"
+        ) { isEmpty ->
+            if (isEmpty) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val ctx = LocalContext.current
+                    Text(ctx.getString(R.string.no_history), style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    item {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            // 並び替え SegmentedButton
+                            val sortOptions = listOf(
+                                "新着" to HistorySortMode.MIXED,
+                                "更新" to HistorySortMode.UPDATED,
+                                "閲覧" to HistorySortMode.VIEWED,
+                                "未読" to HistorySortMode.UNREAD
+                            )
+                            SingleChoiceSegmentedButtonRow {
+                                sortOptions.forEachIndexed { index, pair ->
+                                    SegmentedButton(
+                                        selected = pair.second == sortMode,
+                                        onClick = { if (pair.second != sortMode) onSelectSort(pair.second) },
+                                        shape = SegmentedButtonDefaults.itemShape(index, sortOptions.size)
+                                    ) { Text(pair.first) }
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                            // 未読フィルタ SegmentedButton
+                            val unreadOptions = listOf("すべて", "未読のみ")
+                            SingleChoiceSegmentedButtonRow {
+                                unreadOptions.forEachIndexed { index, label ->
+                                    SegmentedButton(
+                                        selected = (index == 1) == showUnreadOnly,
+                                        onClick = {
+                                            val wantUnread = index == 1
+                                            if (wantUnread != showUnreadOnly) onToggleUnreadOnly()
+                                        },
+                                        shape = SegmentedButtonDefaults.itemShape(index, unreadOptions.size)
+                                    ) { Text(label) }
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                            // SplitButton: 並び替えショートカット
+                            SplitButton(
+                                text = "並び替え",
+                                onPrimary = {
+                                    // 簡易: 次のモードにローテーション
+                                    val next = when (sortMode) {
+                                        HistorySortMode.MIXED -> HistorySortMode.UPDATED
+                                        HistorySortMode.UPDATED -> HistorySortMode.VIEWED
+                                        HistorySortMode.VIEWED -> HistorySortMode.UNREAD
+                                        HistorySortMode.UNREAD -> HistorySortMode.MIXED
+                                    }
+                                    onSelectSort(next)
+                                },
+                                menuItems = listOf(
+                                    "新着優先" to { onSelectSort(HistorySortMode.MIXED) },
+                                    "更新順" to { onSelectSort(HistorySortMode.UPDATED) },
+                                    "閲覧順" to { onSelectSort(HistorySortMode.VIEWED) },
+                                    "未読数" to { onSelectSort(HistorySortMode.UNREAD) }
+                                )
+                            )
                         }
-                    )
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        enableDismissFromStartToEnd = true,
-                        enableDismissFromEndToStart = true,
-                        backgroundContent = {
-                            DismissBackground(state = dismissState)
-                        },
-                        content = {
-                            HistoryRow(entry = e, onClick = { onClickItem(e) })
-                        }
-                    )
+                    }
+
+                    // 安定したキーとして `HistoryEntry.key` を使用（表示順は渡された `entries` に従う）
+                    items(localEntries, key = { it.key }) { e ->
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            // スワイプ確定時に即時削除（Undoは一旦無効化）
+                            confirmValueChange = { value ->
+                                if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
+                                    val current = localEntries
+                                    val idx = current.indexOfFirst { it.key == e.key }
+                                    if (idx >= 0) localEntries = current.toMutableList().also { it.removeAt(idx) }
+                                    onDeleteItem(e)
+                                    true
+                                } else false
+                            }
+                        )
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            enableDismissFromStartToEnd = true,
+                            enableDismissFromEndToStart = true,
+                            backgroundContent = {
+                                DismissBackground(state = dismissState)
+                            },
+                            content = {
+                                // 履歴の1行を描画（アニメーションは環境依存のため一旦除外）
+                                HistoryRow(entry = e, onClick = { onClickItem(e) })
+                            }
+                        )
+                    }
                 }
             }
         }

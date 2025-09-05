@@ -29,6 +29,10 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
  */
 class HistoryActivity : BaseActivity() {
 
+    /**
+     * 履歴画面のCompose UIを初期化し、
+     * 表示状態（未読のみ/ソート）とデータ（履歴取得/クリーンアップ/再計算）の連携を設定する。
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -41,11 +45,9 @@ class HistoryActivity : BaseActivity() {
             else -> HistorySortMode.MIXED
         }
 
-        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 var showUnreadOnly by remember { mutableStateOf(initialUnreadOnly) }
                 var sortMode by remember { mutableStateOf(initialSort) }
                 var entries by remember { mutableStateOf(listOf<HistoryEntry>()) }

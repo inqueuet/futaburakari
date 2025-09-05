@@ -48,11 +48,9 @@ class NgManagerActivity : BaseActivity() {
         }
         hideTitle = intent.getBooleanExtra(EXTRA_HIDE_TITLE, false)
 
-        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 var rules by remember { mutableStateOf(currentRules()) }
                 fun refresh() { rules = currentRules() }
 

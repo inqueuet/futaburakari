@@ -19,27 +19,25 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.launch
 
 /**
- * Activity for managing user bookmarks using a Jetpack Compose UI.
- * Handles add/update/delete/select operations and persists changes via `BookmarkManager`.
+ * ブックマークを管理するアクティビティ（Jetpack Compose ベース）。
+ * 追加/更新/削除/選択の操作を提供し、`BookmarkManager` を通じて永続化する。
  */
 class BookmarkActivity : BaseActivity() {
 
     /**
-     * Sets up themed Compose content and wires bookmark actions to persistence.
-     * Shows feedback with a bottom snackbar for each operation.
+     * テーマ適用済みの Compose コンテンツをセットし、各操作を永続化ロジックに接続する。
+     * 各操作時には下部スナックバーでフィードバックを表示する。
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
 
         setContent {
-            // Apply app theme based on the selected color mode
-            FutaburakariTheme(colorMode = colorModePref) {
+            // アプリのテーマ（表現的なカラースキーム）を適用
+            FutaburakariTheme(expressive = true) {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
-                // In-memory state backed by BookmarkManager storage
+                // BookmarkManager のストレージを元にしたUI用のメモリ状態
                 var bookmarks by remember { mutableStateOf(BookmarkManager.getBookmarks(this@BookmarkActivity)) }
 
                 Box {
@@ -48,7 +46,7 @@ class BookmarkActivity : BaseActivity() {
                         bookmarks = bookmarks,
                         onBack = { onBackPressedDispatcher.onBackPressed() },
                         onAddBookmark = { name, url ->
-                            // Validate inputs, then persist and refresh local state
+                            // 入力検証後に永続化し、UI状態を再読込
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
@@ -58,7 +56,7 @@ class BookmarkActivity : BaseActivity() {
                             }
                         },
                         onUpdateBookmark = { oldUrl, name, url ->
-                            // Update storage and selected URL if it was the edited one
+                            // ストレージ更新。編集中の項目が選択中だった場合は選択URLも更新
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
@@ -71,7 +69,7 @@ class BookmarkActivity : BaseActivity() {
                             }
                         },
                         onDeleteBookmark = { bookmark ->
-                            // Remove from storage and clear selection if it was deleted
+                            // ストレージから削除。削除対象が選択中なら選択状態をクリア
                             BookmarkManager.deleteBookmark(this@BookmarkActivity, bookmark)
                             if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == bookmark.url) {
                                 BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, null)
@@ -80,13 +78,13 @@ class BookmarkActivity : BaseActivity() {
                             bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
                         },
                         onSelectBookmark = { bookmark ->
-                            // Persist selected bookmark and close the screen
+                            // 選択したブックマークを保存して画面を閉じる
                             BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, bookmark.url)
                             scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を選択しました") }
                             finish()
                         }
                     )
-                    // Global snackbar host anchored to the bottom of the screen
+                    // 画面下部に固定したスナックバー表示領域
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
                 }
             }

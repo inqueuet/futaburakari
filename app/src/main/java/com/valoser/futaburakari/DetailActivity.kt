@@ -38,14 +38,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.valoser.futaburakari.search.RecentSearchStore
 
 /**
- * Screen that displays a thread's detail content using a Compose UI.
+ * スレッドの詳細を Compose UI で表示する画面。
  *
- * Responsibilities:
- * - Loads thread details via `DetailViewModel` and observes updates.
- * - Persists and restores list scroll position per thread URL.
- * - Handles replies, deletions, NG filter updates, search, and SODA-NE.
- * - Updates history (latest reply count and thumbnail) and triggers snapshots.
- * - Reflects user settings (theme color, ads enabled) and back navigation UX.
+ * 役割:
+ * - `DetailViewModel` を用いてスレッドの詳細を読み込み、更新を監視
+ * - スレッドURLごとにリストのスクロール位置を保存/復元
+ * - 返信・削除・NGフィルタ更新・検索・ソーダネの操作を処理
+ * - 履歴（最新レス番号とサムネイル）を更新し、スナップショット取得をトリガー
+ * - ユーザー設定（テーマ/広告）や戻る操作のUXを反映
  */
 @AndroidEntryPoint
 class DetailActivity : BaseActivity() {
@@ -115,29 +115,28 @@ class DetailActivity : BaseActivity() {
     private val recentSearchStore by lazy { RecentSearchStore(this) }
 
     /**
-     * Initializes Compose content with theming and wires UI callbacks to ViewModel and stores.
-     * Also records history, triggers a one-shot snapshot, and sets up back-press behavior.
+     * テーマ適用済みの Compose コンテンツを初期化し、UIの各種コールバックを ViewModel/ストアへ接続する。
+     * 併せて履歴の記録、スナップショットの起動、戻る操作のハンドリングを設定する。
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Title for Compose TopBar and history
+        // Compose のトップバーおよび履歴表示用のタイトル
         toolbarTitleText = intent.getStringExtra(EXTRA_TITLE) ?: ""
         currentUrl = intent.getStringExtra(EXTRA_URL)
-        // Initialize scroll store early to provide initial state for Compose list
+        // スクロール位置の保存/復元に用いるストアを先に初期化（Compose へ初期状態を渡す）
         scrollStore = ScrollPositionStore(this)
         val initialScroll: Pair<Int, Int> = currentUrl?.let { url ->
             val key = UrlNormalizer.threadKey(url)
             scrollStore.getScrollState(key)
         } ?: (0 to 0)
-        // Switch to Compose container with Scaffold TopBar (Compose only)
-        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
+        // Compose のコンテナへ切替（トップバー含む）。
+        // メモ: カラーモード設定の個別制御は廃止（テーマに準拠）
         val showAdsPref = PreferenceManager.getDefaultSharedPreferences(this)
             .getBoolean("pref_key_ads_enabled", false)
         adsEnabledFlowInternal.value = showAdsPref
         val adUnitId = getString(R.string.admob_banner_id)
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 val showAds by adsEnabledFlow.collectAsState()
                 DetailScreenScaffold(
                     title = toolbarTitleText,
@@ -241,6 +240,8 @@ class DetailActivity : BaseActivity() {
             HistoryManager.addOrUpdate(this, url, title)
             // すぐ閉じた場合でも本文を含めてローカルに残せるよう、単発のスナップショット取得を即時キュー
             ThreadMonitorWorker.snapshotNow(this, url)
+            // 以降の更新を自動監視（常時有効）
+            ThreadMonitorWorker.schedule(this, url)
         }
 
         observeViewModel()
@@ -260,11 +261,11 @@ class DetailActivity : BaseActivity() {
             }
         })
 
-        // Legacy UI listeners removed — Compose handles refresh and insets
+        // 旧来のUIリスナは削除済み（リフレッシュ/インセット処理はCompose側で対応）
     }
 
     /**
-     * Updates the ads-visible state which Compose observes to show/hide the banner.
+     * Compose 側が監視する広告表示状態を更新（バナーの表示/非表示を切り替え）。
      */
     private fun setupAdBanner() {
         // Compose側で表示を制御するため、状態のみ更新
@@ -273,7 +274,7 @@ class DetailActivity : BaseActivity() {
     }
 
     /**
-     * Starts listening to preference changes and refreshes ad visibility state.
+     * 設定変更の監視を開始し、広告表示状態を最新に更新する。
      */
     override fun onStart() {
         super.onStart()
@@ -287,7 +288,7 @@ class DetailActivity : BaseActivity() {
     }
 
     /**
-     * Stops listening to preference changes.
+     * 設定変更の監視を停止する。
      */
     override fun onStop() {
         // 設定変更の監視を停止
@@ -297,7 +298,7 @@ class DetailActivity : BaseActivity() {
         super.onStop()
     }
 
-    // Recycler bottom padding helpers are obsolete in Compose path
+    // Recycler の下部余白ヘルパーは Compose 移行により不要
 
     // RecyclerView 経路はCompose移行に伴い削除
 
@@ -307,10 +308,10 @@ class DetailActivity : BaseActivity() {
     // Flow監視
     // -------------------------
     /**
-     * Collects flows and LiveData from the ViewModel and applies side effects:
-     * - Updates history (unread count and thumbnail).
-     * - Builds plain-text cache for search in a background dispatcher.
-     * - Resets one-shot flags used for scroll restoration.
+     * ViewModel の Flow/LiveData を収集し、副作用を適用する:
+     * - 履歴（未読数とサムネイル）の更新
+     * - 検索用プレーンテキストキャッシュのバックグラウンド構築
+     * - スクロール復元用の一時フラグのリセット
      */
     private fun observeViewModel() {
         lifecycleScope.launch {
@@ -371,7 +372,7 @@ class DetailActivity : BaseActivity() {
             err?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
         })
 
-        // ComposeリストはUI内で楽観更新するため、Adapter反映やProgressBarは不要
+        // Compose リストはUI内で楽観更新のため、Adapter反映やProgressBarは不要
 
     }
 
@@ -415,7 +416,7 @@ class DetailActivity : BaseActivity() {
         }
     }
 
-    /** Opens NG manager and hides thread-title rules when launched from details. */
+    /** NG管理画面を開く。詳細画面からの起動時はスレタイNGを非表示にする。 */
     private fun openNgManager() {
         ngManagerLauncher.launch(
             Intent(this, NgManagerActivity::class.java).apply {
@@ -439,7 +440,7 @@ class DetailActivity : BaseActivity() {
 
     // Compose リスト用：可視最大序数が通知されたら既読を更新（デバウンスあり）
     /**
-     * Debounced update of last-viewed reply number based on the max visible ordinal.
+     * 画面上で可視となった最大序数に基づき、最終既読レス番号をデバウンス更新する。
      */
     private fun markViewedByOrdinal(maxOrdinal: Int) {
         if (maxOrdinal <= 0) return
@@ -463,10 +464,11 @@ class DetailActivity : BaseActivity() {
 
     // 「No.xxx」「ファイル名」「本文一部」いずれかで対象を検索
     /**
-     * Finds a content item by query supporting:
-     * 1) "No.<number>" match in text content
-     * 2) Exact filename or URL suffix for images/videos
-     * 3) Case-insensitive substring match in plain text body
+     * クエリ文字列に基づき対象コンテンツを検索する。
+     * サポート:
+     * 1) 本文中の "No.<番号>" マッチ
+     * 2) 画像/動画のファイル名またはURL末尾の一致
+     * 3) 本文プレーンテキストの部分一致（大文字小文字無視）
      */
     private fun findContentByText(all: List<DetailContent>, searchText: String): DetailContent? {
         // 1) No.\d+
@@ -497,7 +499,7 @@ class DetailActivity : BaseActivity() {
     }
 
     // 行頭が '>' 1個の引用行（最初の1つ）を返す（旧：単一版）
-    /** Extracts the first single-level quote line (leading '>') from a text item. */
+    /** 行頭が '>' 1個の引用行（最初の1つ）を抽出する。 */
     private fun extractFirstLevelQuoteCore(item: DetailContent.Text): String? {
         val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         val m = Regex("^>([^>].+)$", RegexOption.MULTILINE).find(plain)
@@ -505,7 +507,7 @@ class DetailActivity : BaseActivity() {
     }
 
     // 行頭が '>' 1個の引用行を「複数」返す（多段で複数候補がある場合に使用）
-    /** Extracts all single-level quote lines (leading '>') from a text item. */
+    /** 行頭が '>' 1個の引用行（複数）をすべて抽出する。 */
     private fun extractFirstLevelQuoteCores(item: DetailContent.Text): List<String> {
         val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         return Regex("^>([^>].+)$", RegexOption.MULTILINE)

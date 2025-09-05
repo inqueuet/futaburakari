@@ -52,6 +52,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,9 +76,15 @@ import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
+import com.valoser.futaburakari.ui.expressive.FabMenu
+import com.valoser.futaburakari.ui.expressive.FabMenuItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+/**
+ * NG ルールの一覧/検索/追加/編集/削除を提供する Compose 画面。
+ * 種別固定（limitType）やスレタイNGの非表示（hideTitleOption）にも対応。
+ */
 fun NgManagerScreen(
     title: String,
     rules: List<NgRule>,
@@ -112,16 +119,34 @@ fun NgManagerScreen(
             )
         },
         floatingActionButton = {
-            // 追加ボタン。種類固定の場合は直接編集ダイアログ、未指定の場合は種類選択ダイアログを表示
-            FloatingActionButton(onClick = {
-                if (limitType != null) {
-                    // 種類が固定されているため、空の初期値で編集ダイアログを直ちに開く
-                    editTarget = NgRule("", limitType, pattern = "", match = defaultMatchFor(limitType))
-                } else {
-                    showTypePicker = true
-                }
-            }) {
-                Icon(Icons.Rounded.Add, contentDescription = "追加")
+            // Expressive: limitType 未指定ならスピードダイヤルで種別を直接選択
+            if (limitType == null) {
+                var expanded by remember { mutableStateOf(false) }
+                FabMenu(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = it },
+                    items = buildList {
+                        add(FabMenuItem(icon = Icons.Rounded.Add, label = "ID 追加") {
+                            editTarget = NgRule("", RuleType.ID, pattern = "", match = defaultMatchFor(RuleType.ID))
+                        })
+                        add(FabMenuItem(icon = Icons.Rounded.Add, label = "本文 追加") {
+                            editTarget = NgRule("", RuleType.BODY, pattern = "", match = defaultMatchFor(RuleType.BODY))
+                        })
+                        if (!hideTitleOption) {
+                            add(FabMenuItem(icon = Icons.Rounded.Add, label = "スレタイ 追加") {
+                                editTarget = NgRule("", RuleType.TITLE, pattern = "", match = defaultMatchFor(RuleType.TITLE))
+                            })
+                        }
+                    }
+                )
+            } else {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        editTarget = NgRule("", limitType, pattern = "", match = defaultMatchFor(limitType))
+                    },
+                    text = { Text("追加") },
+                    icon = { Icon(Icons.Rounded.Add, contentDescription = null) }
+                )
             }
         }
     ) { inner ->

@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.valoser.futaburakari.worker.ThreadMonitorWorker
+import com.valoser.futaburakari.HistoryManager
 
 @HiltAndroidApp
 /**
@@ -37,9 +39,17 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
     override fun onCreate() {
         super.onCreate()
 
-        // OkHttp（PublicSuffixDatabaseなど）の初期化を安全に実行
+        // OkHttp（PublicSuffixDatabase など）の初期化を安全に実行
         initializeOkHttpSafely()
         // WorkManager の AutoInit はこの Configuration 経由で行われる
+
+        // 履歴に登録済みのスレッドはバックグラウンド監視を常時有効化（再起動後も再スケジュール）
+        applicationScope.launch {
+            runCatching { HistoryManager.getAll(this@MyApplication) }
+                .onSuccess { list -> list.forEach { e ->
+                    kotlin.runCatching { ThreadMonitorWorker.schedule(this@MyApplication, e.url) }
+                } }
+        }
     }
 
     private fun initializeOkHttpSafely() {
@@ -57,6 +67,7 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
         }
     }
 
+    // WorkManager 構成の提供（HiltWorkerFactory を設定し、ログレベル/プロセス名を指定）
     override val workManagerConfiguration: Configuration
         get() {
             val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0

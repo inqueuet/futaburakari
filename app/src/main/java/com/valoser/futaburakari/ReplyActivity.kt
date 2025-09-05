@@ -58,11 +58,9 @@ class ReplyActivity : BaseActivity() {
         // コメント欄 初期引用
         val savedPwd = AppPreferences.getPwd(this)
 
-        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 val uiState by viewModel.uiState.observeAsState(ReplyViewModel.UiState.Idle)
                 ReplyScreen(
                     title = threadTitle,
@@ -116,7 +114,11 @@ class ReplyActivity : BaseActivity() {
         }
     }
 
-    // 入力本文の改行や不可視文字を正規化（Shift_JISで化けやすい文字を排除/統一）
+    /**
+     * 入力本文を送信用に正規化する。
+     * - 改行コード（CR/LF）や不可視文字を統一/除去
+     * - Shift_JIS にエンコードできない文字を '?' に置換
+     */
     private fun sanitizeComment(text: String): String {
         // 1. 既存の正規化処理を先に実行
         val normalizedText = text

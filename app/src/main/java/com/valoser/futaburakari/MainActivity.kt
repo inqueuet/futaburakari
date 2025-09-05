@@ -81,9 +81,7 @@ class MainActivity : BaseActivity() {
             "ng_rules_json" -> {
                 ngRulesState.value = ngStore.getRules()
             }
-            "pref_key_color_mode" -> {
-                colorModeState.value = getColorModePref()
-            }
+            // removed: color mode preference (always dynamic/default now)
         }
     }
 
@@ -105,7 +103,6 @@ class MainActivity : BaseActivity() {
     private val isLoadingState = mutableStateOf(false)
     private val itemsState = mutableStateOf<List<ImageItem>>(emptyList())
     private val ngRulesState = mutableStateOf<List<NgRule>>(emptyList())
-    private val colorModeState = mutableStateOf<String?>(null)
 
     // ブックマーク画面から戻った後にデータ再取得
     private val bookmarkActivityResultLauncher = registerForActivityResult(
@@ -138,11 +135,10 @@ class MainActivity : BaseActivity() {
         // Compose用初期化
         spanCountState.intValue = getGridSpanCount()
         ngRulesState.value = ngStore.getRules()
-        colorModeState.value = getColorModePref()
 
         // Compose UI
         setContent {
-            FutaburakariTheme(colorMode = colorModeState.value) {
+            FutaburakariTheme(expressive = true) {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
                 val errorMessage by viewModel.error.observeAsState()
@@ -296,7 +292,7 @@ class MainActivity : BaseActivity() {
         startActivity(intent)
     }
 
-    // region Compose-friendly helpers (migrated from View-era)
+    // region Compose向けヘルパー（View時代からの移行）
 
     // 設定からグリッド列数を取得（1..8 の範囲に丸め込み）
     private fun getGridSpanCount(): Int {
@@ -424,8 +420,5 @@ class MainActivity : BaseActivity() {
 
     // endregion
 
-    private fun getColorModePref(): String? {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        return prefs.getString("pref_key_color_mode", "green")
-    }
+    // メモ: 配色モードの個別アクセサは廃止（テーマへ統合）
 }

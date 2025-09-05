@@ -19,7 +19,6 @@ import kotlinx.coroutines.launch
  *
  * - `MediaViewScreen` に種類（画像/動画/テキスト）とURL/テキストを渡して表示
  * - 画像/動画は保存ボタンを提供（API 28以下は書き込み権限を事前確認）
- * - 配色はユーザー設定（`pref_key_color_mode`）を反映
  */
 class MediaViewActivity : BaseActivity() {
 
@@ -51,12 +50,10 @@ class MediaViewActivity : BaseActivity() {
         currentUrl = intent.getStringExtra(EXTRA_URL)
         currentText = intent.getStringExtra(EXTRA_TEXT)
 
-        // 配色モード（テーマカラー）設定を取得
-        val colorModePref = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
+        // テーマ適用済みのコンテンツを構築（表現的なカラースキーム）
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 val title = when (currentType) {
                     TYPE_IMAGE -> "画像ビューア"
                     TYPE_VIDEO -> "動画ビューア"
@@ -78,6 +75,10 @@ class MediaViewActivity : BaseActivity() {
         }
     }
 
+    /**
+     * 表示中の画像を端末へ保存する。
+     * API < 29（Android 9以下）では事前に WRITE_EXTERNAL_STORAGE 権限を確認する。
+     */
     private fun saveImage() {
         // API < 29 では WRITE_EXTERNAL_STORAGE 権限が必要
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -102,6 +103,10 @@ class MediaViewActivity : BaseActivity() {
         }
     }
 
+    /**
+     * 表示中の動画を端末へ保存する。
+     * API < 29（Android 9以下）では事前に WRITE_EXTERNAL_STORAGE 権限を確認する。
+     */
     private fun saveVideo() {
         // API < 29 では WRITE_EXTERNAL_STORAGE 権限が必要
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {

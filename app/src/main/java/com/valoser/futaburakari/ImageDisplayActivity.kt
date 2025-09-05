@@ -7,10 +7,10 @@ import com.valoser.futaburakari.ui.compose.ImageDisplayScreen
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
 /**
- * 単一画像をComposeで表示するアクティビティ。
+ * 単一画像を Compose で表示するアクティビティ。
  *
- * - 呼び出し元から受け取った画像URIと補助テキスト（プロンプト情報）を表示
- * - テーマカラーはユーザー設定（`pref_key_color_mode`）を反映
+ * - 画像URI（`EXTRA_IMAGE_URI`）と補助テキスト（`EXTRA_PROMPT_INFO`）を受け取り表示
+ * - 上部UIは Compose 側で提供。戻る操作は `onBackPressedDispatcher` に委譲
  */
 class ImageDisplayActivity : BaseActivity() {
 
@@ -28,13 +28,11 @@ class ImageDisplayActivity : BaseActivity() {
         val imageUriString = intent.getStringExtra(EXTRA_IMAGE_URI)
         val promptInfo = intent.getStringExtra(EXTRA_PROMPT_INFO)
 
-        // 配色モード（テーマカラー）設定を取得
-        val colorModePref = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
+        // テーマ適用済みのコンテンツを構築（表現的なカラースキーム）
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
-                // 画像表示用のComposeスクリーンを構築
+            FutaburakariTheme(expressive = true) {
+                // 画像表示用の Compose スクリーンを構築
                 ImageDisplayScreen(
                     imageUri = imageUriString,
                     prompt = promptInfo,

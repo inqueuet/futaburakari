@@ -120,11 +120,9 @@ class ImageEditActivity : BaseActivity() {
             return
         }
 
-        val colorModePref = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 Scaffold(
                     topBar = {
                         TopAppBar(

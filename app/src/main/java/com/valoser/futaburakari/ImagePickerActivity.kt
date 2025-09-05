@@ -88,11 +88,9 @@ class ImagePickerActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val colorModePref = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_color_mode", "green")
 
         setContent {
-            FutaburakariTheme(colorMode = colorModePref) {
+            FutaburakariTheme(expressive = true) {
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -131,6 +129,10 @@ class ImagePickerActivity : BaseActivity() {
         checkAndOpenGallery()
     }
 
+    /**
+     * 端末のバージョンに応じて必要な権限を確認し、
+     * 問題なければ画像ピッカーを起動する。
+     */
     private fun checkAndOpenGallery() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Photo Picker はストレージ権限が不要
@@ -150,6 +152,10 @@ class ImagePickerActivity : BaseActivity() {
         }
     }
 
+    /**
+     * 画像ピッカーを起動する。
+     * Android 13 以降は Photo Picker、それ以前は SAF の GetContent を使用。
+     */
     private fun launchGallery() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // システムの Photo Picker を使用
@@ -162,6 +168,10 @@ class ImagePickerActivity : BaseActivity() {
         }
     }
 
+    /**
+     * 取得した画像 URI を編集画面へ渡す。
+     * 読み取り権限を付与し、`ClipData` にも設定して確実に権限を伝播させる。
+     */
     private fun openEditorWithUri(it: Uri) {
         // 取得した URI を編集画面に渡す。読み取り権限を付与し、ClipData にも設定して確実に権限伝播させる。
         val intent = Intent(this, ImageEditActivity::class.java).apply {
