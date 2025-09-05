@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Reply
 import androidx.compose.material.icons.rounded.Search
@@ -65,11 +66,13 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
+ * - AppBar: 戻る/返信/更新/検索/NG 管理/メディア一覧/画像編集（`onImageEdit` が非 null の場合）を提供。
  *
  * パラメータ要約:
  * - `title`: AppBar に表示するタイトル。
  * - `onBack`/`onReply`/`onReload`/`onOpenNg`: ナビゲーションと主要アクションのハンドラ。
  * - `onOpenMedia`: 互換維持用（内部でメディアシートを表示するため実体は未使用）。
+ * - `onImageEdit`: 画像編集画面への遷移ハンドラ（null の場合は非表示）。
  * - `onSodaneClick`: 「そうだね」押下時のハンドラ（null で非表示）。
  * - `onDeletePost`: 削除要求のハンドラ（レス番/画像のみ指定）。
  * - `onSubmitSearch`/`onDebouncedSearch`/`onClearSearch`: 検索の確定/遅延/クリア時ハンドラ。
@@ -94,6 +97,7 @@ fun DetailScreenScaffold(
     onReload: () -> Unit,
     onOpenNg: () -> Unit,
     onOpenMedia: () -> Unit,
+    onImageEdit: (() -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
     onDeletePost: (resNum: String, onlyImage: Boolean) -> Unit,
     onSubmitSearch: (String) -> Unit,
@@ -186,6 +190,12 @@ fun DetailScreenScaffold(
                 // メディア一覧はComposeのシートで内製。互換のためコールバック引数は保持
                 IconButton(onClick = { openMediaSheet = true }) {
                     Icon(Icons.Rounded.Image, contentDescription = "Media List")
+                }
+                // 画像編集（任意）: 呼び出し側で `onImageEdit` を指定した場合のみ表示
+                if (onImageEdit != null) {
+                    IconButton(onClick = onImageEdit) {
+                        Icon(Icons.Rounded.Edit, contentDescription = "Image Edit")
+                    }
                 }
             },
                 colors = TopAppBarDefaults.topAppBarColors(

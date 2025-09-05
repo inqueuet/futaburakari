@@ -46,6 +46,7 @@ import com.valoser.futaburakari.search.RecentSearchStore
  * - 返信・削除・NGフィルタ更新・検索・ソーダネの操作を処理
  * - 履歴（最新レス番号とサムネイル）を更新し、スナップショット取得をトリガー
  * - ユーザー設定（テーマ/広告）や戻る操作のUXを反映
+ * - 画像編集の起動（トップバーの「画像編集」アクションから `ImagePickerActivity` へ遷移）
  */
 @AndroidEntryPoint
 class DetailActivity : BaseActivity() {
@@ -117,6 +118,7 @@ class DetailActivity : BaseActivity() {
     /**
      * テーマ適用済みの Compose コンテンツを初期化し、UIの各種コールバックを ViewModel/ストアへ接続する。
      * 併せて履歴の記録、スナップショットの起動、戻る操作のハンドリングを設定する。
+     * TopAppBar の主なアクション: 戻る/返信/再読み込み/検索/NG 管理/メディア一覧/画像編集。
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -147,6 +149,8 @@ class DetailActivity : BaseActivity() {
                     onReload = { reloadDetails() },
                     onOpenNg = { openNgManager() },
                     onOpenMedia = { },
+                    // 画像編集: 端末の画像を選んで `ImageEditActivity` へ渡すフローの起点
+                    onImageEdit = { startActivity(Intent(this@DetailActivity, ImagePickerActivity::class.java)) },
                     onSodaneClick = { resNum -> viewModel.postSodaNe(resNum) },
                     onDeletePost = { resNum, onlyImage ->
                         val threadUrl = currentUrl ?: return@DetailScreenScaffold
