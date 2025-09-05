@@ -12,6 +12,59 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Shapes
 
+// Expressive Style Color Schemes
+private val LightExpressiveScheme = lightColorScheme(
+    primary = expressive_primary_light,
+    onPrimary = expressive_onPrimary_light,
+    primaryContainer = expressive_primaryContainer_light,
+    onPrimaryContainer = expressive_onPrimaryContainer_light,
+    secondary = expressive_secondary_light,
+    onSecondary = expressive_onSecondary_light,
+    secondaryContainer = expressive_secondaryContainer_light,
+    onSecondaryContainer = expressive_onSecondaryContainer_light,
+    tertiary = expressive_tertiary_light,
+    onTertiary = expressive_onTertiary_light,
+    tertiaryContainer = expressive_tertiaryContainer_light,
+    onTertiaryContainer = expressive_onTertiaryContainer_light,
+    error = expressive_error_light,
+    onError = expressive_onError_light,
+    errorContainer = expressive_errorContainer_light,
+    onErrorContainer = expressive_onErrorContainer_light,
+    background = expressive_background_light,
+    onBackground = expressive_onBackground_light,
+    surface = expressive_surface_light,
+    onSurface = expressive_onSurface_light,
+    surfaceVariant = expressive_surfaceVariant_light,
+    onSurfaceVariant = expressive_onSurfaceVariant_light,
+    outline = expressive_outline_light,
+)
+
+private val DarkExpressiveScheme = darkColorScheme(
+    primary = expressive_primary_dark,
+    onPrimary = expressive_onPrimary_dark,
+    primaryContainer = expressive_primaryContainer_dark,
+    onPrimaryContainer = expressive_onPrimaryContainer_dark,
+    secondary = expressive_secondary_dark,
+    onSecondary = expressive_onSecondary_dark,
+    secondaryContainer = expressive_secondaryContainer_dark,
+    onSecondaryContainer = expressive_onSecondaryContainer_dark,
+    tertiary = expressive_tertiary_dark,
+    onTertiary = expressive_onTertiary_dark,
+    tertiaryContainer = expressive_tertiaryContainer_dark,
+    onTertiaryContainer = expressive_onTertiaryContainer_dark,
+    error = expressive_error_dark,
+    onError = expressive_onError_dark,
+    errorContainer = expressive_errorContainer_dark,
+    onErrorContainer = expressive_onErrorContainer_dark,
+    background = expressive_background_dark,
+    onBackground = expressive_onBackground_dark,
+    surface = expressive_surface_dark,
+    onSurface = expressive_onSurface_dark,
+    surfaceVariant = expressive_surfaceVariant_dark,
+    onSurfaceVariant = expressive_onSurfaceVariant_dark,
+    outline = expressive_outline_dark,
+)
+
 // ベース（パープル）配色。旧XMLテーマ値に合わせた定義。
 private val DarkPurpleScheme = darkColorScheme(
     primary = Color(0xFF3700B3), // purple_700
@@ -110,17 +163,14 @@ fun FutaburakariTheme(
     expressive: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = run {
-        val cm = colorMode?.lowercase()
-        // colorMode が明示されていれば動的カラーより優先
-        if (!cm.isNullOrBlank()) {
-            schemeFor(cm, darkTheme)
-        } else if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    val colorScheme = when {
+        expressive -> if (darkTheme) DarkExpressiveScheme else LightExpressiveScheme
+        !colorMode.isNullOrBlank() -> schemeFor(colorMode.lowercase(), darkTheme)
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        } else {
-            schemeFor("purple", darkTheme)
         }
+        else -> schemeFor("purple", darkTheme)
     }
 
     val typography = if (expressive) ExpressiveTypography else Typography
