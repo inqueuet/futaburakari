@@ -19,12 +19,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Bookmarks
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -46,11 +46,27 @@ import com.valoser.futaburakari.RuleType
 @Composable
 /**
  * 画像カタログの一覧画面。
- * - プルリフレッシュおよび端での強いオーバースクロール（バウンス）で再読み込みを実行。
- * - 検索欄の表示切替、ブックマーク選択/管理、履歴、設定などのメニュー操作を提供。
- * - NG タイトルルールとクエリで一覧をフィルタし、グリッド表示します。
- * - 可視範囲＋先読み分の軽量プリフェッチでスクロール体験を滑らかにします。
- * - グリッドの各カードでは、下部のグラデーションオーバーレイ上にタイトルを表示し、返信数は右下のバッジとしてタイトルよりレイヤーが上に重ねて表示します。
+ *
+ * 機能概要:
+ * - 更新: プルリフレッシュに加え、端での強いオーバースクロール（バウンス）でも再読み込みを実行（連発抑止あり）。
+ * - 操作: 検索欄の表示切替、ブックマーク選択/管理、履歴、設定メニューを提供。
+ * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
+ * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
+ * - 表示: 各カードは下部にグラデーション、タイトルを重ね、返信数は右下バッジでタイトルより上のレイヤーに表示。
+ *
+ * パラメータ:
+ * - `modifier`: ルートレイアウト用の修飾子。
+ * - `title`/`subtitle`: 上部タイトル/サブタイトル（検索欄が表示中は非表示）。
+ * - `items`: 表示対象のアイテム一覧（呼び出し側で取得）。
+ * - `isLoading`: 読み込み中インジケータの表示制御。
+ * - `spanCount`: グリッド列数。
+ * - `query`/`onQueryChange`: 検索クエリと変更ハンドラ。
+ * - `onReload`: 更新アクション（プル/バウンス発火時も呼ぶ）。
+ * - `onSelectBookmark`/`onManageBookmarks`: ブックマークの選択/管理アクション。
+ * - `onOpenSettings`/`onOpenHistory`: 設定/履歴画面を開くアクション。
+ * - `onImageEdit`/`onBrowseLocalImages`: その他メニューの操作。
+ * - `onItemClick`: アイテムタップ時のハンドラ。
+ * - `ngRules`: NG タイトルルール一覧（TITLE 以外は無視）。
  */
 fun MainCatalogScreen(
     modifier: Modifier = Modifier,
@@ -145,7 +161,7 @@ fun MainCatalogScreen(
             }
     }
 
-    // 軽量プリフェッチ（可視範囲＋先読み分の少量だけ）
+    // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     val context = LocalContext.current
     LaunchedEffect(items, gridState) {
         snapshotFlow {
@@ -211,16 +227,16 @@ fun MainCatalogScreen(
                 },
                 actions = {
                     IconButton(onClick = { if (!isLoading) onReload() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "再読み込み")
+                        Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
                     }
                     IconButton(onClick = onSelectBookmark) {
-                        Icon(Icons.Default.BookmarkBorder, contentDescription = "ブックマーク選択")
+                        Icon(Icons.Rounded.BookmarkBorder, contentDescription = "ブックマーク選択")
                     }
                     IconButton(onClick = onManageBookmarks) {
-                        Icon(Icons.Default.Bookmarks, contentDescription = "ブックマーク管理")
+                        Icon(Icons.Rounded.Bookmarks, contentDescription = "ブックマーク管理")
                     }
                     IconButton(onClick = { searching = !searching }) {
-                        Icon(Icons.Default.Search, contentDescription = "検索")
+                        Icon(Icons.Rounded.Search, contentDescription = "検索")
                     }
                     MoreMenu(
                         onImageEdit = onImageEdit,
@@ -230,11 +246,11 @@ fun MainCatalogScreen(
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    scrolledContainerColor = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
                 )
             )
         }
@@ -258,7 +274,7 @@ fun MainCatalogScreen(
                 columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
                 contentPadding = PaddingValues(4.dp)
             ) {
-                // 安定キーに detailUrl を使用
+                // 安定キーに `detailUrl` を使用
                 items(filtered, key = { it.detailUrl }) { item ->
                     CatalogCard(item = item, onClick = { onItemClick(item) })
                 }
@@ -275,6 +291,7 @@ fun MainCatalogScreen(
 @Composable
 /**
  * 右上「その他」メニュー。画像編集・ローカル画像・履歴・設定を提供。
+ * 選択時はメニューを閉じてから各ハンドラを呼び出す。
  */
 private fun MoreMenu(
     onImageEdit: () -> Unit,
@@ -285,7 +302,7 @@ private fun MoreMenu(
     var expanded by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Default.MoreVert, contentDescription = "その他")
+            Icon(Icons.Rounded.MoreVert, contentDescription = "その他")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("画像編集") }, onClick = { expanded = false; onImageEdit() })
@@ -299,7 +316,8 @@ private fun MoreMenu(
 @Composable
 /**
  * カタログアイテムのカード表示。
- * 下部のグラデーションオーバーレイにタイトルを表示し、返信数は右下のバッジとしてオーバーレイよりレイヤーが上に重ねて表示します。
+ * 下部グラデーション上にタイトルを配置し、返信数は右下バッジとして上位レイヤーに重ねる。
+ * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
  */
 private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
     Card(
@@ -331,7 +349,7 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                     shape = MaterialTheme.shapes.small
                 ) {}
                 Icon(
-                    imageVector = Icons.Default.PlayArrow,
+                    imageVector = Icons.Rounded.PlayArrow,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.align(Alignment.Center)
@@ -365,7 +383,7 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                     .padding(start = 6.dp, end = 6.dp, bottom = 8.dp)
             )
 
-            // 返信数バッジ（右下）。タイトル/オーバーレイの後に描画し、レイヤー的に上に重ねる
+            // 返信数バッジ（右下）。タイトル/オーバーレイより後に描画し、上に重ねる
             if (!item.replyCount.isNullOrBlank()) {
                 Text(
                     text = item.replyCount,
@@ -384,6 +402,7 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
 
 /**
  * タイトルに対して NG ルールを適用してマッチ判定する。
+ * `RuleType.TITLE` のみを対象とし、`MatchType` に応じて一致判定を行う。
  */
 private fun matchTitle(title: String, rule: NgRule): Boolean {
     val pattern = rule.pattern

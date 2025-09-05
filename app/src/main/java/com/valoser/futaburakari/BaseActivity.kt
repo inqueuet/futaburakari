@@ -9,11 +9,13 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.preference.PreferenceManager
 
 /**
- * Base activity that applies user UI preferences:
- * - Respects font scale from shared preferences via a wrapped base context.
- * - Applies theme mode (light/dark/system) and color theme per user setting.
- * - Recreates on resume if font scale, theme, or color settings changed.
- * Also standardizes the ActionBar "Up" indicator across screens.
+ * ベースとなる Activity。
+ *
+ * 機能概要:
+ * - フォントサイズ: 共有設定の `pref_key_font_scale` を参照して `attachBaseContext` で反映。
+ * - テーマ: ライト/ダーク/システムのモードと、色テーマを起動前に適用。
+ * - 変更検知: バックグラウンド中にフォント/テーマ/カラーが変わった場合は復帰時に再生成。
+ * - 戻る操作: ActionBar の Up 操作を一貫して「戻る」動作として扱う（アイコン自体の表示/非表示は各画面側で管理）。
  */
 open class BaseActivity : AppCompatActivity() {
     /** Last applied font scale. */
@@ -23,8 +25,8 @@ open class BaseActivity : AppCompatActivity() {
     /** Last applied color mode used to detect changes on resume. */
     private var lastAppliedColorMode: String? = null
     /**
-     * Wraps the base context with a configuration reflecting the stored font scale.
-     * Reads `pref_key_font_scale` (default "1.0") and sets `Configuration.fontScale` before attaching.
+     * 共有設定のフォント倍率を反映した `Configuration` でベースコンテキストをラップする。
+     * `pref_key_font_scale`（既定値 "1.0"）を読み取り、`Configuration.fontScale` を設定してからアタッチする。
      */
     override fun attachBaseContext(newBase: Context) {
         val prefs = PreferenceManager.getDefaultSharedPreferences(newBase)
@@ -41,7 +43,7 @@ open class BaseActivity : AppCompatActivity() {
         super.attachBaseContext(ctx)
     }
 
-    /** Applies theme preferences before standard creation and enables edge-to-edge. */
+    /** 生成前にテーマ関連の設定を適用し、Edge-to-Edge 表示を有効化する。 */
     override fun onCreate(savedInstanceState: Bundle?) {
         applyThemePreferences()
         super.onCreate(savedInstanceState)
@@ -50,8 +52,8 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     /**
-     * Applies theme mode and color theme based on shared preferences.
-     * Persists the "last applied" values for change detection on resume.
+     * 共有設定に基づいてテーマモードと色テーマを適用する。
+     * 復帰時の変更検知のため、適用した値を保持する。
      */
     private fun applyThemePreferences() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
@@ -75,13 +77,12 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     /**
-     * Standardizes the Up indicator and recreates the activity if preferences changed
-     * while in background (font scale, theme mode, or color mode).
+     * バックグラウンド中にフォント倍率/テーマモード/カラーモードが変更された場合、
+     * 復帰時に `recreate()` して最新設定を反映する。
      */
     override fun onResume() {
         super.onResume()
-        // Unify Up indicator icon across activities that show it
-        runCatching { supportActionBar?.setHomeAsUpIndicator(R.drawable.ic_arrow_back) }
+        // Material3 のナビゲーションアイコン/色はテーマに準拠させる（カスタム上書きは行わない）
         // If preference changed while this activity was in background, recreate to apply.
         val targetScale = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_font_scale", "1.0")?.toFloatOrNull() ?: 1.0f
@@ -98,13 +99,13 @@ open class BaseActivity : AppCompatActivity() {
         }
     }
 
-    /** Handles ActionBar Up navigation by delegating to the back dispatcher. */
+    /** ActionBar の Up ナビゲーションをバックディスパッチャに委譲して戻る動作とする。 */
     override fun onSupportNavigateUp(): Boolean {
         onBackPressedDispatcher.onBackPressed()
         return true
     }
 
-    /** Handles toolbar/home button presses; treats Home as back navigation. */
+    /** ツールバーのホームボタン押下を「戻る」動作として扱う。 */
     override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
         return if (item.itemId == android.R.id.home) {
             onBackPressedDispatcher.onBackPressed()

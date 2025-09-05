@@ -68,9 +68,6 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    // Accompanist SwipeRefresh for pull-to-refresh (Material3 pull-to-refresh 未使用)
-    implementation("com.google.accompanist:accompanist-swiperefresh:0.34.0")
-    implementation(libs.androidx.compose.material)
     // Compose Foundation (LazyVerticalGrid など)
     implementation("androidx.compose.foundation:foundation")
 

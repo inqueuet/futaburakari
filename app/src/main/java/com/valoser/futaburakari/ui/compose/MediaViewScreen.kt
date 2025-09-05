@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Icon
@@ -61,12 +63,23 @@ import kotlinx.coroutines.launch
 @Composable
 /**
  * 画像/動画/テキストを表示する汎用メディア画面。
- * - `type` が `image` の場合はピンチ/ダブルタップズーム対応の画像ビュー。
- * - `type` が `video` の場合は ExoPlayer による動画再生ビュー。
- * - その他はテキスト表示ビュー（スクロール可能）。
- * - テキスト（プロンプト）が利用可能な場合はトップバーからコピー/保存が可能。
- * - 画像時は必要に応じてメタデータ抽出（`MetadataExtractor`）を行い `text` を補完。
- * - 画像/動画の保存はコールバック（`onSaveImage`/`onSaveVideo`）が提供されている時のみ表示。
+ *
+ * 機能概要:
+ * - `type == image`: ピンチ/ダブルタップズーム対応の画像ビュー。
+ * - `type == video`: ExoPlayer による動画再生ビュー（ライフサイクルで開放）。
+ * - それ以外: スクロール可能なテキストビュー。
+ * - テキスト（プロンプト）が利用可能ならトップバーからコピー/保存アクションを表示。
+ * - 画像時は必要に応じてメタデータ抽出（`MetadataExtractor`）で `text` を補完。
+ * - 画像/動画の保存アクションはコールバック指定時のみ表示（URL が空の場合はスナックバー通知）。
+ *
+ * パラメータ:
+ * - `title`: 上部タイトル。
+ * - `type`: メディア種別（"image"/"video"/その他）。
+ * - `url`: メディアの URL（テキスト時は未使用）。
+ * - `initialText`: 初期テキスト（image の場合は抽出で上書き補完される場合あり）。
+ * - `networkClient`: メタデータ抽出で利用するネットワーククライアント。
+ * - `onBack`: 戻る押下時のハンドラ。
+ * - `onSaveImage`/`onSaveVideo`: 保存アクションのハンドラ（指定時のみ表示）。
  */
 fun MediaViewScreen(
     title: String,
@@ -122,7 +135,7 @@ fun MediaViewScreen(
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "戻る") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る") }
                 },
                 actions = {
                     // テキストがある場合はコピー/保存アクションを表示
@@ -136,12 +149,12 @@ fun MediaViewScreen(
                             } else {
                                 scope.launch { snackbarHostState.showSnackbar("コピーするテキストがありません") }
                             }
-                        }) { Icon(Icons.Default.ContentCopy, contentDescription = "コピー") }
+                        }) { Icon(Icons.Rounded.ContentCopy, contentDescription = "コピー") }
 
                         IconButton(onClick = {
                             val suggested = buildDefaultFileName(text)
                             createTextFileLauncher.launch("$suggested.txt")
-                        }) { Icon(Icons.Default.Save, contentDescription = "テキスト保存") }
+                        }) { Icon(Icons.Rounded.Save, contentDescription = "テキスト保存") }
                     }
                     // 対応するメディアの保存（URL が空ならスナックバーで通知）
                     if (canShowSaveMedia) {
@@ -150,14 +163,14 @@ fun MediaViewScreen(
                                 "image" -> if (!url.isNullOrBlank()) onSaveImage?.invoke() else scope.launch { snackbarHostState.showSnackbar("画像URLがありません") }
                                 "video" -> if (!url.isNullOrBlank()) onSaveVideo?.invoke() else scope.launch { snackbarHostState.showSnackbar("動画URLがありません") }
                             }
-                        }) { Icon(Icons.Default.Save, contentDescription = "メディア保存") }
+                        }) { Icon(Icons.Rounded.Save, contentDescription = "メディア保存") }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         }
@@ -190,7 +203,7 @@ private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
 @Composable
 /**
  * ExoPlayer を用いた動画表示。URL から `MediaItem` をセットして再生準備。
- * `DisposableEffect` でライフサイクルに合わせてプレイヤーを解放します。
+ * `DisposableEffect` でライフサイクルに合わせてプレイヤーを解放する。
  */
 private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -250,7 +263,7 @@ private fun buildDefaultFileName(text: String?): String {
 /**
  * ピンチ/ドラッグ/ダブルタップに対応したズーム可能な画像コンポーネント。
  * - ピンチで倍率を `minScale..maxScale` にクランプ。
- * - ドラッグでパン（ここでは制限なし）。
+ * - ドラッグでパン（必要に応じてクランプ可能だが本実装では無制限）。
  * - ダブルタップで中間倍率と 1x をトグルし、オフセットをリセット。
  */
 private fun ZoomableAsyncImage(

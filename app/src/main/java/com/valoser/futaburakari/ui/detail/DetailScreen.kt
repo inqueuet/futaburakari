@@ -18,12 +18,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Reply
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Reply
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DockedSearchBar
@@ -37,8 +37,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.*
-import com.google.accompanist.swiperefresh.SwipeRefresh
-import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,14 +56,34 @@ import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 
 /**
- * スレ詳細のComposeスクリーン（土台）。
+ * スレ詳細の Compose スクリーン（Scaffold）。
  *
- * - リスト表示: 高速スクロール、スワイプ更新、末尾付近到達での追加読み込みトリガーに対応。
- * - 検索UI: ドック型の検索バー（遅延サジェスト）と、下部のPrev/Nextナビをホスト。
- * - ダイアログ/シート: IDメニュー、NG追加、メディアグリッド、引用/No./ファイル名参照などを管理。
- * - 広告: バナーの高さを下部インセットとして反映（Composeに状態を供給）。
- * - 集計負荷: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみをCompose状態に反映。
- * - メディア: メディアシートは内部で扱い、`onOpenMedia` は後方互換用のダミーとして保持。
+ * 機能概要:
+ * - リスト: 高速スクロール、プル更新、末尾近辺での追加読込トリガーに対応。
+ * - 検索: ドック型の検索バー（遅延サジェスト）と下部の Prev/Next ナビを提供。
+ * - ダイアログ/シート: ID メニュー、NG 追加、メディアグリッド、引用/No./ファイル名参照を内包。
+ * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
+ * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
+ * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
+ *
+ * パラメータ要約:
+ * - `title`: AppBar に表示するタイトル。
+ * - `onBack`/`onReply`/`onReload`/`onOpenNg`: ナビゲーションと主要アクションのハンドラ。
+ * - `onOpenMedia`: 互換維持用（内部でメディアシートを表示するため実体は未使用）。
+ * - `onSodaneClick`: 「そうだね」押下時のハンドラ（null で非表示）。
+ * - `onDeletePost`: 削除要求のハンドラ（レス番/画像のみ指定）。
+ * - `onSubmitSearch`/`onDebouncedSearch`/`onClearSearch`: 検索の確定/遅延/クリア時ハンドラ。
+ * - `onReapplyNgFilter`: NG ルール変更後に再適用するためのフック。
+ * - `searchStateFlow`/`searchActiveFlow`/`onSearchActiveChange`: 検索 UI の状態連携。
+ * - `recentSearchesFlow`: 検索サジェスト用の履歴。
+ * - `showAds`/`adUnitId`/`onBottomPaddingChange`/`bottomOffsetPxFlow`: 広告や下部パディングの制御。
+ * - `threadUrl`: NG ルールの sourceKey 生成向けのスレ URL。
+ * - `initialScrollIndex`/`initialScrollOffset`/`onSaveScroll`: スクロール位置の入出力。
+ * - `itemsFlow`/`currentQueryFlow`/`isRefreshingFlow`: 本文・検索・更新状態の Flow 連携。
+ * - `getSodaneState`/`sodaneUpdates`: 「そうだね」の状態問い合わせとサーバ更新ストリーム。
+ * - クリック系: `onQuoteClick`/`onResNumClick`/`onResNumConfirmClick`/`onResNumDelClick`/`onBodyClick`/`onAddNgFromBody`/`onThreadEndTimeClick` など。
+ * - `onVisibleMaxOrdinal`: 画面内の最大 ordinal を通知（読み込みや既読管理用）。
+ * - `onNearListEnd`: 末尾近辺到達時の通知（無限スクロール用）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,32 +167,32 @@ fun DetailScreenScaffold(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onReply) {
-                        Icon(Icons.Filled.Reply, contentDescription = "Reply")
-                    }
-                    IconButton(onClick = onReload) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Reload")
-                    }
-                    IconButton(onClick = { setSearchActive(!searchActive) }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                    IconButton(onClick = onOpenNg) {
-                        Icon(Icons.Filled.Block, contentDescription = "NG Manage")
-                    }
-                    // メディア一覧はComposeのシートで内製。互換のためコールバック引数は保持
-                    IconButton(onClick = { openMediaSheet = true }) {
-                        Icon(Icons.Filled.Image, contentDescription = "Media List")
-                    }
-                },
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+            actions = {
+                IconButton(onClick = onReply) {
+                    Icon(Icons.Rounded.Reply, contentDescription = "Reply")
+                }
+                IconButton(onClick = onReload) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "Reload")
+                }
+                IconButton(onClick = { setSearchActive(!searchActive) }) {
+                    Icon(Icons.Rounded.Search, contentDescription = "Search")
+                }
+                IconButton(onClick = onOpenNg) {
+                    Icon(Icons.Rounded.Block, contentDescription = "NG Manage")
+                }
+                // メディア一覧はComposeのシートで内製。互換のためコールバック引数は保持
+                IconButton(onClick = { openMediaSheet = true }) {
+                    Icon(Icons.Rounded.Image, contentDescription = "Media List")
+                }
+            },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
                 )
             )
         }
@@ -183,7 +203,7 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
-            // UIをブロックしないためのスコープ（重い集計はメインスレッド外で実行）
+            // UI をブロックしないためのスコープ（重い集計はメインスレッド外で実行）
             val scope = rememberCoroutineScope()
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
             // Hoisted "そうだね" 表示カウント
@@ -193,7 +213,7 @@ fun DetailScreenScaffold(
                     flow.collect { (rn, count) -> sodaneCounts[rn] = count }
                 }
             }
-            // 下のダイアログ/シートからも参照できるよう items/listState を上位に保持
+            // 下のダイアログ/シートからも参照できるよう items / listState を上位に保持
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
             // リストと高速スクロールで同じ listState を共有
@@ -201,13 +221,13 @@ fun DetailScreenScaffold(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
                 initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
             )
-            // 検索ナビ（Compose内でリストに吸着）を上位スコープで保持
+            // 検索ナビ（Compose 内でリストに吸着）を上位スコープで保持
             var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
             var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
             if (itemsFlow != null) {
                 val searchQuery = currentQueryFlow?.collectAsStateWithLifecycle(null)?.value
                 val refreshing = isRefreshingFlow?.collectAsStateWithLifecycle(false)?.value ?: false
-                val swipeState = rememberSwipeRefreshState(isRefreshing = refreshing)
+                val pullState = rememberPullToRefreshState()
                 var fastScrollActive by remember { mutableStateOf(false) }
                 // 下部余白: 既存の Flow があればそれを優先。無ければ広告の実測高さから算出
                 val legacyPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value
@@ -216,8 +236,8 @@ fun DetailScreenScaffold(
                 val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
                 var deleteTarget by remember { mutableStateOf<String?>(null) }
 
-                // 無限スクロール検知：末尾のコンテンツ(Text/Image/Video)近辺に到達したら通知
-                // 同一サイズの items に対しては1回だけ発火（重複抑止）
+                // 無限スクロール検知: 末尾のコンテンツ（Text/Image/Video）近辺に到達したら通知。
+                // 同一サイズの items に対しては 1 回だけ発火（重複抑止）。
                 var lastTriggeredSize by remember { mutableStateOf(-1) }
                 LaunchedEffect(items, refreshing, fastScrollActive) {
                     if (refreshing || fastScrollActive) return@LaunchedEffect
@@ -244,14 +264,18 @@ fun DetailScreenScaffold(
                         onNearListEnd?.invoke()
                     }
                 }
-                SwipeRefresh(state = swipeState, onRefresh = onReload) {
+                PullToRefreshBox(
+                    state = pullState,
+                    isRefreshing = refreshing,
+                    onRefresh = onReload,
+                ) {
                     val endPadding = DefaultFastScrollerWidth + 8.dp
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
                         threadTitle = title,
                         onQuoteClick = { token ->
-                            // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先
+                            // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
                             val snapshot = items
                             val core = token.trimStart().dropWhile { it == '>' || it == '＞' }.trim()
                             val isFilename = Regex("""(?i)^[A-Za-z0-9._-]+\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)$""").matches(core)
@@ -382,7 +406,7 @@ fun DetailScreenScaffold(
                         onBottomPaddingChange?.invoke(0)
                     }
                 }
-                // Accompanist SwipeRefresh は自身でインジケータを描画する
+                // Material3 PullToRefreshBox によるインジケータ描画
             }
 
             // ID メニュー（Composeダイアログ）
@@ -627,7 +651,7 @@ fun DetailScreenScaffold(
                     onActiveChange = { active -> setSearchActive(active) },
                     placeholder = { Text("検索キーワード") },
                     leadingIcon = {
-                        Icon(imageVector = Icons.Filled.Search, contentDescription = null)
+                        Icon(imageVector = Icons.Rounded.Search, contentDescription = null)
                     },
                     trailingIcon = {
                         if (query.isNotEmpty()) {
@@ -636,7 +660,7 @@ fun DetailScreenScaffold(
                                 onClearSearch()
                             }) {
                                 Icon(
-                                    imageVector = Icons.Filled.Close,
+                                    imageVector = Icons.Rounded.Close,
                                     contentDescription = "Clear"
                                 )
                             }
@@ -704,7 +728,7 @@ fun DetailScreenScaffold(
                                             }
                                             .padding(horizontal = 4.dp),
                                         leadingContent = {
-                                            Icon(Icons.Filled.Search, contentDescription = null)
+                                            Icon(Icons.Rounded.Search, contentDescription = null)
                                         },
                                     )
                                 }
@@ -766,9 +790,9 @@ fun DetailScreenScaffold(
 }
 
 /**
- * Simple banner ad host using Google Mobile Ads `AdView`.
- * - Emits measured height via `onHeightChanged` so layouts can add bottom padding.
- * - Width matches parent; height depends on the selected AdSize.
+ * シンプルなバナー広告ホスト（Google Mobile Ads の `AdView`）。
+ * - 実測高さを `onHeightChanged` で通知し、レイアウト側で下部パディングに反映できるようにする。
+ * - 幅は親に追従し、高さは選択した AdSize に依存する。
  */
 @Composable
 private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
@@ -790,8 +814,8 @@ private fun AdBanner(adUnitId: String, onHeightChanged: (Int) -> Unit) {
 }
 
 /**
- * Normalize thread items to keep only the last `ThreadEndTime` entry.
- * Preserves relative order of all other items.
+ * スレ内アイテムのうち `ThreadEndTime` を最後の 1 件だけ残すよう正規化する。
+ * それ以外のアイテムの相対順序は維持する。
  */
 private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent> {
     val endIdxs = src.withIndex().filter { it.value is DetailContent.ThreadEndTime }.map { it.index }
@@ -807,8 +831,8 @@ private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent
 }
 
 /**
- * Bottom overlay that shows search navigation controls and current/total hits.
- * Invokes `onPrev`/`onNext` when the arrow buttons are tapped.
+ * 検索用ナビゲーションバー（下部オーバーレイ）。
+ * 現在位置/総ヒット数を表示し、矢印押下で `onPrev` / `onNext` を呼び出す。
  */
 @Composable
 private fun SearchNavigationBar(
@@ -846,7 +870,7 @@ private fun SearchNavigationBar(
 }
 
 /**
- * Small AssistChip used for quick search suggestions within the docked search UI.
+ * ドック型検索 UI 内で使う簡易サジェスト用の AssistChip。
  */
 @Composable
 private fun QuickFilterChip(label: String, onClick: () -> Unit) {

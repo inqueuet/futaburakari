@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -40,14 +40,15 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 /**
  * 画像をユーザーに選択させ、編集画面へ受け渡すアクティビティ。
  *
- * - Android 13以降: システムのPhoto Pickerを使用（追加のストレージ権限は不要）
- * - Android 12以下: SAFのGetContentを使用（必要に応じてREAD_EXTERNAL_STORAGEを要求）
- * - 起動時に自動でピッカーを開き、キャンセル時は本アクティビティを終了
- * - 取得したURIは読み取り権限を付与しつつ `ImageEditActivity` に渡す
+ * 概要:
+ * - Android 13 以降: システムの Photo Picker を使用（追加のストレージ権限は不要）。
+ * - Android 12 以下: SAF の GetContent を使用（必要に応じて READ_EXTERNAL_STORAGE を要求）。
+ * - 挙動: 起動時に自動でピッカーを開き、キャンセル時は本アクティビティを終了。
+ * - 受け渡し: 取得した URI に読み取り権限を付与し、`ImageEditActivity` にインテントで渡す。
  */
 class ImagePickerActivity : BaseActivity() {
 
-    // Android 13+ のPhoto Picker（追加のストレージ権限は不要）
+    // Android 13+ の Photo Picker（追加のストレージ権限は不要）
     private val pickVisualMediaLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -59,7 +60,7 @@ class ImagePickerActivity : BaseActivity() {
         }
     }
 
-    // Android 12以下向けのフォールバック（SAF GetContent）
+    // Android 12 以下向けのフォールバック（SAF GetContent）
     private val getContentLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -98,14 +99,14 @@ class ImagePickerActivity : BaseActivity() {
                             title = { Text(text = "画像を選択", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             navigationIcon = {
                                 IconButton(onClick = { onBackPressedDispatcher.onBackPressed() }) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                                 }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                                navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                                navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                                actionIconContentColor = MaterialTheme.colorScheme.onSurface
                             )
                         )
                     }
@@ -119,7 +120,7 @@ class ImagePickerActivity : BaseActivity() {
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text("ギャラリーから画像を選択します")
-                            Button(onClick = { checkAndOpenGallery() }) { Text("画像を選択") }
+                            androidx.compose.material3.FilledTonalButton(onClick = { checkAndOpenGallery() }) { Text("画像を選択") }
                         }
                     }
                 }
@@ -132,7 +133,7 @@ class ImagePickerActivity : BaseActivity() {
 
     private fun checkAndOpenGallery() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Photo Pickerはストレージ権限が不要
+            // Photo Picker はストレージ権限が不要
             launchGallery()
             return
         }
@@ -151,18 +152,18 @@ class ImagePickerActivity : BaseActivity() {
 
     private fun launchGallery() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // システムのPhoto Pickerを使用
+            // システムの Photo Picker を使用
             pickVisualMediaLauncher.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
             )
         } else {
-            // SAFのGetContentを使用（Google フォト等との互換のため広く利用可能）
+            // SAF の GetContent を使用（Google フォト等との互換のため広く利用可能）
             getContentLauncher.launch("image/*")
         }
     }
 
     private fun openEditorWithUri(it: Uri) {
-        // 取得したURIを編集画面に渡す。読み取り権限を付与し、ClipDataにも設定して確実に権限伝播させる。
+        // 取得した URI を編集画面に渡す。読み取り権限を付与し、ClipData にも設定して確実に権限伝播させる。
         val intent = Intent(this, ImageEditActivity::class.java).apply {
             data = it
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

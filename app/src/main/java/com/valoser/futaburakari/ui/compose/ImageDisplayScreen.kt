@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -35,10 +35,17 @@ import com.valoser.futaburakari.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 /**
- * 画像とプロンプト（説明文）を表示する画面。
- * - 画像は 1:1 の正方形エリアに `ContentScale.Crop` で表示（未指定時はプレースホルダー）。
- * - 下部にスクロール可能なプロンプト表示と「プロンプトをコピー」ボタンを配置。
- * - プロンプトが空の場合は文言を補い、コピーは無効化します。
+ * 画像とプロンプト（説明文）を表示する画面コンポーザブル。
+ *
+ * 機能概要:
+ * - 画像は 1:1 の正方形領域に `ContentScale.Crop` で表示（URI 未指定時はプレースホルダー）。
+ * - 下部にスクロール可能なプロンプト領域と「プロンプトをコピー」ボタンを配置。
+ * - プロンプトが空の場合は代替文言を表示し、コピーは無効化。
+ *
+ * パラメータ:
+ * - `imageUri`: 表示する画像の URI（null/空の場合はプレースホルダー）。
+ * - `prompt`: 表示/コピー対象のプロンプト文字列（空のときは代替文言を表示）。
+ * - `onBack`: 上部の戻る操作時に呼ばれるハンドラ。
  */
 fun ImageDisplayScreen(
     imageUri: String?,
@@ -53,13 +60,13 @@ fun ImageDisplayScreen(
             TopAppBar(
                 title = { Text(text = stringResource(R.string.image), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "戻る") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         }
@@ -70,7 +77,7 @@ fun ImageDisplayScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // 画像表示エリア（1:1 の正方形）
+            // 画像表示エリア（1:1 の正方形）。ContentScale.Crop で中央トリミング表示。
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
                 if (!imageUri.isNullOrBlank()) {
                     AsyncImage(
@@ -80,14 +87,14 @@ fun ImageDisplayScreen(
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    // 画像が無い場合のプレースホルダー
+                    // 画像が無い場合のプレースホルダー（サーフェスのバリアント色）
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceVariant) {}
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // プロンプト表示カード（本文はスクロール可能）
+            // プロンプト表示カード（本文はスクロール可能）。空のときは代替文言を表示。
             Surface(
                 tonalElevation = 1.dp,
                 shape = MaterialTheme.shapes.medium
@@ -113,7 +120,7 @@ fun ImageDisplayScreen(
 
             // プロンプトをクリップボードへコピー（空の場合はボタン無効）
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Button(
+                androidx.compose.material3.FilledTonalButton(
                     onClick = {
                         if (!prompt.isNullOrBlank()) {
                             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

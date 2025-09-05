@@ -1,26 +1,31 @@
 <resources>
-    <!-- 基底テーマ -->
-    <style name="Theme.Futaburakari" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- ツールバーのオーバーフローアイコンの色は専用styleで制御 -->
-        <item name="actionOverflowButtonStyle">@style/OverflowButtonStyle</item>
-
-        <!-- デフォルトカラー設定 -->
+    <!-- 基底テーマ（Material Design 3）。
+         Compose と View（XML）で色/トーンの整合を取るため、主要なカラー役割を明示設定。 -->
+    <style name="Theme.Futaburakari" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 主要カラー役割（M3）を XML にも反映し、Compose / View で統一する。 -->
         <item name="colorPrimary">@color/my_expressive_primary</item>
-        <item name="colorPrimaryVariant">@color/purple_700</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <!-- ブランドの第二色。 -->
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
-        <!-- Edge-to-edge managed at runtime via enableEdgeToEdge() -->
-        <!-- On Android 15+, SHORT_EDGES is deprecated. Avoid forcing it via library defaults. -->
+        <item name="colorOnPrimary">@color/my_expressive_onPrimary</item>
+        <item name="colorPrimaryContainer">@color/my_expressive_primaryContainer</item>
+        <item name="colorOnPrimaryContainer">@color/my_expressive_onPrimaryContainer</item>
+
+        <item name="colorSecondary">@color/my_expressive_secondary</item>
+        <item name="colorOnSecondary">@color/my_expressive_onSecondary</item>
+        <item name="colorSecondaryContainer">@color/my_expressive_secondaryContainer</item>
+        <item name="colorOnSecondaryContainer">@color/my_expressive_onSecondaryContainer</item>
+
+        <item name="colorTertiary">@color/my_expressive_tertiary</item>
+        <item name="colorOnTertiary">@color/my_expressive_onTertiary</item>
+        <item name="colorTertiaryContainer">@color/my_expressive_tertiaryContainer</item>
+        <item name="colorOnTertiaryContainer">@color/my_expressive_onTertiaryContainer</item>
+
         <item name="android:windowLayoutInDisplayCutoutMode">default</item>
     </style>
 
-    <style name="Theme.Futaburakari.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+    <style name="Theme.Futaburakari.AppBarOverlay" parent="ThemeOverlay.Material3.Dark.ActionBar" />
 
-    <style name="Theme.Futaburakari.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+    <style name="Theme.Futaburakari.PopupOverlay" parent="ThemeOverlay.Material3" />
 
+    <!-- ツールバーのタイトル用テキスト外観（AppCompat 由来のコンポーネント互換）。 -->
     <style name="Toolbar.TitleText" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
         <item name="android:textColor">?attr/colorOnPrimary</item>
         <item name="android:textSize">24sp</item>

@@ -14,10 +14,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -42,10 +42,21 @@ import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.Bookmark
 
 /**
- * ブックマーク一覧と追加/編集/削除 UI を提供する画面コンポーザブル。
- * - 右下の FAB から新規追加ダイアログを表示します。
- * - 各行の編集/削除アイコンで編集ダイアログ・削除確認を表示します。
- * - 行のタップで `onSelectBookmark` を呼び出します。
+ * ブックマークの一覧表示と追加/編集/削除を行う画面コンポーザブル。
+ *
+ * 機能概要:
+ * - 右下の FAB で新規追加ダイアログを開く。
+ * - 各行の編集/削除アイコンで編集ダイアログ・削除確認を表示。
+ * - 行のタップで `onSelectBookmark` をコールバック。
+ *
+ * パラメータ:
+ * - `title`: 上部アプリバーのタイトル文言。
+ * - `bookmarks`: 一覧表示するブックマークリスト。
+ * - `onBack`: 上部ナビゲーションの戻る押下時のハンドラ。
+ * - `onAddBookmark`: 追加確定時（名前, URL）のハンドラ。
+ * - `onUpdateBookmark`: 編集確定時（旧URL, 名前, 新URL）のハンドラ。
+ * - `onDeleteBookmark`: 削除確定時のハンドラ。
+ * - `onSelectBookmark`: 行タップ時に選択されたブックマークを通知するハンドラ。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,14 +84,14 @@ fun BookmarkScreen(
                 title = { Text(text = title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
                 )
             )
         },
@@ -92,8 +103,8 @@ fun BookmarkScreen(
                 urlState.value = ""
                 editingOldUrl.value = null
                 showEditor.value = true
-            }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "追加")
+            }) {
+                Icon(imageVector = Icons.Rounded.Add, contentDescription = "追加")
             }
         }
     ) { innerPadding ->
@@ -103,7 +114,7 @@ fun BookmarkScreen(
                 .padding(innerPadding),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            // URL をキーとして安定ソートし、行を描画
+            // URL をキーに安定した項目識別を行い、行を描画（ソートは行わない）
             items(bookmarks, key = { it.url }) { bm ->
                 BookmarkRow(
                     bookmark = bm,
@@ -163,8 +174,14 @@ fun BookmarkScreen(
 
 @Composable
 /**
- * ブックマークリストの 1 行を表示。
- * 行のタップで `onClick`、右側アイコンで編集/削除を行います。
+ * ブックマークリストの 1 行を表示するコンポーザブル。
+ * 行のタップで `onClick` を呼び、右側のアイコンで編集/削除を行う。
+ *
+ * パラメータ:
+ * - `bookmark`: 表示対象のブックマーク。
+ * - `onEdit`: 編集アイコン押下時のハンドラ。
+ * - `onDelete`: 削除アイコン押下時のハンドラ。
+ * - `onClick`: 行全体のタップ時のハンドラ。
  */
 private fun BookmarkRow(
     bookmark: Bookmark,
@@ -186,10 +203,10 @@ private fun BookmarkRow(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "編集")
+                    Icon(Icons.Rounded.Edit, contentDescription = "編集")
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "削除")
+                    Icon(Icons.Rounded.Delete, contentDescription = "削除")
                 }
             }
         }
@@ -199,7 +216,14 @@ private fun BookmarkRow(
 @Composable
 /**
  * ブックマークの追加/編集用ダイアログ。
- * `nameState` と `urlState` は呼び出し元で保持して双方向バインドします。
+ * `nameState` と `urlState` は呼び出し元で保持し、入力値をバインドする。
+ *
+ * パラメータ:
+ * - `title`: ダイアログタイトル（追加/編集で切り替え）。
+ * - `nameState`: 名前入力の状態ホルダー。
+ * - `urlState`: URL 入力の状態ホルダー。
+ * - `onDismiss`: キャンセルなどで閉じる時のハンドラ。
+ * - `onConfirm`: 保存確定時のハンドラ。
  */
 private fun EditBookmarkDialog(
     title: String,
@@ -239,7 +263,12 @@ private fun EditBookmarkDialog(
 
 @Composable
 /**
- * 汎用の確認ダイアログ。メッセージと確定/キャンセルのコールバックを受け取ります。
+ * 汎用の確認ダイアログ。メッセージと確定/キャンセルのコールバックを受け取る。
+ *
+ * パラメータ:
+ * - `message`: 本文に表示する確認メッセージ。
+ * - `onConfirm`: 確定（ポジティブ）押下時のハンドラ。
+ * - `onDismiss`: キャンセル/外側タップ時のハンドラ。
  */
 private fun ConfirmDialog(
     message: String,

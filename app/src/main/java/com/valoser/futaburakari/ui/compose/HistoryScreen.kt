@@ -15,10 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -70,7 +70,20 @@ enum class HistorySortMode { MIXED, UPDATED, VIEWED, UNREAD }
 @Composable
 /**
  * 閲覧履歴の一覧画面。
- * 未読のみ表示の切り替え、並び替え、全削除、スワイプによる削除（取り消し付き）を提供します。
+ * 未読のみ表示の切り替え、並び替え、全削除、スワイプによる削除を提供する。
+ * （現状 Undo は未実装で、スワイプ確定時に即時削除する）
+ *
+ * パラメータ:
+ * - `title`: 上部アプリバーのタイトル文言。
+ * - `entries`: 表示する履歴エントリのリスト（表示順は呼び出し側に依存）。
+ * - `showUnreadOnly`: 未読のみ表示フラグ。
+ * - `sortMode`: 並び替えモード。
+ * - `onBack`: 戻る押下時のハンドラ。
+ * - `onToggleUnreadOnly`: 未読のみのトグル切り替えハンドラ。
+ * - `onSelectSort`: 並び替えモード選択時のハンドラ。
+ * - `onClearAll`: 履歴を全削除するハンドラ。
+ * - `onClickItem`: 行タップ時のハンドラ。
+ * - `onDeleteItem`: 行スワイプ確定時の削除ハンドラ。
  */
 fun HistoryScreen(
     title: String,
@@ -88,7 +101,7 @@ fun HistoryScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    // スワイプ削除の即時反映と取り消しのためのローカル表示用リスト
+    // スワイプ削除の即時反映のためのローカル表示用リスト（Undo 未実装）
     var localEntries by remember(entries) { mutableStateOf(entries) }
     LaunchedEffect(entries) { localEntries = entries }
 
@@ -98,23 +111,23 @@ fun HistoryScreen(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 },
                 actions = {
                     // 未読のみのトグルとその他メニュー
                     IconButton(onClick = onToggleUnreadOnly) {
-                        Icon(Icons.Default.FilterList, contentDescription = if (showUnreadOnly) "未読のみ（ON）" else "未読のみ（OFF）")
+                        Icon(Icons.Rounded.FilterList, contentDescription = if (showUnreadOnly) "未読のみ（ON）" else "未読のみ（OFF）")
                     }
                     IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "メニュー")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         // メニュー: 全削除と並び替えモードの選択（選択状態の表示は持たない）
                         DropdownMenuItem(
                             text = { Text("履歴をすべて削除") },
                             onClick = { menuExpanded = false; onClearAll() },
-                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                            leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) }
                         )
                         DropdownMenuItem(
                             text = { Text("並び替え: 新着優先") },
@@ -135,14 +148,14 @@ fun HistoryScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
                 )
             )
         },
-        // スワイプ削除の取り消し操作を提示するスナックバー
+        // 将来的な Undo 提示に利用予定のスナックバー（現状は未使用）
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         if (localEntries.isEmpty()) {
@@ -161,7 +174,7 @@ fun HistoryScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                // 安定したキーとして `HistoryEntry.key` を使用
+                // 安定したキーとして `HistoryEntry.key` を使用（表示順は渡された `entries` に従う）
                 items(localEntries, key = { it.key }) { e ->
                     val dismissState = rememberSwipeToDismissBoxState(
                         // スワイプ確定時に即時削除（Undoは一旦無効化）
@@ -271,11 +284,11 @@ private fun DismissBackground(state: androidx.compose.material3.SwipeToDismissBo
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isStart) {
-            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(modifier = Modifier)
         } else if (isEnd) {
             Spacer(modifier = Modifier)
-            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
         } else {
             Spacer(modifier = Modifier)
             Spacer(modifier = Modifier)

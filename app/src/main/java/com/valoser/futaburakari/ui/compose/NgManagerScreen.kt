@@ -1,16 +1,23 @@
 package com.valoser.futaburakari.ui.compose
 
 /**
- * NGルール管理画面。
- * - 種別: NG ID / NGワード(本文) / スレタイNG の一覧表示・追加・編集・削除に対応。
- * - 追加: 右下のFABから。`limitType` 指定時は種類選択をスキップして該当種別の編集ダイアログを直接表示。
- * - 検索/絞り込み: 画面上部に検索欄（パターン/種類に部分一致）。`limitType == null` の場合は種類チップ（すべて/ID/本文/スレタイ）でフィルタ可能。
- * - 行操作:
- *   - カードタップで編集を開く。
- *   - 右端メニューから編集/削除が可能。
- *   - 左右スワイプで削除（Undoなし）。
- * - アプリバー: CenterAlignedTopAppBar + pinned scroll。
+ * NG ルール管理画面。
+ *
+ * 機能概要:
+ * - 種別: NG ID / NG ワード（本文）/ スレタイ NG の一覧表示・追加・編集・削除に対応。
+ * - 追加: 右下の FAB から。`limitType` 指定時は種類選択をスキップして該当種別の編集ダイアログを直接表示。
+ * - 検索/絞り込み: 上部に検索欄（パターン/種類に部分一致）。`limitType == null` の場合は種類チップ（すべて/ID/本文/スレタイ）でフィルタ可能。
+ * - 行操作: カードタップで編集、右端メニューから編集/削除、左右スワイプで削除（Undo なし）。
+ * - アプリバー: CenterAlignedTopAppBar（pinned スクロール）。
  * - 空状態: 条件に一致しない場合はガイダンス文言を表示。
+ *
+ * パラメータ:
+ * - `title`: 上部タイトル。
+ * - `rules`: 表示対象の NG ルール一覧。
+ * - `onBack`: 戻る押下時のハンドラ。
+ * - `onAddRule`/`onUpdateRule`/`onDeleteRule`: 追加/更新/削除時のコールバック。
+ * - `limitType`: 種類を固定する場合に指定（検索チップを非表示）。
+ * - `hideTitleOption`: 追加/検索フィルタからスレタイ NG を除外する場合に true。
  */
 
 import androidx.compose.foundation.clickable
@@ -27,13 +34,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -98,7 +105,7 @@ fun NgManagerScreen(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 },
                 scrollBehavior = scrollBehavior
@@ -114,7 +121,7 @@ fun NgManagerScreen(
                     showTypePicker = true
                 }
             }) {
-                Icon(Icons.Default.Add, contentDescription = "追加")
+                Icon(Icons.Rounded.Add, contentDescription = "追加")
             }
         }
     ) { inner ->
@@ -131,11 +138,11 @@ fun NgManagerScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("検索（パターン/種類）") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) {
                             IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "クリア")
+                                Icon(Icons.Rounded.Clear, contentDescription = "クリア")
                             }
                         }
                     },
@@ -329,16 +336,16 @@ private fun RuleItem(
                 )
             }
             IconButton(onClick = { menu = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
+                Icon(Icons.Rounded.MoreVert, contentDescription = "メニュー")
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                     text = { Text("編集") },
                     onClick = { menu = false; onEdit() }
                 )
                 DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                     text = { Text("削除") },
                     onClick = { menu = false; onDelete() }
                 )
@@ -521,7 +528,7 @@ private fun TypePickRow(label: String, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(imageVector = Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -541,11 +548,11 @@ private fun NgDismissBackground(state: androidx.compose.material3.SwipeToDismiss
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isStart) {
-            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(modifier = Modifier)
         } else if (isEnd) {
             Spacer(modifier = Modifier)
-            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
         } else {
             Spacer(modifier = Modifier)
             Spacer(modifier = Modifier)

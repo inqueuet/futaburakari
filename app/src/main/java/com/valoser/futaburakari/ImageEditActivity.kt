@@ -14,7 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,13 +61,14 @@ import java.io.OutputStream
 import dagger.hilt.android.EntryPointAccessors
 
 /**
- * 画像にモザイク/消しゴムを適用できるComposeベースの簡易編集アクティビティ。
+ * 画像にモザイク/消しゴムを適用できる Compose ベースの簡易編集アクティビティ。
  *
- * - インテントの `EXTRA_IMAGE_URI` を読み込み、ビットマップを非同期でデコード
- * - `EditingEngine` を生成し、`ImageEditorCanvas` 上で描画/ジェスチャを処理
- * - ツール（モザイク/消しゴム）、ブラシ太さ、モザイク強さ、操作ロックをUIで切り替え
- * - 保存時は最終合成画像をギャラリーへ書き出し、可能ならEXIFにプロンプト（ユーザーコメント）を付与
- * - APIに応じてMediaStore/外部ストレージを使い分け、API 28以下では書込権限を確認
+ * 概要:
+ * - 入力: インテントの `EXTRA_IMAGE_URI` または `data` に付与された URI。
+ * - 読み込み: 画像を非同期にデコードし、`EditingEngine` を生成して `ImageEditorCanvas` で描画/操作。
+ * - ツール: モザイク/消しゴムの切替、ブラシ太さ、モザイク強さ、操作ロックの切替を UI で提供。
+ * - 保存: 合成結果をギャラリーへ保存。可能なら EXIF の UserComment にプロンプト（説明文）を埋め込む。
+ * - 権限/保存先: API に応じて MediaStore/外部ストレージを使い分け、API 28 以下では書込権限を確認。
  */
 class ImageEditActivity : BaseActivity() {
 
@@ -130,14 +131,14 @@ class ImageEditActivity : BaseActivity() {
                             title = { Text(text = getString(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             navigationIcon = {
                                 IconButton(onClick = { onBackPressedDispatcher.onBackPressed() }) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "戻る")
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                                 }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                                navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                                navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                                actionIconContentColor = MaterialTheme.colorScheme.onSurface
                             )
                         )
                     }
@@ -147,7 +148,7 @@ class ImageEditActivity : BaseActivity() {
                             .fillMaxSize()
                             .padding(inner)
                     ) {
-                        // キャンバス（ズーム/オーバーレイはComposeで完結）
+                        // キャンバス領域（ズーム/オーバーレイは Compose で完結）
                         // コントロール用状態（オーバーレイから参照されるため先に定義）
                         var brushSize by rememberSaveable { mutableIntStateOf(currentBrushSizePx) }
                         var mosaicAlpha by rememberSaveable { mutableIntStateOf(currentMosaicAlpha) }
@@ -217,13 +218,13 @@ class ImageEditActivity : BaseActivity() {
 
                                 Row(modifier = Modifier.fillMaxWidth()) {
                                     if (toolName == Tool.MOSAIC.name) {
-                                        Button(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("モザイク") }
+                                        androidx.compose.material3.FilledTonalButton(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("モザイク") }
                                         Spacer(Modifier.width(8.dp))
                                         OutlinedButton(onClick = { applyTool(Tool.ERASER); toolName = Tool.ERASER.name }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
                                     } else if (toolName == Tool.ERASER.name) {
                                         OutlinedButton(onClick = { applyTool(Tool.MOSAIC); toolName = Tool.MOSAIC.name }, modifier = Modifier.weight(1f)) { Text("モザイク") }
                                         Spacer(Modifier.width(8.dp))
-                                        Button(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
+                                        androidx.compose.material3.FilledTonalButton(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
                                     } else {
                                         OutlinedButton(onClick = { applyTool(Tool.MOSAIC); toolName = Tool.MOSAIC.name }, modifier = Modifier.weight(1f)) { Text("モザイク") }
                                         Spacer(Modifier.width(8.dp))
@@ -253,14 +254,14 @@ class ImageEditActivity : BaseActivity() {
                 }
             }
         }
-        // レンダリング/操作はComposeのみで完結
+        // レンダリング/操作は Compose のみで完結
 
         if (savedInstanceState != null) {
             isLocked = savedInstanceState.getBoolean("lock_state", false)
             // ロックUI状態はComposeの状態で管理
         }
 
-        // 画像読み込みと編集エンジンの構築をバックグラウンドで
+        // 画像読み込みと編集エンジンの構築をバックグラウンドで実行（UI スレッドをブロックしない）
         lifecycleScope.launch {
             try {
                 val bmp = withContext(Dispatchers.IO) {
@@ -287,19 +288,19 @@ class ImageEditActivity : BaseActivity() {
         }
     }
 
-    // 現在のツールを切り替える（Compose側の保存状態初期値にも反映される）
+    // 現在のツールを切り替える（Compose 側の保存状態初期値にも反映される）
     private fun applyTool(tool: Tool) {
         currentTool = tool
     }
 
-    // 従来の（非Compose）UI初期化は不要。保存/ロック/ボタンはComposeで完結。
+    // 従来の（非 Compose）UI 初期化は不要。保存/ロック/ボタンは Compose で完結。
 
     @SuppressLint("MissingPermission")
     private fun saveImageToGallery() {
-        // 画像をギャラリーへ保存する。
-        // - API < 29: WRITE_EXTERNAL_STORAGE 権限を事前確認
-        // - API >= 29: MediaStore へ相対パス指定で保存
-        // - 可能ならEXIFの UserComment にプロンプト文字列を埋め込む
+        // 画像をギャラリーへ保存する処理。
+        // - API < 29: WRITE_EXTERNAL_STORAGE 権限を事前確認。
+        // - API >= 29: MediaStore に相対パス指定で保存（外部ストレージの直接書込不要）。
+        // - EXIF: 可能であれば UserComment にプロンプト文字列を埋め込む（読み込みに失敗した場合はスキップ）。
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,

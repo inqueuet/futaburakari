@@ -2,10 +2,20 @@ package com.valoser.futaburakari.ui.compose
 
 /**
  * レス投稿画面。
- * - 名前/メール/題名/コメント/削除キーの入力、任意のファイル添付（ドキュメントピッカー）に対応。
- * - `initialQuote` はコメント初期値、`initialPassword` は削除キー初期値。
- * - タイトルが空の場合は "レスを投稿" を表示。
- * - 送信中（UiState.Loading）は入力と送信を無効化し、プログレスを表示。
+ *
+ * 機能概要:
+ * - 入力: 名前/メール/題名/コメント/削除キー、任意のファイル添付（ドキュメントピッカー）。
+ * - 初期値: `initialQuote` はコメント初期値、`initialPassword` は削除キー初期値。
+ * - タイトル: `title` が空なら「レスを投稿」を表示。
+ * - 送信中: `UiState.Loading` 中は入力と送信を無効化し、プログレスを表示。
+ * - 添付: ピッカーで選択すると読み取りの永続権限を取得して `pickedUri` に保持。`textOnly` は「添付しない」フラグとして機能。
+ *
+ * パラメータ:
+ * - `title`: 上部タイトル。
+ * - `initialQuote`/`initialPassword`: コメント/削除キーの初期値。
+ * - `uiState`: 送信状態（Loading 中は UI をロック）。
+ * - `onBack`: 戻る押下時のハンドラ。
+ * - `onSubmit`: 投稿実行のハンドラ。空文字は null に変換して渡す。
  */
 import android.content.Intent
 import android.net.Uri
@@ -23,7 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -97,12 +107,12 @@ fun ReplyScreen(
             TopAppBar(
                 title = { Text(text = if (title.isNotBlank()) title else "レスを投稿", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "戻る") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         }
@@ -168,7 +178,7 @@ fun ReplyScreen(
                 )
                 Spacer(modifier = Modifier.size(8.dp))
                 // 任意のMIMEタイプを選択可能。`textOnly`（=添付しない）がオンの間は無効化。
-                Button(onClick = { pickLauncher.launch(arrayOf("*/*")) }, enabled = !textOnly && !isLoading) {
+                androidx.compose.material3.FilledTonalButton(onClick = { pickLauncher.launch(arrayOf("*/*")) }, enabled = !textOnly && !isLoading) {
                     Text("選択…")
                 }
                 Spacer(modifier = Modifier.size(8.dp))

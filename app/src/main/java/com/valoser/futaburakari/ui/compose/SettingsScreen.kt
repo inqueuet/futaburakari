@@ -2,16 +2,22 @@ package com.valoser.futaburakari.ui.compose
 
 /**
  * 設定画面。
- * - 表示設定（グリッド列数/フォント/テーマ/カラー）
- * - NG管理（スレタイNGのショートカット）
- * - 投稿設定（投稿時の削除キー保存）
- * - キャッシュ設定（Coil画像/スレッド詳細キャッシュの削除、自動クリーンアップ上限）
- * - 広告表示（Detail画面のバナー固定表示）
- * - バックグラウンド（監視ワーカーの有効/無効切り替えとスケジューリング）
- * - その他（プライバシーポリシー・問い合わせ）
  *
- * 各項目の保存は `SharedPreferences`（一部は `ThreadMonitorWorker` 用の専用Prefs）に反映され、
- * テーマ/フォント/カラーの変更は `Activity#recreate()` を呼び出して即時反映する。
+ * 機能概要:
+ * - 表示設定: グリッド列数 / フォント倍率 / テーマモード / カラーモード。
+ * - NG 管理: スレタイ NG 管理画面へのショートカット。
+ * - 投稿設定: 投稿時に使う削除キーの保存。
+ * - キャッシュ設定: 画像（Coil）/スレッド詳細キャッシュの削除、自動クリーンアップ上限。
+ * - 広告表示: Detail 画面へのバナー固定表示の切替。
+ * - バックグラウンド: 監視ワーカーの有効/無効切替とスケジューリング（履歴全スレ）。
+ * - その他: プライバシーポリシー / 問い合わせ。
+ *
+ * 反映方法:
+ * - 設定は `SharedPreferences`（一部は `ThreadMonitorWorker` 用の専用 Prefs）に保存。
+ * - テーマ/フォント/カラーは `Activity#recreate()` を呼び出して即時反映。
+ *
+ * パラメータ:
+ * - `onBack`: 上部の戻る押下時に呼ばれるハンドラ。
  */
 
 import android.app.Activity
@@ -28,7 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -106,13 +112,13 @@ fun SettingsScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = { Text(text = ctx.getString(R.string.settings_title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "戻る") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
                 )
             )
         }
