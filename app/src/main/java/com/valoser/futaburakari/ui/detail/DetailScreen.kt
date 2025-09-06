@@ -374,7 +374,8 @@ fun DetailScreenScaffold(
                         initialScrollIndex = initialScrollIndex,
                         initialScrollOffset = initialScrollOffset,
                         onSaveScroll = onSaveScroll,
-                        contentPadding = PaddingValues(end = endPadding, bottom = bottomDp),
+                        // 左端に 8dp の余白を追加
+                        contentPadding = PaddingValues(start = 8.dp, end = endPadding, bottom = bottomDp),
                         onProvideSearchNavigator = { p, n ->
                             navPrev = p
                             navNext = n
@@ -408,8 +409,7 @@ fun DetailScreenScaffold(
                 // 高速スクロール（右端オーバーレイ）
                 FastScroller(
                     modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 4.dp),
+                        .align(Alignment.CenterEnd),
                     listState = listState,
                     itemsCount = items.size,
                     bottomPadding = bottomDp,
