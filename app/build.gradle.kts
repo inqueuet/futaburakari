@@ -27,8 +27,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 27
-        versionName = "3.7"
+        versionCode = 28
+        versionName = "3.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
