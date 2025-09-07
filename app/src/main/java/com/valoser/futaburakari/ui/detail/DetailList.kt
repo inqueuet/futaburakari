@@ -120,8 +120,13 @@ fun DetailListCompose(
     // コールバックは直接受け渡し（レガシーなアダプタ依存は無し）
 
     // タップ時のメニュー用一時状態
+    // - No. 用（返信/確認）
     var resNumForDialog by remember { mutableStateOf<String?>(null) }
+    // - 引用(>) 用（返信/確認）
+    var quoteForDialog by remember { mutableStateOf<String?>(null) }
+    // - ファイル名 用（返信/確認）
     var fileNameForDialog by remember { mutableStateOf<String?>(null) }
+    // - 本文 用（返信/確認/NG）
     var bodyForDialog by remember { mutableStateOf<DetailContent.Text?>(null) }
     // "そうだね" 表示カウントは親から受け取る
 
@@ -262,7 +267,8 @@ fun DetailListCompose(
                                 res != null -> { resNumForDialog = res }
                                 // ファイル名タップ: メニュー（返信 / 確認）
                                 filename != null -> { fileNameForDialog = filename }
-                                quote != null -> onQuoteClick?.invoke(quote)
+                                // 引用(>)タップ: メニュー（返信 / 確認）
+                                quote != null -> { quoteForDialog = quote }
                                 id != null -> onIdClick?.invoke(id)
                                 url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
                                 sodane != null -> {
@@ -446,6 +452,31 @@ fun DetailListCompose(
                     TextButton(onClick = {
                         onFileNameClick?.invoke(fn)
                         fileNameForDialog = null
+                    }) { androidx.compose.material3.Text("確認") }
+                }
+            }
+        )
+    }
+
+    // 引用タップメニュー（返信 / 確認）
+    quoteForDialog?.let { qt ->
+        AlertDialog(
+            onDismissRequest = { quoteForDialog = null },
+            title = { androidx.compose.material3.Text("引用") },
+            text = { androidx.compose.material3.Text("操作を選択してください") },
+            confirmButton = {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    TextButton(onClick = {
+                        val replyText = ">" + qt
+                        onBodyClick?.invoke(replyText)
+                        quoteForDialog = null
+                    }) { androidx.compose.material3.Text("返信") }
+                    TextButton(onClick = {
+                        onQuoteClick?.invoke(qt)
+                        quoteForDialog = null
                     }) { androidx.compose.material3.Text("確認") }
                 }
             }
