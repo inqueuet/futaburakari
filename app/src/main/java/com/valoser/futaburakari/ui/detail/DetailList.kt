@@ -1,30 +1,40 @@
 package com.valoser.futaburakari.ui.detail
 
 /**
- * スレ詳細のコンテンツを表示するCompose版リスト。
+ * スレ詳細のコンテンツを表示する Compose 版リスト。
  *
  * 概要:
  * - 表示要素は `DetailContent` の列（Text / Image / Video / ThreadEndTime）。
  * - ブロック構造: 1つの Text に続く Image/Video を同一ブロックとして扱い、ブロック末尾のみ区切り線を描画。
  * - 検索: `searchQuery` にマッチする要素のインデックスを算出し、`onProvideSearchNavigator` で Prev/Next 関数を渡す。
- * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> or ＞)、`ID:xxxx`、URL、ファイル名（xxx.jpg 等）、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
- *   - そうだねは引用行を除外。行内に `No.` を含む場合を対象（行内で見つからない場合は投稿自身の `No.` をフォールバックとして用いて送信可能）。
+ * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> または 全角＞)、`ID:xxxx`、URL、ファイル名（xxx.jpg 等）、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
+ *   - 未タグ領域の「短押し」は被引用一覧（このレスを引用している投稿）を表示。
+ *   - 本文の「長押し」は本文全体を引用して返信（`onBodyClick`）。
  *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
+ * - URL タップは外部ブラウザ起動。ファイル名タップは「該当メディアの投稿＋ファイル名を言及している投稿」の一覧シートを表示。
+ * - メニュー: 以下のメニューを表示（ボタンは中央寄せ・キャンセルなし）。
+ *   - No: 返信(>No.xxx) / 確認（引用している内容表示）
+ *   - ファイル名: 返信(>ファイル名) / 確認（引用している内容表示）
+ *   - 本文: 返信(>本文のみ) / 確認（被引用一覧） / NG
+ *   - ID: 同一IDの投稿 / NGに追加（ID メニューは DetailScreen 側で生成）
  * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
  * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
  * - 画像/動画の直下に表示するプロンプト文は選択コピー可能（SelectionContainer）。
  * - 画像/動画のタップでメディアビューへ遷移（拡大/動画再生、コピー/保存機能はメディア側で提供）。
  * - ファイル名の「追記表示」は廃止。本文中のファイル名検出・クリックのみをサポート（ファイル名参照の集計シートを開く）。
- * - プロンプト文はHTML→プレーン化して表示（リンク検出や装飾は行わない）。
+ * - プロンプト文は HTML→プレーン化して表示（リンク検出や装飾は行わない）。
  * - No の検出は表記ゆれに対応（ドットの有無/全角、No と番号の間の空白/改行）。
  *   また、日付や閉じカッコ `)` の直後に No が隣接してしまう場合、および `ID:` と `No` が隣接する場合は
  *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
  *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
+ * - そうだね(+/＋/そうだね/そうだねxN): 引用行を除き、行内の No 有無に関わらずクリック可能（行の No が無ければ自投稿の No をフォールバック）。
+ * - 本文返信の引用テキスト: ヘッダ（No/ID/ファイル情報など）を除いた本文のみを `>` で引用。
  */
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -48,7 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
  
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.AnnotatedString
@@ -56,6 +66,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
  
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.R
@@ -108,8 +119,10 @@ fun DetailListCompose(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // コールバックは直接受け渡し（レガシーなアダプタ依存は無し）
 
-    // No. アクション用ダイアログの状態
+    // タップ時のメニュー用一時状態
     var resNumForDialog by remember { mutableStateOf<String?>(null) }
+    var fileNameForDialog by remember { mutableStateOf<String?>(null) }
+    var bodyForDialog by remember { mutableStateOf<DetailContent.Text?>(null) }
     // "そうだね" 表示カウントは親から受け取る
 
     val safeIndex = if (initialScrollIndex >= 0) initialScrollIndex else 0
@@ -224,13 +237,17 @@ fun DetailListCompose(
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = {},
-                                onLongClick = {
-                                    val quoted = plain.lines().joinToString("\n") { ">" + it }
-                                    onBodyClick?.invoke(quoted)
-                                }
-                            )
+                            // 短押しは子の ClickableText に渡す。ここでは「長押しのみ」を本文引用として扱う。
+                            .pointerInput(plain) {
+                                detectTapGestures(
+                                    onLongPress = {
+                                        val bodyOnly = extractBodyOnlyPlain(plain)
+                                        val source = if (bodyOnly.isNotBlank()) bodyOnly else plain
+                                        val quoted = source.lines().joinToString("\n") { ">" + it }
+                                        onBodyClick?.invoke(quoted)
+                                    }
+                                )
+                            }
                     ) {
                         ClickableText(text = annotated, onClick = { offset ->
                             val tags = annotated.getStringAnnotations(start = offset, end = offset)
@@ -241,10 +258,10 @@ fun DetailListCompose(
                             val url = tags.firstOrNull { it.tag == "url" }?.item
                             val sodane = tags.firstOrNull { it.tag == "sodane" }?.item
                             when {
-                                // No. タップで「引用元（このレスを引用している投稿）」の一覧シートを直接表示
-                                res != null -> onResNumConfirmClick?.invoke(res)
-                                // 引用行内にファイル名が存在する場合はファイル名集計を優先
-                                filename != null -> onFileNameClick?.invoke(filename)
+                                // No. タップ: メニュー（返信 / 確認）
+                                res != null -> { resNumForDialog = res }
+                                // ファイル名タップ: メニュー（返信 / 確認）
+                                filename != null -> { fileNameForDialog = filename }
                                 quote != null -> onQuoteClick?.invoke(quote)
                                 id != null -> onIdClick?.invoke(id)
                                 url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
@@ -269,9 +286,9 @@ fun DetailListCompose(
                                     }
                                 }
                             }
-                            // 本文（いずれのタグにも該当しない領域）タップで、当該レスを引用している投稿一覧を表示
+                            // 本文（どのタグにも該当しない領域）タップ: メニュー（返信 / 確認 / NG）
                             if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
-                                onBodyShowBackRefs?.invoke(item)
+                                bodyForDialog = item
                             }
                         })
                     }
@@ -387,40 +404,86 @@ fun DetailListCompose(
         }
     }
 
-    // No. アクションダイアログ（返信/削除/確認/del）。`resNumForDialog` がセットされたときに表示。
-    val resDialog = resNumForDialog
-    if (resDialog != null) {
+    // No. タップメニュー（返信 / 確認）
+    resNumForDialog?.let { resDialog ->
         AlertDialog(
             onDismissRequest = { resNumForDialog = null },
             title = { androidx.compose.material3.Text("No.$resDialog") },
             text = { androidx.compose.material3.Text("操作を選択してください") },
             confirmButton = {
-                androidx.compose.foundation.layout.Row {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
                     TextButton(onClick = {
                         onResNumClick?.invoke(resDialog, ">No.$resDialog")
                         resNumForDialog = null
                     }) { androidx.compose.material3.Text("返信") }
                     TextButton(onClick = {
-                        onResNumClick?.invoke(resDialog, "")
-                        resNumForDialog = null
-                    }) { androidx.compose.material3.Text("削除") }
-                    TextButton(onClick = {
                         onResNumConfirmClick?.invoke(resDialog)
                         resNumForDialog = null
                     }) { androidx.compose.material3.Text("確認") }
-                    TextButton(onClick = {
-                        onResNumDelClick?.invoke(resDialog)
-                        resNumForDialog = null
-                    }) { androidx.compose.material3.Text("del(通報)") }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { resNumForDialog = null }) {
-                    androidx.compose.material3.Text("キャンセル")
                 }
             }
         )
     }
+
+    // ファイル名タップメニュー（返信 / 確認）
+    fileNameForDialog?.let { fn ->
+        AlertDialog(
+            onDismissRequest = { fileNameForDialog = null },
+            title = { androidx.compose.material3.Text(fn) },
+            text = { androidx.compose.material3.Text("操作を選択してください") },
+            confirmButton = {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    TextButton(onClick = {
+                        onBodyClick?.invoke(">" + fn)
+                        fileNameForDialog = null
+                    }) { androidx.compose.material3.Text("返信") }
+                    TextButton(onClick = {
+                        onFileNameClick?.invoke(fn)
+                        fileNameForDialog = null
+                    }) { androidx.compose.material3.Text("確認") }
+                }
+            }
+        )
+    }
+
+    // 本文タップメニュー（返信 / 確認 / NG）
+    bodyForDialog?.let { src ->
+        val plain = Html.fromHtml(src.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val bodyOnly = extractBodyOnlyPlain(plain)
+        val source = if (bodyOnly.isNotBlank()) bodyOnly else plain
+        val quoted = source.lines().joinToString("\n") { ">" + it }
+        AlertDialog(
+            onDismissRequest = { bodyForDialog = null },
+            title = { androidx.compose.material3.Text("本文") },
+            text = { androidx.compose.material3.Text("操作を選択してください") },
+            confirmButton = {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    TextButton(onClick = {
+                        onBodyClick?.invoke(quoted)
+                        bodyForDialog = null
+                    }) { androidx.compose.material3.Text("返信") }
+                    TextButton(onClick = {
+                        onBodyShowBackRefs?.invoke(src)
+                        bodyForDialog = null
+                    }) { androidx.compose.material3.Text("確認") }
+                    TextButton(onClick = {
+                        onAddNgFromBody?.invoke(plain)
+                        bodyForDialog = null
+                    }) { androidx.compose.material3.Text("NG") }
+                }
+            }
+                )
+    }
+
 }
 
 // indexまでに現れたText要素の個数（=序数）を求める
@@ -432,6 +495,36 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
         i++
     }
     return ord
+}
+
+// ヘッダ風の行（No./ID行）を除いた本文プレーンテキストを抽出（トップレベルヘルパー）
+private fun extractBodyOnlyPlain(plain: String): String {
+    fun normalize(s: String): String = java.text.Normalizer.normalize(
+        s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
+        java.text.Normalizer.Form.NFKC
+    )
+    val idPat = Regex("""(?i)\bID[:：][\w./+\-]+""")
+    val noPat = Regex("""(?i)\b(?:No|Ｎｏ)[\.\uFF0E]?\s*\d+\b""")
+    val fileInfoHeadPat = Regex("""(?i)^\s*(?:ファイル名|画像|ファイル)[:：].*""")
+    val ext = "(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)"
+    // 例: foo.jpg - (123KB 800x600) / foo.png(12.3MB) など
+    val fileInfoGenericPat = Regex("""(?i)^\s*.*?\.$ext\s*[\-ー－]?\s*\([^)]*\).*""")
+    val lines = plain.lines()
+    var start = 0
+    while (start < lines.size) {
+        val raw = lines[start]
+        val trimmed = raw.trimStart()
+        if (trimmed.isBlank()) { start++; continue }
+        // 引用行は本文として残す（'>' で始まるもの）
+        if (trimmed.startsWith(">")) break
+        val norm = normalize(trimmed)
+        val isHeader = idPat.containsMatchIn(norm) || noPat.containsMatchIn(norm) ||
+                fileInfoHeadPat.containsMatchIn(norm) || fileInfoGenericPat.containsMatchIn(norm)
+        if (isHeader) { start++; continue } else break
+    }
+    val kept = lines.drop(start)
+    // 末尾の空行は削除
+    return kept.dropLastWhile { it.isBlank() }.joinToString("\n")
 }
 
 // 本文用の AnnotatedString を構築。
@@ -512,7 +605,7 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
             addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
         }
     }
-    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行(>)を除き、No.を含む行を対象にする
+    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行(>)を除き、行内に No. が無くても対象にする
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
     var start = 0
     while (start <= text.length) {
@@ -522,9 +615,8 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val line = text.substring(lineStart, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        // No の検出を寛容に（ドット任意／全角ドット許容／空白を許容）
-        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(line)
-        if (!isQuote && hasNo) {
+        // No の有無に関わらず、本文行に現れた そうだね トークンをクリック可能にする
+        if (!isQuote) {
             sodaneRegex.findAll(line).forEach { m ->
                 val s = lineStart + m.range.first
                 val e = lineStart + m.range.last + 1

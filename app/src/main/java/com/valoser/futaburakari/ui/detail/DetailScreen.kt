@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,7 +64,10 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  * 機能概要:
  * - リスト: 高速スクロール、プル更新、末尾近辺での追加読込トリガーに対応。
  * - 検索: ドック型の検索バー（遅延サジェスト）と下部の Prev/Next ナビを提供。
- * - ダイアログ/シート: ID メニュー、NG 追加、メディアグリッド、引用/No./ファイル名参照を内包。
+ * - ダイアログ/シート:
+ *   - ID メニュー（同一IDの投稿 / NGに追加）— ボタン中央寄せ・キャンセルなし。
+ *   - 本文/No/ファイル名メニューは DetailList 側で生成（返信/確認/NG）。
+ *   - 参照系（No/引用/ファイル名）や同一IDの結果はボトムシートで表示（シート内では更なるクリック操作は無効化して二重遷移を防止）。
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
@@ -87,6 +91,7 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  * - `itemsFlow`/`currentQueryFlow`/`isRefreshingFlow`: 本文・検索・更新状態の Flow 連携。
  * - `getSodaneState`/`sodaneUpdates`: 「そうだね」の状態問い合わせとサーバ更新ストリーム。
  * - クリック系: `onQuoteClick`/`onResNumClick`/`onResNumConfirmClick`/`onResNumDelClick`/`onBodyClick`/`onAddNgFromBody`/`onThreadEndTimeClick` など。
+ *   - No/ファイル名/本文タップ時は DetailList 側でメニューを表示（ボタン中央寄せ・キャンセルなし）。
  * - `onVisibleMaxOrdinal`: 画面内の最大 ordinal を通知（読み込みや既読管理用）。
  * - `onNearListEnd`: 末尾近辺到達時の通知（無限スクロール用）。
  */
@@ -441,7 +446,10 @@ fun DetailScreenScaffold(
                     title = { Text("ID: $idTarget") },
                     text = { Text("操作を選択してください") },
                     confirmButton = {
-                        Row {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
                             androidx.compose.material3.TextButton(onClick = {
                                 // 同一IDの投稿一覧をバックグラウンドで作成し、完了後にシートを開く（UIブロックを避ける）
                                 val snapshot = items
@@ -459,9 +467,6 @@ fun DetailScreenScaffold(
                                 idMenuTarget = null
                             }) { Text("NGに追加") }
                         }
-                    },
-                    dismissButton = {
-                        androidx.compose.material3.TextButton(onClick = { idMenuTarget = null }) { Text("キャンセル") }
                     }
                 )
             }
