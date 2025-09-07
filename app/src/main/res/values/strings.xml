@@ -74,12 +74,14 @@
         <item>標準</item>
         <item>大</item>
         <item>特大</item>
+        <item>特大＋</item>
     </string-array>
     <string-array name="pref_font_scale_values">
         <item>0.85</item>
         <item>1.0</item>
         <item>1.15</item>
         <item>1.30</item>
+        <item>1.50</item>
     </string-array>
 
     <!-- Theme mode -->

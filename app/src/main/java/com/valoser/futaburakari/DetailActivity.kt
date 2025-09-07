@@ -47,6 +47,11 @@ import com.valoser.futaburakari.search.RecentSearchStore
  * - 履歴（最新レス番号とサムネイル）を更新し、スナップショット取得をトリガー
  * - ユーザー設定（テーマ/広告）や戻る操作のUXを反映
  * - 画像編集の起動（トップバーの「画像編集」アクションから `ImagePickerActivity` へ遷移）
+ * - タイトル整形: カタログから渡されるタイトル文字列を 1 行表示向けに整形
+ *   - HTML をプレーン化 → 改行（\n/\r）手前でカット
+ *   - 改行が無い場合、半角/全角スペースの連続（3 つ以上）で手前を採用
+ *   - さらに切れない場合、「スレ」という語で手前を採用（例: "◯◯スレ……" → "◯◯スレ"）
+ *   - 整形後のタイトルは TopBar と履歴記録の双方に使用
  */
 @AndroidEntryPoint
 class DetailActivity : BaseActivity() {
@@ -122,8 +127,21 @@ class DetailActivity : BaseActivity() {
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Compose のトップバーおよび履歴表示用のタイトル
-        toolbarTitleText = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        // Compose のトップバーおよび履歴表示用のタイトル（HTML改行 <br> 等も考慮し、改行以降を除去して1行に）
+        toolbarTitleText = (intent.getStringExtra(EXTRA_TITLE) ?: "").let { raw ->
+            val plain = Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString()
+                .replace("\u200B", "") // ZWSP 除去
+            // 1) 改行優先
+            val cutByNewline = plain.substringBefore('\n').substringBefore('\r').trim()
+            if (cutByNewline.isNotBlank() && cutByNewline.length < plain.length) return@let cutByNewline
+            // 2) 改行が無い場合のヒューリスティック: 連続する空白（半角/全角）3つ以上で区切る
+            val m = Regex("[\\s\u3000]{3,}").find(plain)
+            if (m != null && m.range.first > 0) return@let plain.substring(0, m.range.first).trim()
+            // 3) スレ名ヒューリスティック: 「スレ」で切る（例: "キルヒアイスレ生き残…" → "キルヒアイスレ"）
+            val idxSre = plain.indexOf("スレ")
+            if (idxSre in 1 until plain.length) return@let plain.substring(0, idxSre + 2).trim()
+            plain.trim()
+        }
         currentUrl = intent.getStringExtra(EXTRA_URL)
         // スクロール位置の保存/復元に用いるストアを先に初期化（Compose へ初期状態を渡す）
         scrollStore = ScrollPositionStore(this)

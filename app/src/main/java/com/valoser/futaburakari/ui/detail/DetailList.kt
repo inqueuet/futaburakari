@@ -503,8 +503,10 @@ private fun extractBodyOnlyPlain(plain: String): String {
         s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
         java.text.Normalizer.Form.NFKC
     )
-    val idPat = Regex("""(?i)\bID[:：][\w./+\-]+""")
+    val idPat = Regex("""(?i)\bID(?:[:：]|無し)\b[\
+        w./+\-]*""")
     val noPat = Regex("""(?i)\b(?:No|Ｎｏ)[\.\uFF0E]?\s*\d+\b""")
+    val dateTimePat = Regex("""(?:(?:\d{2}|\d{4})/\d{1,2}/\d{1,2}).*?\d{1,2}:\d{2}:\d{2}""")
     val fileInfoHeadPat = Regex("""(?i)^\s*(?:ファイル名|画像|ファイル)[:：].*""")
     val ext = "(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)"
     // 例: foo.jpg - (123KB 800x600) / foo.png(12.3MB) など
@@ -515,12 +517,13 @@ private fun extractBodyOnlyPlain(plain: String): String {
         val raw = lines[start]
         val trimmed = raw.trimStart()
         if (trimmed.isBlank()) { start++; continue }
-        // 引用行は本文として残す（'>' で始まるもの）
-        if (trimmed.startsWith(">")) break
         val norm = normalize(trimmed)
         val isHeader = idPat.containsMatchIn(norm) || noPat.containsMatchIn(norm) ||
-                fileInfoHeadPat.containsMatchIn(norm) || fileInfoGenericPat.containsMatchIn(norm)
-        if (isHeader) { start++; continue } else break
+                dateTimePat.containsMatchIn(norm) || fileInfoHeadPat.containsMatchIn(norm) ||
+                fileInfoGenericPat.containsMatchIn(norm)
+        val isLeadQuote = trimmed.startsWith(">")
+        if (isHeader || isLeadQuote) { start++; continue }
+        break
     }
     val kept = lines.drop(start)
     // 末尾の空行は削除
