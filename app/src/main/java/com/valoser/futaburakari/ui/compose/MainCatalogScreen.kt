@@ -52,13 +52,15 @@ import com.valoser.futaburakari.RuleType
  * - 更新: プルリフレッシュに加え、端での強いオーバースクロール（バウンス）でも再読み込みを実行（連発抑止あり）。
  * - 操作: トップバーに「再読み込み／ブックマーク選択／履歴／検索」を配置。
  *         右上メニューには「ブックマーク管理 → 設定 → ローカル画像を開く → 画像編集」を用意。
+ * - トップバー: 通常時はサブタイトル（選択中ブックマーク名）のみを大きく表示。タイトルは非表示。
+ *               検索中はタイトル領域を検索ボックスに切り替える。
  * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
  * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
  *
  * パラメータ:
  * - `modifier`: ルートレイアウト用の修飾子。
- * - `title`/`subtitle`: 上部タイトル/サブタイトル（検索欄が表示中は非表示）。
+ * - `title`/`subtitle`: 上部タイトル/サブタイトル（通常はタイトルを表示せず、サブタイトルのみ表示）。
  * - `items`: 表示対象のアイテム一覧（呼び出し側で取得）。
  * - `isLoading`: 読み込み中インジケータの表示制御。
  * - `spanCount`: グリッド列数。
@@ -216,16 +218,16 @@ fun MainCatalogScreen(
                             )
                         )
                     } else {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(text = title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (!subtitle.isNullOrBlank()) {
-                                Text(
-                                    text = subtitle,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
+                        // サブタイトルのみを大きく表示（タイトルは非表示）
+                        val sub = subtitle.orEmpty()
+                        if (sub.isNotBlank()) {
+                            Text(
+                                text = sub,
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
                 },

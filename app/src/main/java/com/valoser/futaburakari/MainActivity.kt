@@ -50,11 +50,12 @@ import java.net.URL
 /**
  * メイン画面（カタログ一覧）。
  *
- * - ブックマーク選択・管理、設定/履歴/画像編集への遷移を提供
- * - カタログ（画像リスト）を取得・表示し、アイテムタップで詳細画面へ遷移
- * - NGルール、グリッド列数、フォントスケール、配色モードなどの設定変更を反映
- * - Futabaの catset（カタログ表示設定）を板単位で適用し、3日間のTTLで再適用を抑制
- * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応
+ * - ブックマーク選択・管理、設定/履歴/画像編集への遷移を提供。
+ * - カタログ（画像リスト）を取得・表示し、アイテムタップで詳細画面へ遷移。
+ * - NGルール、グリッド列数、フォントスケール、配色モードなどの設定変更を反映。
+ * - Futaba の catset（カタログ表示設定）を板単位で適用し、3日間の TTL で再適用を抑制。
+ * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応。
+ * - TopBar: タイトルは表示せず、サブタイトル（選択中ブックマーク名）のみを大きめに表示する。
  */
 class MainActivity : BaseActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -151,7 +152,7 @@ class MainActivity : BaseActivity() {
 
                 Box {
                     MainCatalogScreen(
-                        title = getString(R.string.app_name),
+                        title = "",
                         subtitle = toolbarSubtitleState.value,
                         items = itemsState.value,
                         isLoading = isLoadingState.value,

@@ -3,13 +3,13 @@ package com.valoser.futaburakari.ui.detail
 /**
  * スレ詳細のコンテンツを表示する Compose 版リスト。
  *
- * 概要:
+ * 機能概要:
  * - 表示要素は `DetailContent` の列（Text / Image / Video / ThreadEndTime）。
  * - ブロック構造: 1つの Text に続く Image/Video を同一ブロックとして扱い、ブロック末尾のみ区切り線を描画。
  * - 検索: `searchQuery` にマッチする要素のインデックスを算出し、`onProvideSearchNavigator` で Prev/Next 関数を渡す。
  * - アノテーション/クリック: 本文(Text)内の `No.xxxx`、引用行(> または 全角＞)、`ID:xxxx`、URL、ファイル名（xxx.jpg 等）、そうだね(+/＋/そうだね/そうだねxN) を検出してクリック可能にする。
  *   - 未タグ領域の「短押し」は被引用一覧（このレスを引用している投稿）を表示。
- *   - 本文の「長押し」は本文全体を引用して返信（`onBodyClick`）。
+ *   - 本文の「長押し」は本文のみを引用して返信（`onBodyClick`）。
  *   - タイトル行が `threadTitle` に一致する場合は引用としても扱う（全角/半角/空白の差は正規化して比較）。
  * - URL タップは外部ブラウザ起動。ファイル名タップは「該当メディアの投稿＋ファイル名を言及している投稿」の一覧シートを表示。
  * - メニュー: 以下のメニューを表示（ボタンは中央寄せ・キャンセルなし）。
@@ -18,6 +18,7 @@ package com.valoser.futaburakari.ui.detail
  *   - 本文: 返信(>本文のみ) / 確認（被引用一覧） / NG
  *   - ID: 同一IDの投稿 / NGに追加（ID メニューは DetailScreen 側で生成）
  * - 「そうだね」表示は親から渡されるカウントで楽観的に上書き表示する（`applySodaneDisplay`）。
+ *   - 引用行を除き、行内の No 有無に関わらずクリック可能（行内に No が無ければ自投稿の No をフォールバック）。
  * - スクロール状態の保存/復元、最大既読序数の通知(`onVisibleMaxOrdinal`)に対応。
  * - 画像/動画の直下に表示するプロンプト文は選択コピー可能（SelectionContainer）。
  * - 画像/動画のタップでメディアビューへ遷移（拡大/動画再生、コピー/保存機能はメディア側で提供）。
@@ -27,8 +28,7 @@ package com.valoser.futaburakari.ui.detail
  *   また、日付や閉じカッコ `)` の直後に No が隣接してしまう場合、および `ID:` と `No` が隣接する場合は
  *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
  *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
- * - そうだね(+/＋/そうだね/そうだねxN): 引用行を除き、行内の No 有無に関わらずクリック可能（行の No が無ければ自投稿の No をフォールバック）。
- * - 本文返信の引用テキスト: ヘッダ（No/ID/ファイル情報など）を除いた本文のみを `>` で引用。
+ * - 本文返信の引用テキスト: 先頭ヘッダ（ID/ID無し/No/日付時刻/ファイル情報/先行引用）を除いた「本文のみ」を `>` で引用。
  */
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -498,6 +498,11 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
 }
 
 // ヘッダ風の行（No./ID行）を除いた本文プレーンテキストを抽出（トップレベルヘルパー）
+// 本文返信用に「本文のみ」を抽出するユーティリティ。
+// - 先頭から以下の行をスキップして本文先頭を決定:
+//   ID 行（ID:xxxx / ID無し）/ No 行（No.1234）/ 日付時刻を含む行 /
+//   ファイル情報行（ファイル名:..., 画像:..., foo.jpg - (123KB ...) 等）/ 先行する引用行(>) / 空行
+// - 決定した行から末尾までを本文として返す（末尾の空行は削除）。
 private fun extractBodyOnlyPlain(plain: String): String {
     fun normalize(s: String): String = java.text.Normalizer.normalize(
         s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),

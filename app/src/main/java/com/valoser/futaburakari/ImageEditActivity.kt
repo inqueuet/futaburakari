@@ -69,6 +69,7 @@ import dagger.hilt.android.EntryPointAccessors
  * - ツール: モザイク/消しゴムの切替、ブラシ太さ、モザイク強さ、操作ロックの切替を UI で提供。
  * - 保存: 合成結果をギャラリーへ保存。可能なら EXIF の UserComment にプロンプト（説明文）を埋め込む。
  * - 権限/保存先: API に応じて MediaStore/外部ストレージを使い分け、API 28 以下では書込権限を確認。
+ * - UI: TopAppBar はアプリ名をタイトル表示（編集画面の識別用途）。戻るで終了、右上に追加ボタン等は持たない。
  */
 class ImageEditActivity : BaseActivity() {
 

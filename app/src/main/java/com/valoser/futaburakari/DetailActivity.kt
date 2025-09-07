@@ -52,6 +52,7 @@ import com.valoser.futaburakari.search.RecentSearchStore
  *   - 改行が無い場合、半角/全角スペースの連続（3 つ以上）で手前を採用
  *   - さらに切れない場合、「スレ」という語で手前を採用（例: "◯◯スレ……" → "◯◯スレ"）
  *   - 整形後のタイトルは TopBar と履歴記録の双方に使用
+ *   - 例: 「キルヒアイスレ<br>生き残って…」→ TopBar では「キルヒアイスレ」
  */
 @AndroidEntryPoint
 class DetailActivity : BaseActivity() {

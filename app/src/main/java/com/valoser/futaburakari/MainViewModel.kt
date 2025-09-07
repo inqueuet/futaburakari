@@ -27,6 +27,7 @@ import javax.inject.Inject
  * - 進行状態とエラーを LiveData で公開
  * - タイトル整形: カタログの `<small>` から取得するタイトルは、先頭の `<br>` 以前（1 行目）のみを採用
  *   （Jsoup でタグ除去してプレーン化）。cgi/旧サーバの経路でも同様に 1 行化。
+ *   - これにより DetailActivity 側では TopBar タイトルが常に 1 行に収まる（「スレ」などの更なる整形は詳細画面側で実施）。
  */
 class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
