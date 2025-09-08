@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -68,6 +69,8 @@ import com.valoser.futaburakari.ui.detail.buildResReferencesItems
  *   - ID メニュー（同一IDの投稿 / NGに追加）— ボタン中央寄せ・キャンセルなし。
  *   - 本文/No/ファイル名メニューは DetailList 側で生成（返信/確認/NG）。
  *   - 参照系（No/引用/ファイル名）や同一IDの結果はボトムシートで表示（シート内では更なるクリック操作は無効化して二重遷移を防止）。
+ *     リストは `wrapContentHeight()` を用い、外側で `heightIn(max=画面高の約90%)` を掛けることで、
+ *     結果が少ない場合でもシートが不必要に伸びないようにする。
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
@@ -302,6 +305,7 @@ fun DetailScreenScaffold(
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
+                        modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
                         onQuoteClick = { token ->
                             // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
@@ -545,19 +549,23 @@ fun DetailScreenScaffold(
             }
 
             // 同一ID投稿一覧のシート（Compose）
+            // シート内のリストは wrapContentHeight を用い、外側で heightIn(max=画面高の約90%) を掛ける。
+            // これにより、内容が少ない場合は内容高さに収まり、不要にシートを引き伸ばせなくなる。
             val idItems = idSheetItems
             if (idItems != null) {
-                val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
                 androidx.compose.material3.ModalBottomSheet(
                     onDismissRequest = { idSheetItems = null },
                     sheetState = sheetState
                 ) {
                     val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
                     val maxHeight = with(LocalDensity.current) { (screenHeight * 0.9f).dp }
+                    // 内容に応じて高さを決め、上限のみ設定
                     androidx.compose.foundation.layout.Box(modifier = Modifier.heightIn(max = maxHeight)) {
                         DetailListCompose(
                             items = idItems,
                             searchQuery = null,
+                            modifier = Modifier.wrapContentHeight(),
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,
@@ -580,9 +588,10 @@ fun DetailScreenScaffold(
 
             // 引用/No./ファイル名参照の一覧シート（Compose）
             // 集計結果があればボトムシートで表示（描画時点では重い処理は完了済み）
+            // こちらも wrapContentHeight + heightIn(max=...) で過伸長を抑止
             val refItems = resRefItems
             if (refItems != null) {
-                val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
                 androidx.compose.material3.ModalBottomSheet(
                     onDismissRequest = { resRefItems = null },
                     sheetState = sheetState
@@ -593,6 +602,7 @@ fun DetailScreenScaffold(
                         DetailListCompose(
                             items = refItems,
                             searchQuery = null,
+                            modifier = Modifier.wrapContentHeight(),
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,

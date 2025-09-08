@@ -29,6 +29,10 @@ package com.valoser.futaburakari.ui.detail
  *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
  *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
  * - 本文返信の引用テキスト: 先頭ヘッダ（ID/ID無し/No/日付時刻/ファイル情報/先行引用）を除いた「本文のみ」を `>` で引用。
+ * - レイアウト: `modifier` で外側からサイズ指定を受け取る。
+ *   - 画面全体のリストでは `Modifier.fillMaxSize()` を渡す。
+ *   - ボトムシート内では `Modifier.wrapContentHeight()` を渡し、シート側で `heightIn(max=...)` を併用して
+ *     内容が少ないときは内容高さ、内容が多いときは上限までに抑える。
  */
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -84,6 +88,7 @@ import androidx.compose.foundation.layout.Column
 fun DetailListCompose(
     items: List<DetailContent>,
     searchQuery: String?,
+    modifier: Modifier = Modifier,
     // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
@@ -221,7 +226,7 @@ fun DetailListCompose(
             .collectLatest { (pos, off) -> onSaveScroll?.invoke(pos, off) }
     }
 
-    LazyColumn(state = internalState, modifier = Modifier.fillMaxSize(), contentPadding = contentPadding) {
+    LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
         itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
