@@ -200,10 +200,10 @@ fun MainCatalogScreen(
                 val cellWidthPx = ((contentWidthPx / spanCount) - (xsPx * 2)).coerceAtLeast(64f)
                 val cellHeightPx = (cellWidthPx * 4f / 3f)
 
-                // 先読み行数は画面内の行数と同程度（2画面分）
+                // 先読み行数は画面内の行数の約4倍（4画面分）
                 val visibleCount = (last - first + 1).coerceAtLeast(spanCount)
                 val rowsVisible = (visibleCount + spanCount - 1) / spanCount
-                val prefetchRows = (rowsVisible * 2).coerceAtLeast(2)
+                val prefetchRows = (rowsVisible * 4).coerceAtLeast(2)
                 val prefetchAhead = (prefetchRows * spanCount)
 
                 val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
