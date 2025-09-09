@@ -73,30 +73,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * アプリの設定画面コンポーザブル。
+ *
+ * 概要:
  * - 表示/NG/投稿/キャッシュ/広告/その他の各セクションで設定を編集し、`SharedPreferences` に保存します。
  * - テーマやフォント倍率の変更は `Activity#recreate()` を呼び即時反映します。
  *
- * 引数:
+ * パラメータ:
  * - `onBack`: 上部ナビゲーション「戻る」押下時に呼ばれるハンドラ（画面を閉じる等）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { PreferenceManager.getDefaultSharedPreferences(ctx) }
 
-    // States（現在の設定値をPreferencesから読み込み）
+    // 状態（現在の設定値を Preferences から読み込み）
     var gridSpan by remember { mutableStateOf(prefs.getString("pref_key_grid_span", "4") ?: "4") }
     var fontScale by remember { mutableStateOf(prefs.getString("pref_key_font_scale", "1.0") ?: "1.0") }
     var themeMode by remember { mutableStateOf(prefs.getString("pref_key_theme_mode", "system") ?: "system") }
-    // Expressive配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみExpressive適用）
+    // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
-    // removed: color mode preference
+    // 旧「カラーモード」設定は廃止
     var autoCleanup by remember { mutableStateOf(prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0") }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
-    // removed: background monitor toggle (always enabled)
+    // バックグラウンド監視トグルは常時有効化のため廃止
 
     // 投稿用パスワード入力ダイアログの状態
     var showPwdDialog by remember { mutableStateOf(false) }
@@ -293,8 +295,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 }
 
-@Composable
 /** セクション見出しのテキスト表示。設定グループの区切りに使用。 */
+@Composable
 private fun SectionHeader(text: String) {
     // セクションタイトル
     Text(
@@ -304,11 +306,11 @@ private fun SectionHeader(text: String) {
     )
 }
 
-@Composable
 /**
  * 単純な設定行（タイトル＋任意サマリ）。
  * 行全体がクリック対象となり、押下時に `onClick` を呼び出します。
  */
+@Composable
 private fun ListRow(title: String, summary: String, onClick: () -> Unit) {
     // 設定の1行（タイトル＋サマリ）。クリックで `onClick` 実行
     Column(
@@ -325,11 +327,11 @@ private fun ListRow(title: String, summary: String, onClick: () -> Unit) {
     }
 }
 
-@Composable
 /**
  * ドロップダウンで値を選択する設定行。
  * `entries` は表示ラベル、`values` は保存値。`value` が現在値で、変更時に `onValueChange` をコール。
  */
+@Composable
 private fun DropdownPreferenceRow(
     title: String,
     entries: List<String>,
@@ -374,8 +376,8 @@ private fun DropdownPreferenceRow(
     }
 }
 
-@Composable
 /** タイトル＋任意サマリ＋トグルスイッチの設定行。`checked` の変化は `onToggle` で受け取ります。 */
+@Composable
 private fun SwitchRow(title: String, checked: Boolean, summary: String = "", onToggle: (Boolean) -> Unit) {
     // タイトル＋サマリ＋スイッチの1行
     Row(

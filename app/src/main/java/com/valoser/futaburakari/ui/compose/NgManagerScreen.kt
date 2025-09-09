@@ -80,12 +80,12 @@ import com.valoser.futaburakari.ui.expressive.FabMenu
 import com.valoser.futaburakari.ui.expressive.FabMenuItem
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * NG ルールの一覧/検索/追加/編集/削除を提供する Compose 画面。
  * 種別固定（limitType）やスレタイNGの非表示（hideTitleOption）にも対応。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun NgManagerScreen(
     title: String,
     rules: List<NgRule>,
@@ -380,12 +380,12 @@ private fun RuleItem(
     }
 }
 
-@Composable
 /**
  * 追加時の種類選択ダイアログ。
  * - `hideTitleOption` が true の場合はスレタイNGを非表示。
  * - 選択肢はカード行（TypePickRow）で表示し、タップで決定。
  */
+@Composable
 private fun TypePickerDialog(
     onDismiss: () -> Unit,
     onPick: (RuleType) -> Unit,

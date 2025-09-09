@@ -564,17 +564,26 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** そうだねの押下状態を返す（同一レスの重複送信抑止用）。 */
+    /**
+     * 指定レス番号の「そうだね」押下状態を返す。
+     * 重複送信の抑止など、UI 側の制御に用いるフラグ。
+     */
     fun getSodaNeState(resNum: String): Boolean {
         return sodaNeStates[resNum] ?: false
     }
 
-    /** そうだねの状態をリセット（新しいページ読み込み時など）。 */
+    /**
+     * 現在保持している「そうだね」押下状態を全てクリアする。
+     * ページ遷移や強制更新時に呼び出し、状態の持ち越しを防ぐ。
+     */
     fun resetSodaNeStates() {
         sodaNeStates.clear()
     }
 
-    /** 通常の削除（画像のみ/本文含む）を実行し、成功時は再取得する。 */
+    /**
+     * 通常の削除（画像のみ/本文含む）を実行する。
+     * 成功時はスレッドを強制再取得して表示を最新化する。
+     */
     fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String, onlyImage: Boolean) {
         viewModelScope.launch {
             try {
@@ -607,7 +616,10 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** del.php 経由での削除を実行し、成功時は再取得する。 */
+    /**
+     * del.php 経由の削除を実行する。
+     * 成功時はスレッドを強制再取得して表示を最新化する。
+     */
     fun deleteViaDelPhp(resNum: String, reason: String = "110") {
         viewModelScope.launch {
             try {
@@ -641,6 +653,10 @@ class DetailViewModel @Inject constructor(
 
     // ===== Helpers & Regex =====
 
+    /**
+     * メディア（画像/動画）ファイル拡張子を持つかを簡易判定する。
+     * 解析対象の `<a href>` の抽出フィルタとして使用。
+     */
     private fun isMediaUrl(rawHref: String): Boolean {
         val h = rawHref.lowercase()
         return h.endsWith(".png") || h.endsWith(".jpg") || h.endsWith(".jpeg") ||
@@ -655,12 +671,15 @@ class DetailViewModel @Inject constructor(
 
     // ===== NG filtering =====
 
-    /** 現在のNGルールでフィルタを再適用し、表示と検索状態を更新。 */
+    /** 現在のNGルールでフィルタを再適用し、表示と検索状態を更新する。 */
     fun reapplyNgFilter() {
         applyNgAndPost()
     }
 
-    /** NGルールを適用した結果を `detailContent` に反映し、スナップショットも保存。 */
+    /**
+     * NGルールを適用した結果を `detailContent` に反映し、検索状態も更新する。
+     * 併せて生データのキャッシュ保存と、表示状態のアーカイブスナップショット保存を行う。
+     */
     private fun applyNgAndPost() {
         ngStore.cleanup()
         val rules = ngStore.getRules()
@@ -683,8 +702,9 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * prior（既存表示）に含まれるプロンプト等を base（新規取得）へ引き継ぐ。
-     * - Image/Video で prompt が空のものに限り、fileName またはURL末尾一致で prior から補完。
+     * 既存表示（prior）に含まれるプロンプト等を新規取得（base）へ引き継ぐ。
+     * - Image/Video で prompt が空の要素のみ対象。
+     * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）。
      */
     private fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
         if (base.isEmpty() || prior.isEmpty()) return base

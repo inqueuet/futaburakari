@@ -1,3 +1,7 @@
+// アプリモジュールのビルド設定（Kotlin DSL）。
+// - Kotlin/JDK 17 ツールチェーンと JVM 11 バイトコードを使用
+// - Jetpack Compose・Hilt・KSP・Firebase・AdMob を利用
+// - リリース時は ProGuard 最適化とネイティブデバッグシンボル出力を有効化
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -5,7 +9,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     id("com.google.dagger.hilt.android")
-    // KSP は version catalog でバージョンを管理（libs.plugins.ksp を作成）
+    // KSP は Version Catalog でバージョンを管理（libs.plugins.ksp を使用）
     alias(libs.plugins.ksp)
     id("com.google.gms.google-services")
 }
@@ -14,7 +18,7 @@ kotlin {
     // JDK は 17 を使用（ビルド環境のツールチェーン）
     jvmToolchain(17)
     compilerOptions {
-        // 旧 kotlinOptions { jvmTarget = "11" } の代替（deprecated解消）
+        // 旧 kotlinOptions { jvmTarget = "11" } の代替（deprecated の解消）
         jvmTarget.set(JvmTarget.JVM_11)
     }
 }
@@ -39,10 +43,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Generate native debug symbols archive for Play Console (if NDK code exists)
-            // Output: app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+            // Play Console でのネイティブクラッシュ解析用にデバッグシンボルを出力（NDK コードがある場合）
+            // 出力先: app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
             ndk {
-                debugSymbolLevel = "SYMBOL_TABLE" // or "FULL" for full DWARF (larger)
+                debugSymbolLevel = "SYMBOL_TABLE" // 必要に応じて "FULL"（サイズ大）
             }
         }
     }
@@ -68,47 +72,47 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    // Compose Foundation (LazyVerticalGrid など)
+    // Compose Foundation（LazyVerticalGrid など）
     implementation("androidx.compose.foundation:foundation")
 
-     // Material Icons
+    // Material Icons（拡張）
     implementation("androidx.compose.material:material-icons-extended")
 
-    // ViewModel for Compose
+    // ViewModel for Compose（compose-viewmodel）
     implementation(libs.androidx.lifecycle.viewmodel.compose.android)
-    // Coil for Compose (画像読み込み)
+    // Coil for Compose（画像読み込み）
     implementation(libs.coil.compose)
-    // Jsoup (HTMLパーサー)
+    // Jsoup（HTML パーサー）
     implementation(libs.jsoup)
-    // Lifecycle-aware state collection
+    // Lifecycle 対応の state 収集
     implementation(libs.androidx.lifecycle.runtime.compose)
-    // LiveData -> Compose State
+    // LiveData → Compose State 変換
     implementation("androidx.compose.runtime:runtime-livedata")
 
-    // Unified dependencies from catalog
+    // ネットワーク/JSON（Version Catalog 統一管理）
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
     implementation(libs.gson)
 
-    // Media3 (ExoPlayer)
+    // Media3（ExoPlayer）
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
-    // extractor is no longer needed (video prompt parsing removed)
+    // Media3 Extractor は不要（動画プロンプト解析を削除済み）
     implementation(libs.androidx.exifinterface)
 
-    // AndroidX Startup
+    // AndroidX Startup（アプリ初期化）
     implementation(libs.androidx.startup.runtime)
 
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
-    // Removed legacy View dependencies: SwipeRefreshLayout/RecyclerView/ConstraintLayout (Compose only)
+    // レガシー View 依存は削除（Compose へ移行）
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.preference.ktx)
-    // Material Components (XML Material 3 themes, widgets, and bridge)
+    // Material Components（XML Material 3 テーマ/ウィジェット/ブリッジ）
     implementation(libs.material)
-    // SplashScreen compat to enable postSplashScreenTheme and backward support
+    // SplashScreen 互換（postSplashScreenTheme・後方互換）
     implementation(libs.androidx.core.splashscreen)
 
     // Coil extensions
@@ -116,22 +120,22 @@ dependencies {
     implementation(libs.coil.video)
     implementation(libs.coil.gif)
 
-    // Google Mobile Ads SDK (AdMob)
+    // Google Mobile Ads SDK（AdMob）
     implementation(libs.play.services.ads)
 
-    // WorkManager
+    // WorkManager（バックグラウンド処理）
     implementation(libs.androidx.work.runtime.ktx)
-    // Hilt WorkManager integration
+    // Hilt × WorkManager 連携
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.hilt.compiler)
 
-    // Firebase
+    // Firebase（Analytics）
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
 
-    // MP4 parser removed (video prompt parsing removed)
+    // MP4 パーサは不要（動画プロンプト解析を削除済み）
 
-    // Testing
+    // テスト依存関係
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

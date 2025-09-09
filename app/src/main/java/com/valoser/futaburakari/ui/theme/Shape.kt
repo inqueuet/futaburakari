@@ -6,6 +6,15 @@ import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
 /**
+ * シェイプ・トークン定義（Material 3 相当）。
+ * - Baseline: デフォルトに近い角丸。情報密度を優先した見た目。
+ * - Expressive: より大きめの角丸。やわらかく親しみやすい見た目。
+ *
+ * テーマ切替:
+ * - `FutaburakariTheme(expressive = false)` -> [BaselineShapes]
+ * - `FutaburakariTheme(expressive = true)`  -> [ExpressiveShapes]
+ */
+/**
  * Baseline（標準）Material 3 のシェイプセット。ほぼデフォルトに準拠します。
  * `FutaburakariTheme(expressive = false)` のときに適用されます。
  */

@@ -1,5 +1,14 @@
 package com.valoser.futaburakari.ui.theme
 
+/**
+ * アプリ全体のテーマ設定をまとめたファイル。
+ *
+ * 役割:
+ * - Expressive スタイル用のライト/ダーク配色の定義
+ * - `FutaburakariTheme` にて動的カラー・ダークテーマ・Expressive の切替を行い `MaterialTheme` に適用
+ * - タイポグラフィ/シェイプ/スペーシングのローカル提供
+ */
+
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -14,7 +23,10 @@ import androidx.compose.material3.Shapes
 import androidx.compose.ui.platform.LocalDensity
 import androidx.preference.PreferenceManager
 
-// Expressive Style Color Schemes
+/**
+ * Expressive スタイルのライト配色。
+ * Material 3 の `lightColorScheme` に対して Expressive 用のトークンを適用。
+ */
 private val LightExpressiveScheme = lightColorScheme(
     primary = expressive_primary_light,
     onPrimary = expressive_onPrimary_light,
@@ -41,6 +53,10 @@ private val LightExpressiveScheme = lightColorScheme(
     outline = expressive_outline_light,
 )
 
+/**
+ * Expressive スタイルのダーク配色。
+ * Material 3 の `darkColorScheme` に対して Expressive 用のトークンを適用。
+ */
 private val DarkExpressiveScheme = darkColorScheme(
     primary = expressive_primary_dark,
     onPrimary = expressive_onPrimary_dark,
@@ -69,10 +85,15 @@ private val DarkExpressiveScheme = darkColorScheme(
 
 /**
  * アプリのテーマ適用エントリ。
- * - `expressive = true` の場合は固定の Expressive スキームを使用
- * - それ以外で `dynamicColor = true` かつ API 31+ は、動的カラーを使用
- * - 上記以外は Material3 のデフォルトのライト/ダーク配色を使用
- * 併せて Typography/Shapes を適用して `MaterialTheme` に内容を渡す。
+ * - `expressive = true` の場合は Expressive スタイル（配色・タイポ・シェイプ・スペーシング）を採用
+ * - さらに設定値により、配色のみ Dynamic Color を併用可能（Android 12+）
+ * - それ以外で `dynamicColor = true` かつ API 31+ は Dynamic Color を使用
+ * - 上記以外は Material 3 の既定ライト/ダーク配色
+ *
+ * @param darkTheme ダークテーマの有効/無効（未指定時はシステム設定に追従）
+ * @param dynamicColor Dynamic Color の使用有無（Android 12+ のみ有効）
+ * @param expressive Expressive スタイルの使用有無
+ * @param content テーマ適用対象のコンテンツ
  */
 @Composable
 fun FutaburakariTheme(
@@ -83,15 +104,16 @@ fun FutaburakariTheme(
 ) {
     val context = LocalContext.current
     val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-    // 設定: Expressive有効時でも端末のDynamic Colorを配色に使う（タイポ/シェイプ/余白はExpressiveを適用）
+    // 設定: Expressive 有効時でも端末の Dynamic Color を配色に使用
+    //      （タイポ/シェイプ/余白は Expressive を適用）
     val expressiveUseDynamicColor = prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)
 
     val colorScheme = when {
-        // 新オプション: Expressiveスタイル + Dynamic Color配色（Android 12+ のみ）
+        // 新オプション: Expressive スタイル + Dynamic Color 配色（Android 12+ のみ）
         expressive && expressiveUseDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        // 既存: Expressiveスタイル + 固定パレット
+        // 既存: Expressive スタイル + 固定パレット
         expressive -> if (darkTheme) DarkExpressiveScheme else LightExpressiveScheme
         // 通常: Dynamic Color
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -103,7 +125,7 @@ fun FutaburakariTheme(
     val typography = if (expressive) ExpressiveTypography else Typography
     val shapes: Shapes = if (expressive) ExpressiveShapes else BaselineShapes
 
-    // Spacing tokens: choose baseline vs expressive, then scale by current fontScale (from configuration)
+    // Spacing トークン: baseline/expressive を選択後、フォントスケールに応じて拡大縮小
     val baseSpacing = if (expressive) ExpressiveSpacing else BaselineSpacing
     val fontScale = LocalDensity.current.fontScale
     val spacing = baseSpacing.scaledByFont(fontScale)

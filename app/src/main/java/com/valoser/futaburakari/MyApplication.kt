@@ -1,3 +1,7 @@
+/*
+ * アプリケーション全体の初期化を担う Application 実装。
+ * - WorkManager構成、Coil ImageLoader、各種初期化（OkHttpウォームアップ等）を提供。
+ */
 package com.valoser.futaburakari
 
 import android.app.Application

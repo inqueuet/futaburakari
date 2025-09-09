@@ -37,19 +37,26 @@ import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 
 /**
- * Default width of the fast scroller track, so callers can reserve matching
- * end padding on the list content to avoid overlap.
+ * 高速スクロール用トラックのデフォルト幅。
+ * リスト側で同等の end パディングを確保すると重なりを避けられます。
  */
 val DefaultFastScrollerWidth: Dp = 20.dp
 
 /**
- * Lightweight vertical fast scroller for long `LazyColumn`s.
- * - Renders only when `itemsCount` exceeds `visibleThreshold`.
- * - Positions a draggable thumb within a full-height track aligned to the top.
- * - Maps thumb position to `LazyListState.scrollToItem(targetIndex)` linearly by index
- *   (approximate: ignores per-item heights and scroll offset).
- * - While dragging, slightly tints the track and invokes `onDragActiveChange(true/false)`.
- * - `bottomPadding` reserves space (e.g., for a banner) so the track does not overlap it.
+ * 縦方向の軽量な高速スクローラー（長い `LazyColumn` 向け）。
+ * - `itemsCount` が `visibleThreshold` を超える場合のみ描画。
+ * - 画面上部に揃えた全高のトラック上にドラッグ可能なサムを表示。
+ * - サム位置をインデックスに線形マップして `LazyListState.scrollToItem(...)` を呼ぶ（概算。各行の高さやオフセットは考慮しない）。
+ * - ドラッグ中はトラックをうっすら着色し、`onDragActiveChange(true/false)` を通知。
+ * - `bottomPadding` で（バナー等の）下部領域を避ける。
+ *
+ * パラメータ:
+ * - `modifier`: 外側に適用する `Modifier`。
+ * - `listState`: 対象の `LazyListState`。
+ * - `itemsCount`: リスト項目数。
+ * - `bottomPadding`: 下部の余白（バナー等で隠れないようにするため）。
+ * - `visibleThreshold`: これ未満なら非表示にするしきい値。
+ * - `onDragActiveChange`: ドラッグ開始/終了時の通知。
  */
 @Composable
 fun FastScroller(
@@ -81,12 +88,12 @@ fun FastScroller(
             .fillMaxHeight(),
         contentAlignment = Alignment.TopCenter
     ) {
-        // Track
+        // トラック
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(8.dp))
-                // Keep track nearly transparent unless dragging
+                // ドラッグ中以外はほぼ透明に保つ
                 .background(
                     if (dragging) MaterialTheme.colorScheme.scrim.copy(alpha = 0.12f)
                     else Color.Transparent
@@ -97,10 +104,10 @@ fun FastScroller(
                 }
         )
 
-        // Thumb
+        // サム
         var thumbOffsetYPx by remember { mutableStateOf(0f) }
 
-        // Keep thumb roughly in sync with list scroll (index-based approximation)
+        // リストスクロールに概算で追随（インデックス基準の近似）
         LaunchedEffect(listState.firstVisibleItemIndex, itemsCount) {
             if (!dragging && itemsCount > 0 && trackHeightPx > 0f) {
                 val ratio = (listState.firstVisibleItemIndex.coerceAtLeast(0)).toFloat() / (itemsCount - 1).coerceAtLeast(1)
@@ -123,7 +130,7 @@ fun FastScroller(
                         onDragEnd = { dragging = false },
                         onDragCancel = { dragging = false },
                     ) { change, dragAmount ->
-                        // Consume the gesture and map thumb delta to list index
+                        // ジェスチャを消費し、サムの移動量をインデックスにマップ
                         change.consume()
                         if (trackHeightPx <= 0f || itemsCount <= 0) return@detectDragGestures
                         val travel = trackHeightPx - with(density) { thumbHeight.toPx() }

@@ -33,8 +33,6 @@ import coil.request.ImageRequest
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * 画像とプロンプト（説明文）を表示する画面コンポーザブル。
  *
@@ -48,6 +46,8 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `prompt`: 表示/コピー対象のプロンプト文字列（空のときは代替文言を表示）。
  * - `onBack`: 上部の戻る操作時に呼ばれるハンドラ。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun ImageDisplayScreen(
     imageUri: String?,
     prompt: String?,

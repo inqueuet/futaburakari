@@ -302,6 +302,12 @@ fun SplitButton(
     }
 }
 
+/**
+ * 画面全面に薄いサーフェスとインジケータを重ねる簡易ローディングオーバーレイ。
+ *
+ * パラメータ:
+ * - `visible`: 表示するかどうか。
+ */
 @Composable
 fun LoadingOverlay(visible: Boolean) {
     AnimatedVisibility(

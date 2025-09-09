@@ -6,7 +6,8 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.sqrt
 
 /**
- * Spacing tokens for layout paddings/margins. Use these instead of raw dp.
+ * レイアウトのパディング/マージン用スペーシング・トークン。
+ * - 生の `dp` ではなく、画面全体で一貫性を保つためにこのトークンを利用してください。
  */
 data class Spacing(
     val xxs: Dp = 2.dp,
@@ -19,7 +20,7 @@ data class Spacing(
     val xxxl: Dp = 40.dp,
 )
 
-/** Baseline spacing set (compact). */
+/** Baseline（標準・ややコンパクト）なスペーシングセット。 */
 val BaselineSpacing = Spacing(
     xxs = 2.dp,
     xs = 4.dp,
@@ -31,7 +32,7 @@ val BaselineSpacing = Spacing(
     xxxl = 40.dp,
 )
 
-/** Expressive spacing set (softer/wider). */
+/** Expressive（やわらかく広め）なスペーシングセット。 */
 val ExpressiveSpacing = Spacing(
     xxs = 3.dp,
     xs = 6.dp,
@@ -43,11 +44,13 @@ val ExpressiveSpacing = Spacing(
     xxxl = 48.dp,
 )
 
+/** `CompositionLocal` 経由で現在のスペーシングセットを提供します。 */
 val LocalSpacing = compositionLocalOf { BaselineSpacing }
 
 /**
- * Scale spacing by a factor derived from fontScale. We use sqrt() to avoid over-expansion.
- * Clamped for stability across extreme settings.
+ * アクセシビリティのフォントスケールに応じてスペーシングをスケールします。
+ * - 過度な拡大/縮小を避けるため `sqrt(fontScale)` を用いて緩和。
+ * - 極端な設定でもレイアウトが破綻しにくいよう [0.9, 1.15] にクランプします。
  */
 fun Spacing.scaledByFont(fontScale: Float): Spacing {
     val base = sqrt(fontScale).coerceIn(0.9f, 1.15f)
@@ -63,4 +66,3 @@ fun Spacing.scaledByFont(fontScale: Float): Spacing {
         xxxl = xxxl.scale(),
     )
 }
-
