@@ -119,6 +119,7 @@ dependencies {
     implementation(libs.coil.core)
     implementation(libs.coil.video)
     implementation(libs.coil.gif)
+    implementation(libs.coil.svg)
 
     // Google Mobile Ads SDK（AdMob）
     implementation(libs.play.services.ads)

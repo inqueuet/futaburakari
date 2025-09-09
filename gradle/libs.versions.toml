@@ -69,6 +69,7 @@ androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", ve
 androidx-preference-ktx = { group = "androidx.preference", name = "preference-ktx", version.ref = "preferenceKtx" }
 coil-video = { group = "io.coil-kt", name = "coil-video", version.ref = "coilCompose" }
 coil-gif = { group = "io.coil-kt", name = "coil-gif", version.ref = "coilCompose" }
+coil-svg = { group = "io.coil-kt", name = "coil-svg", version.ref = "coilCompose" }
 coil-core = { group = "io.coil-kt", name = "coil", version.ref = "coilCompose" }
 play-services-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "playServicesAds" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }

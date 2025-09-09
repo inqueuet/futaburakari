@@ -64,21 +64,21 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * 画像/動画/テキストを表示する汎用メディア画面。
  *
  * 機能概要:
- * - `type == image`: ピンチ/ダブルタップズーム対応の画像ビュー。
- * - `type == video`: ExoPlayer による動画再生ビュー（ライフサイクルで開放）。
- * - それ以外: スクロール可能なテキストビュー。
- * - テキスト（プロンプト）が利用可能ならトップバーからコピー/保存アクションを表示。
- * - 画像時は必要に応じてメタデータ抽出（`MetadataExtractor`）で `text` を補完。
- * - 画像/動画の保存アクションはコールバック指定時のみ表示（URL が空の場合はスナックバー通知）。
+ * - `type == image`: ピンチ/ダブルタップでズーム可能な画像ビュー。
+ * - `type == video`: ExoPlayer による動画再生ビュー（ライフサイクルで安全に解放）。
+ * - 上記以外: スクロール可能なテキストビュー。
+ * - テキスト（プロンプト）があればトップバーからコピー/保存が可能。
+ * - 画像時は必要に応じて `MetadataExtractor` により `text` を補完。
+ * - 画像/動画の保存はコールバックが指定されている場合のみ表示（URL が空のときはスナックバーで通知）。
  *
- * パラメータ:
- * - `title`: 上部タイトル。
- * - `type`: メディア種別（"image"/"video"/その他）。
- * - `url`: メディアの URL（テキスト時は未使用）。
- * - `initialText`: 初期テキスト（image の場合は抽出で上書き補完される場合あり）。
- * - `networkClient`: メタデータ抽出で利用するネットワーククライアント。
- * - `onBack`: 戻る押下時のハンドラ。
- * - `onSaveImage`/`onSaveVideo`: 保存アクションのハンドラ（指定時のみ表示）。
+ * @param title 上部タイトル。
+ * @param type メディア種別（"image"/"video"/その他）。
+ * @param url メディアの URL（テキスト時は未使用）。
+ * @param initialText 初期テキスト（image の場合は抽出により上書き補完される場合あり）。
+ * @param networkClient メタデータ抽出に利用するネットワーククライアント。
+ * @param onBack 戻る押下時のハンドラ。
+ * @param onSaveImage 画像保存アクションのハンドラ（指定時のみ表示）。
+ * @param onSaveVideo 動画保存アクションのハンドラ（指定時のみ表示）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -253,6 +253,13 @@ private fun TextContent(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * デフォルトのテキスト保存ファイル名を生成する。
+ * パターン: `<テキスト先頭15文字のサニタイズ>_<yyyyMMdd_HHmmss>`
+ *
+ * @param text 保存対象テキスト。
+ * @return 生成されたファイル名（拡張子なし）。
+ */
 private fun buildDefaultFileName(text: String?): String {
     val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
     val timestamp = sdf.format(java.util.Date())
@@ -283,7 +290,10 @@ private fun ZoomableAsyncImage(
     }
 
     AsyncImage(
-        model = model,
+        model = coil.request.ImageRequest.Builder(LocalContext.current)
+            .data(model)
+            .allowHardware(false) // ズーム・変形のため SW ビットマップを使用
+            .build(),
         contentDescription = null,
         contentScale = ContentScale.Fit,
         modifier = modifier

@@ -171,7 +171,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
     companion object {
         private const val KEY_URL = "url"
         private const val KEY_ONE_SHOT = "one_shot"
-        // removed: background toggle prefs (always enabled)
+        // 以前のバックグラウンド監視トグル設定は廃止（常時有効）
 
         private fun uniqueName(url: String): String = "monitor-" + UrlNormalizer.threadKey(url)
         private fun uniqueNameLegacy(url: String): String = "monitor-" + UrlNormalizer.legacyThreadKey(url)
@@ -195,9 +195,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 .addTag("thread-monitor")
                 .build()
 
+            // 連続監視はユニークチェーンに順次追加し、実行中の Work を中断しない
             WorkManager.getInstance(context).enqueueUniqueWork(
                 uniqueName(url),
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.APPEND,
                 req
             )
         }
