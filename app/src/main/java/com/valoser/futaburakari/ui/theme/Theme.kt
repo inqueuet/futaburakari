@@ -12,6 +12,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Shapes
 import androidx.compose.ui.platform.LocalDensity
+import androidx.preference.PreferenceManager
 
 // Expressive Style Color Schemes
 private val LightExpressiveScheme = lightColorScheme(
@@ -80,10 +81,20 @@ fun FutaburakariTheme(
     expressive: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
+    val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+    // 設定: Expressive有効時でも端末のDynamic Colorを配色に使う（タイポ/シェイプ/余白はExpressiveを適用）
+    val expressiveUseDynamicColor = prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)
+
     val colorScheme = when {
+        // 新オプション: Expressiveスタイル + Dynamic Color配色（Android 12+ のみ）
+        expressive && expressiveUseDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        // 既存: Expressiveスタイル + 固定パレット
         expressive -> if (darkTheme) DarkExpressiveScheme else LightExpressiveScheme
+        // 通常: Dynamic Color
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
         else -> if (darkTheme) darkColorScheme() else lightColorScheme()

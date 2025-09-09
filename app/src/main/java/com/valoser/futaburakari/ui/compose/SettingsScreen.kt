@@ -91,6 +91,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var gridSpan by remember { mutableStateOf(prefs.getString("pref_key_grid_span", "4") ?: "4") }
     var fontScale by remember { mutableStateOf(prefs.getString("pref_key_font_scale", "1.0") ?: "1.0") }
     var themeMode by remember { mutableStateOf(prefs.getString("pref_key_theme_mode", "system") ?: "system") }
+    // Expressive配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみExpressive適用）
+    var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
     // removed: color mode preference
     var autoCleanup by remember { mutableStateOf(prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0") }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
@@ -171,6 +173,19 @@ fun SettingsScreen(onBack: () -> Unit) {
                         (ctx as? Activity)?.recreate()
                     }
                 )
+            }
+            item {
+                // Expressive有効時に、配色のみ端末のDynamic Colorを使用（Android 12+で有効）。
+                // タイポ/シェイプ/余白はExpressiveのまま適用されます。
+                SwitchRow(
+                    title = "Dynamic Colorと併用 (Expressive)",
+                    checked = expressiveDynamicColor,
+                    summary = "端末のDynamic Colorを使い、Expressiveはタイポ/シェイプ/余白のみ適用"
+                ) { on ->
+                    expressiveDynamicColor = on
+                    prefs.edit().putBoolean("pref_key_expressive_use_dynamic_color", on).apply()
+                    (ctx as? Activity)?.recreate()
+                }
             }
             // removed: color mode selection
             item {
