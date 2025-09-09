@@ -1,99 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Unified label text for form fields. Scales with fontScale (sp). -->
-    <style name="FormLabelText" parent="TextAppearance.Material3.BodySmall">
+    <!-- 入力フォームのラベル統一スタイル。fontScale に追従（sp）。 -->
+    <style name="FormLabelText" parent="TextAppearance.AppCompat.Body2">
         <item name="android:textSize">10sp</item>
         <item name="android:maxLines">2</item>
         <item name="android:ellipsize">end</item>
     </style>
 
-    <!-- Color overlays (can be applied on top of base theme) -->
-    <style name="ThemeOverlay.Futaburakari.Color.Green" parent="ThemeOverlay.MaterialComponents">
-        <item name="colorPrimary">@color/green_primary</item>
-        <item name="colorPrimaryVariant">@color/green_primaryVariant</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <style name="ThemeOverlay.Futaburakari.Color.Purple" parent="ThemeOverlay.MaterialComponents">
-        <item name="colorPrimary">@color/purple_500</item>
-        <item name="colorPrimaryVariant">@color/purple_700</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <style name="ThemeOverlay.Futaburakari.Color.Blue" parent="ThemeOverlay.MaterialComponents">
-        <item name="colorPrimary">#1565C0</item>
-        <item name="colorPrimaryVariant">#0D47A1</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">#26A69A</item>
-        <item name="colorSecondaryVariant">#00796B</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <style name="ThemeOverlay.Futaburakari.Color.Orange" parent="ThemeOverlay.MaterialComponents">
-        <item name="colorPrimary">#EF6C00</item>
-        <item name="colorPrimaryVariant">#E65100</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">#00897B</item>
-        <item name="colorSecondaryVariant">#00695C</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <!-- Full themes per color to allow setTheme(...) switching -->
-    <style name="Theme.Futaburakari.Green" parent="Theme.Futaburakari">
-        <item name="colorPrimary">@color/green_primary</item>
-        <item name="colorPrimaryVariant">@color/green_primaryVariant</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <style name="Theme.Futaburakari.Purple" parent="Theme.Futaburakari">
-        <item name="colorPrimary">@color/purple_500</item>
-        <item name="colorPrimaryVariant">@color/purple_700</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <style name="Theme.Futaburakari.Blue" parent="Theme.Futaburakari">
-        <item name="colorPrimary">#1565C0</item>
-        <item name="colorPrimaryVariant">#0D47A1</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">#26A69A</item>
-        <item name="colorSecondaryVariant">#00796B</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
-
-    <style name="Theme.Futaburakari.Orange" parent="Theme.Futaburakari">
-        <item name="colorPrimary">#EF6C00</item>
-        <item name="colorPrimaryVariant">#E65100</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorSecondary">#00897B</item>
-        <item name="colorSecondaryVariant">#00695C</item>
-        <item name="colorOnSecondary">@color/black</item>
-    </style>
+    <!-- Removed: legacy color overlays and variant themes (Green/Purple/Blue/Orange) -->
 
     <!-- オーバーフローボタンのスタイル -->
     <style name="OverflowButtonStyle" parent="Widget.AppCompat.ActionButton.Overflow">
-        <item name="android:tint">?attr/colorOnPrimary</item>
+        <item name="android:tint">?android:attr/textColorPrimary</item>
     </style>
 
-    <!-- ツールバー用のテーマオーバーレイ -->
-    <style name="ThemeOverlay.Futaburakari.Toolbar" parent="ThemeOverlay.Material3.Dark.ActionBar">
-        <item name="android:textColorPrimary">?attr/colorOnPrimary</item>
-        <item name="android:textColorSecondary">?attr/colorOnPrimary</item>
-        <item name="colorOnSurface">?attr/colorOnPrimary</item>
-    </style>
+    <!-- ツールバー用のテーマオーバーレイ（未使用のため削除）。必要なら AppCompat 相当で追加してください。 -->
 
-    <!-- Preference画面用オーバーレイ（要素のサマリー色をタイトル色に揃える） -->
+    <!-- Preference 画面用オーバーレイ（要素のサマリー色をタイトル色に寄せる）。
+         互換のため View ベース設定画面等で利用する想定。 -->
     <style name="ThemeOverlay.Futaburakari.Preference" parent="PreferenceThemeOverlay.v14.Material">
         <item name="android:textColorSecondary">?android:attr/textColorPrimary</item>
     </style>

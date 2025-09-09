@@ -15,10 +15,12 @@ import java.util.zip.CRC32
 
 /**
  * 返信画面の ViewModel。
- * 1回目は OkHttp 単独 → 失敗したら TokenProvider で hidden/token を取得して再送。
- * ・「操作が早すぎます。あとN秒」→ 自動待機して 1 回だけ再試行
- * ・「環境変数がありません」等 JS 必須のエラー → トークン再送へ
- * ・全体 10 秒で打ち切り
+ *
+ * - 最初は最低限のフィールドのみで送信し、失敗した場合に（URL が指定されていれば）
+ *   TokenProvider から hidden/token を取得して再送を試みます。
+ * - 「操作が早すぎます。あとN秒」を検出した場合は自動的に待機して、その段階内で 1 回だけ再試行します。
+ *  （初回送信と再送のそれぞれで一度ずつ自動再試行の可能性があります。）
+ * - 全体処理は 10 秒で打ち切ります。トークン取得自体には 5 秒の個別タイムアウトを設けています。
  */
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -28,18 +30,34 @@ class ReplyViewModel @Inject constructor(
     private val repository: ReplyRepository
 ) : ViewModel() {
 
+    /**
+     * 投稿再送時に必要となる hidden/token を取得するためのプロバイダ（任意）。
+     * 指定された場合のみ 2 回目の送信で利用します。
+     */
     var tokenProvider: TokenProvider? = null
 
     private val _uiState = MutableLiveData<UiState>(UiState.Idle)
     val uiState: LiveData<UiState> = _uiState
 
+    /** 画面の状態を表すシールクラス。 */
     sealed interface UiState {
         data object Idle : UiState
         data object Loading : UiState
+        /** 成功時にサーバーから受領したメッセージ（例: 送信完了 No.xxx）。 */
         data class Success(val html: String) : UiState
+        /** 失敗時のメッセージ。 */
         data class Error(val message: String) : UiState
     }
 
+    /**
+     * 投稿フローを開始します。
+     *
+     * - まず最低限のフィールドのみで送信。失敗した場合、`postPageUrlForToken` が指定されていれば
+     *   TokenProvider でトークンを取得し、不足値を補完して再送します。
+     * - 初回・再送の各段階で「早すぎます」エラーを検出したら待機して 1 回だけ自動再試行します。
+     * - 全体のタイムアウトは 10 秒。トークン取得は個別に 5 秒でタイムアウトします。
+     * - 結果は `uiState` に `Success` または `Error` として反映されます。
+     */
     fun submit(
         context: Context,
         boardUrl: String,
@@ -51,7 +69,7 @@ class ReplyViewModel @Inject constructor(
         inputPwd: String?,
         upfileUri: Uri?,
         textOnly: Boolean,
-        postPageUrlForToken: String? // 例: https://may.2chan.net/b/futaba.php?mode=post&res=123456&guid=on
+        postPageUrlForToken: String? // 再送用のトークン取得ページURL（例: https://may.2chan.net/b/futaba.php?mode=post&res=123456&guid=on）
     ) {
         viewModelScope.launch {
             _uiState.postValue(UiState.Loading)
@@ -165,7 +183,7 @@ class ReplyViewModel @Inject constructor(
     }
 
     /**
-     * 「操作が早すぎます。あとN秒」を検出し、N秒(+400ms)待って1回だけ再試行する。
+     * 「操作が早すぎます。あとN秒」を検出し、N秒(+1000ms)待って1回だけ再試行する。
      */
     private suspend fun retryIfTooFast(block: suspend () -> Result<String>): Result<String> {
         val first = runCatching { block() }.getOrElse { return Result.failure(it) }

@@ -40,8 +40,8 @@
 
     <!-- AdMob test IDs (replace in production) -->
     <!-- Use official Google test IDs to ensure fill during dev -->
-    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
-    <string name="admob_banner_id">ca-app-pub-3940256099942544/6300978111</string>
+    <string name="admob_app_id">ca-app-pub-6403856201304924~8100902512</string>
+    <string name="admob_banner_id">ca-app-pub-6403856201304924/2864069462</string>
 
     <string name="history">履歴</string>
     <string name="history_title">閲覧履歴</string>
@@ -74,12 +74,14 @@
         <item>標準</item>
         <item>大</item>
         <item>特大</item>
+        <item>特大＋</item>
     </string-array>
     <string-array name="pref_font_scale_values">
         <item>0.85</item>
         <item>1.0</item>
         <item>1.15</item>
         <item>1.30</item>
+        <item>1.50</item>
     </string-array>
 
     <!-- Theme mode -->
@@ -94,19 +96,7 @@
         <item>dark</item>
     </string-array>
 
-    <!-- Color mode -->
-    <string-array name="pref_color_mode_entries">
-        <item>グリーン</item>
-        <item>パープル</item>
-        <item>ブルー</item>
-        <item>オレンジ</item>
-    </string-array>
-    <string-array name="pref_color_mode_values">
-        <item>green</item>
-        <item>purple</item>
-        <item>blue</item>
-        <item>orange</item>
-    </string-array>
+    <!-- Removed: legacy color mode arrays (green/purple/blue/orange) -->
 
     <!-- Auto cleanup limit -->
     <string-array name="pref_auto_cleanup_entries">

@@ -2,4 +2,7 @@
 <resources>
     <!-- Fixed column width for form labels to align inputs -->
     <dimen name="form_label_width">60dp</dimen>
+    <!-- Splash screen icon inset to avoid clipping on API 31+.
+         Increase to make the icon appear smaller (fit fully). -->
+    <dimen name="splash_icon_inset">32dp</dimen>
 </resources>

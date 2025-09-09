@@ -1,28 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
-    <color name="my_expressive_primary">#006D43</color>
+    <!-- Expressive palette (light) -->
+    <color name="my_expressive_primary">#0061A4</color>
     <color name="my_expressive_onPrimary">#FFFFFF</color>
-    <color name="my_expressive_primaryContainer">#8CF7BE</color>
-    <color name="my_expressive_onPrimaryContainer">#002111</color>
-    <color name="my_expressive_secondary">#4E6354</color>
+    <color name="my_expressive_primaryContainer">#D1E4FF</color>
+    <color name="my_expressive_onPrimaryContainer">#001D36</color>
+    <color name="my_expressive_secondary">#B90063</color>
     <color name="my_expressive_onSecondary">#FFFFFF</color>
-    <color name="my_expressive_secondaryContainer">#D1E8D5</color>
-    <color name="my_expressive_onSecondaryContainer">#0B1F13</color>
-    <color name="my_expressive_tertiary">#3D6473</color>
+    <color name="my_expressive_secondaryContainer">#FFD9E2</color>
+    <color name="my_expressive_onSecondaryContainer">#3E001D</color>
+    <color name="my_expressive_tertiary">#006D3D</color>
     <color name="my_expressive_onTertiary">#FFFFFF</color>
-    <color name="my_expressive_tertiaryContainer">#C0E9FA</color>
-    <color name="my_expressive_onTertiaryContainer">#001F28</color>
-    <color name="my_expressive_background">#FBFDF8</color>
-    <color name="my_expressive_onBackground">#191C1A</color>
-    <color name="light_gray">#F5F5F5</color>
-    <!-- Green color mode (day) -->
-    <color name="green_primary">#004D2D</color>
-    <color name="green_primaryVariant">#00361F</color>
+    <color name="my_expressive_tertiaryContainer">#9AF6B9</color>
+    <color name="my_expressive_onTertiaryContainer">#00210F</color>
+    <color name="my_expressive_error">#B00020</color>
+    <color name="my_expressive_onError">#FFFFFF</color>
+    <color name="my_expressive_errorContainer">#FCD8DF</color>
+    <color name="my_expressive_onErrorContainer">#410E0B</color>
+    <color name="my_expressive_background">#FDFCFF</color>
+    <color name="my_expressive_onBackground">#1A1C1E</color>
+    <color name="my_expressive_surface">#FDFCFF</color>
+    <color name="my_expressive_onSurface">#1A1C1E</color>
+    <color name="my_expressive_surfaceVariant">#E7E0EC</color>
+    <color name="my_expressive_onSurfaceVariant">#49454F</color>
+    <color name="my_expressive_outline">#79747E</color>
+
+    <!-- General neutrals removed: light_gray (unused) -->
 </resources>

@@ -5,9 +5,27 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 
+/**
+ * メモリ上のみで動作する簡易 CookieJar 実装。
+ *
+ * 特徴と注意点（実装に合わせた正確な説明）:
+ * - ホスト単位で Cookie を保持（サブドメイン継承は考慮しない）
+ * - 同一ホスト内では「名前が同じ Cookie」をパス/ドメインに関係なく上書き
+ * - 返却時もホストが完全一致するものだけを返す（ドメイン/パス/セキュア属性の検証はしない）
+ * - WebView の CookieManager にも同期（setCookie + flush）
+ * - 永続化は行わない（プロセス終了で破棄）
+ */
 object AppCookieJar : CookieJar {
     private val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
 
+    /**
+     * レスポンスから受け取った Cookie をホスト単位で保存し、WebView にも同期する。
+     *
+     * 実装上の仕様:
+     * - 既存の同名 Cookie を「パスやドメインを無視して」除去してから追加
+     * - 追加対象は「期限が未来」もしくは「persistent が true」の Cookie のみ
+     * - 受け取った Cookie 文字列をそのまま WebView に setCookie し、flush する
+     */
     @Synchronized
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         val host = url.host
@@ -29,6 +47,15 @@ object AppCookieJar : CookieJar {
         webViewCookieManager.flush()
     }
 
+    /**
+     * リクエスト送出前に付与する Cookie のリストを返す。
+     *
+     * 実装上の仕様:
+     * - 保持しているのは「要求ホストと完全一致」するエントリのみ（サブドメイン/ドメイン一致はしない）
+     * - 期限切れのセッション Cookie（persistent=false かつ expiresAt<=now）のみ削除
+     *   ※ 永続 Cookie は expiresAt に関わらず保持される（一般的な仕様と異なる点）
+     * - ドメイン/パス/セキュア属性のチェックは行わない
+     */
     @Synchronized
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         val host = url.host
@@ -46,12 +73,18 @@ object AppCookieJar : CookieJar {
         return storedCookies
     }
 
+    /**
+     * すべての Cookie をメモリから破棄する（WebView 側は操作しない）。
+     */
     @Synchronized
     fun clearAllCookies() {
         cookieStore.clear()
         Log.d("AppCookieJar", "All cookies cleared.")
     }
 
+    /**
+     * 指定ホストの Cookie をメモリから破棄する（WebView 側は操作しない）。
+     */
     @Synchronized
     fun clearCookiesForHost(host: String) {
         cookieStore.remove(host)

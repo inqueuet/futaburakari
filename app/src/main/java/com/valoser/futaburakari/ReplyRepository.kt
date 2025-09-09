@@ -20,7 +20,12 @@ import java.nio.charset.Charset
 
 /**
  * Futaba への投稿を担当するリポジトリ。
- * 既定の必須フィールドに加えて、JS依存で得た hidden/token を extra で上書き注入できるようにしている。
+ *
+ * - マルチパートフォームを Shift_JIS で組み立て、OkHttp で送信します。
+ * - `hash` など JS で得られる hidden/token は `extra` で上書き注入可能（`extra` が最優先）。
+ * - `pthc/pthb` はアプリ内で保存・再利用（初回は生成）。削除パス `pwd` も未指定時は保存済みまたは新規生成を利用します。
+ * - Cookie は WebView と OkHttp の CookieJar をマージし、同名キーは WebView 側を優先します。
+ * - `Origin`/`Referer` を適切に付与し、必要に応じて `guid=on` を付けた投稿先 URL を使用します。
  */
 import javax.inject.Inject
 
@@ -42,6 +47,13 @@ class ReplyRepository @Inject constructor(
      * @param textOnly  画像なし
      * @param context   コンテキスト（SJIS, 添付, Cookie/Prefs 用）
      * @param extra     追加の hidden / token（後勝ちで上書き注入される）
+     * @return Result<String> 成功時は "送信完了" または "送信完了 No.xxx" を返す。
+     *
+     * - `extra` に `hash` が指定されていない場合はスレページを取得して `hash` を抽出します。
+     * - `textOnly=true` もしくは `upfileUri=null` の場合は空の `upfile` を付けて送信します（ブラウザ挙動に合わせる）。
+     * - 最後に必ず `mode=regist` を付与し、トークンに含まれる `mode` を上書きします。
+     * - Cookie は WebView と OkHttp から収集してマージ、User-Agent は `Ua.STRING` を使用します。
+     * - レスポンスは JSON（thisno）優先で番号を抽出、HTML でも成功の雰囲気なら成功扱いにします。
      */
     suspend fun postReply(
         boardUrl: String,
@@ -231,6 +243,9 @@ class ReplyRepository @Inject constructor(
 
     /**
      * スレHTMLから hash を抽出する（Shift_JIS）。
+     *
+     * - HTML を取得して `form#fm`（なければ最初の `form`）から `input[name=hash]` を探します。
+     * - 見つからない場合は失敗（`IllegalStateException`）として返します。
      */
     private suspend fun fetchHashFromThreadPage(threadUrl: String): Result<String> =
         withContext(Dispatchers.IO) {
@@ -251,6 +266,9 @@ class ReplyRepository @Inject constructor(
             }
         }
 
+    /**
+     * 代表的なエラーワードを含むかどうかの簡易判定。
+     */
     private fun looksLikeError(html: String): Boolean {
         val t = html
         // 代表的な失敗キーワードを簡易判定（必要に応じて追加）
@@ -261,6 +279,10 @@ class ReplyRepository @Inject constructor(
         return words.any { t.contains(it, ignoreCase = true) }
     }
 
+    /**
+     * HTML からエラーメッセージらしき文言を抽出して返します（最大 200 文字程度）。
+     * フォールバックは汎用の失敗メッセージです。
+     */
     private fun parseErrorMessage(html: String): String {
         return runCatching {
             val doc = Jsoup.parse(html)
@@ -272,10 +294,16 @@ class ReplyRepository @Inject constructor(
         }.getOrDefault("投稿に失敗しました")
     }
 
+    /**
+     * 文字列を Shift_JIS として `RequestBody` に変換します。
+     */
     private fun String.toShiftJISRequestBody(): RequestBody =
         this.toByteArray(Charset.forName("Shift_JIS"))
             .toRequestBody("text/plain; charset=Shift_JIS".toMediaTypeOrNull())
 
+    /**
+     * URI から適切な MIME Type を推測します（ContentResolver → 拡張子 → octet-stream）。
+     */
     private fun guessMimeType(cr: ContentResolver, uri: Uri): String {
         val mime = cr.getType(uri)
         if (!mime.isNullOrBlank()) return mime
@@ -284,6 +312,9 @@ class ReplyRepository @Inject constructor(
         return fromExt ?: "application/octet-stream"
     }
 
+    /**
+     * URI から送信用のファイル名を推測します（パス末尾のセグメント）。
+     */
     private fun guessFileName(cr: ContentResolver, uri: Uri): String {
         // シンプルに末尾から取得（必要なら ContentResolver クエリに置換）
         val path = uri.lastPathSegment ?: "upload.bin"
@@ -292,6 +323,12 @@ class ReplyRepository @Inject constructor(
     }
 }
 
+/**
+ * 板の投稿 URL に `guid=on` を必要に応じて付与して返す。
+ *
+ * - すでに `guid` パラメータがある場合はそのまま返します。
+ * - `AppPreferences.getAppendGuidOn(context)` が真なら `guid=on` を付与します。
+ */
 private fun ensureBoardPostUrl(boardUrl: String, context: Context): String {
     return try {
         val url = boardUrl.toHttpUrl()

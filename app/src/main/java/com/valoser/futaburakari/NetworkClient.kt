@@ -14,23 +14,34 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
 
+/**
+ * Futaba系サイト向けのネットワーク操作をまとめたクライアント。
+ *
+ * - HTML取得（SJIS/UTF-8 自動判定）
+ * - バイト列/Range取得、HEADでの Content-Length 取得
+ * - 「そうだね」投票、カタログ設定反映、レス削除（通常/管理エンドポイント）
+ * - OkHttpのCookieJarとWebViewのCookieを統合して送信
+ */
 class NetworkClient(
     private val httpClient: OkHttpClient,
 ) {
 
     // ===== Cookie ユーティリティ =====
+    // "k=v; k2=v2" 形式のCookie文字列をMapへ分解
     private fun parseCookieString(s: String?): Map<String, String> =
         s?.split(";")?.mapNotNull {
             val i = it.indexOf('=')
             if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
         }?.toMap() ?: emptyMap()
 
+    // 複数ソースのCookie文字列をマージ（同名は後勝ち）
     private fun mergeCookies(vararg cookieStrs: String?): String? {
         val merged = cookieStrs.fold(emptyMap<String, String>()) { acc, s -> acc + parseCookieString(s) }
         return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
     }
 
     // ===== HTML GET（SJIS/UTF-8 自動判定） =====
+    // HTMLを取得し、レスポンスのContent-Type等からエンコードを推定してJsoup Documentに変換
     suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -49,6 +60,7 @@ class NetworkClient(
         }
     }
 
+    // 任意URLのバイト列を取得（失敗時はnull）
     suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -64,6 +76,7 @@ class NetworkClient(
         }
     }
 
+    // HEADでContent-Lengthを取得（失敗時はnull）
     suspend fun headContentLength(url: String): Long? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -80,6 +93,8 @@ class NetworkClient(
         }
     }
 
+    // Range GET で部分取得（サーバが200を返した場合は手動でスライス）。
+    // 最大2MBまで読み取り、必要十分な先頭範囲の取得に利用。
     suspend fun fetchRange(url: String, start: Long, length: Long): ByteArray? = withContext(Dispatchers.IO) {
         val end = if (length > 0) start + length - 1 else null
         val rangeValue = if (end != null) "bytes=$start-$end" else "bytes=$start-"
@@ -107,7 +122,7 @@ class NetworkClient(
                     out.toByteArray()
                 }
                 if (code == 200 && start > 0) {
-                    // Server may have ignored range; slice manually if possible
+                    // サーバがRangeを無視して200を返したケース：クライアント側でスライス
                     if (start >= bytes.size) return@use null
                     val from = start.toInt()
                     val to = if (length > 0) (from + length.toInt()).coerceAtMost(bytes.size) else bytes.size
@@ -121,6 +136,7 @@ class NetworkClient(
     }
 
     // ===== そうだね =====
+    // レス番号(resNum)に対して「そうだね」を送信。必要に応じてRefererのページ取得後に再試行。
     suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
         val refUrl = referer.toHttpUrl()
         val board = refUrl.pathSegments.firstOrNull() ?: return@withContext null
@@ -151,7 +167,7 @@ class NetworkClient(
                 .apply { if (!mergedCookie.isNullOrBlank()) header("Cookie", mergedCookie) }
                 .build()
 
-            // use の“戻り値”をそのまま返す
+            // use の戻り値（件数等の応答数値）をそのまま返す
             return httpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val raw = resp.body?.bytes() ?: return@use null
@@ -169,6 +185,7 @@ class NetworkClient(
     }
 
     // ===== カタログ設定 =====
+    // 板名URL（末尾は futaba.php までのベース）に対して catset パラメータをPOSTして適用
     suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
         withContext(Dispatchers.IO) {
             val settingsUrl = "${boardBaseUrl}futaba.php?mode=catset"
@@ -191,6 +208,7 @@ class NetworkClient(
     }
 
     // ===== レス削除 =====
+    // 通常の usrdel（ユーザ削除）エンドポイント。画像のみ削除フラグにも対応。
     suspend fun deletePost(
         postUrl: String,
         referer: String,
@@ -205,7 +223,7 @@ class NetworkClient(
                 .add("pwd", pwd)
                 .add("mode", "usrdel")
             if (onlyImage) {
-                // Futaba仕様: 画像のみ削除にフラグを付与
+                // Futaba仕様: 画像のみ削除の場合のフラグ
                 formBuilder.add("onlyimgdel", "on")
             }
             val form = formBuilder.build()

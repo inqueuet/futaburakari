@@ -1,210 +1,183 @@
 package com.valoser.futaburakari
 
-import android.content.Intent
 import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import android.content.Context
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
-import androidx.appcompat.app.AlertDialog
-// import androidx.appcompat.app.AppCompatActivity
-import androidx.recyclerview.widget.ItemTouchHelper
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.valoser.futaburakari.databinding.ActivityHistoryBinding
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.preference.PreferenceManager
+import com.valoser.futaburakari.ui.compose.HistoryScreen
+import com.valoser.futaburakari.ui.compose.HistorySortMode
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
+/**
+ * 履歴一覧画面のアクティビティ。
+ *
+ * - UI状態（未読のみ/ソート種別）を `SharedPreferences` に保存・復元
+ * - `HistoryManager` から履歴を取得し、フィルタ/ソートして表示
+ * - 変更ブロードキャスト（`ACTION_HISTORY_CHANGED`）を受けて再計算
+ * - 自動クリーンアップ設定（MB上限）に応じて詳細キャッシュ/サムネイルを整理
+ * - アイテム削除、全削除の操作に応じて履歴・キャッシュ・関連ワーカーを後始末
+ */
 class HistoryActivity : BaseActivity() {
 
-    private lateinit var binding: ActivityHistoryBinding
-    private lateinit var adapter: HistoryAdapter
-    private var showUnreadOnly: Boolean = false
-    private var sortMode: SortMode = SortMode.MIXED
-
-    private enum class SortMode { MIXED, UPDATED, VIEWED, UNREAD }
-
-    private val historyReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context?, intent: Intent?) {
-            if (intent?.action == HistoryManager.ACTION_HISTORY_CHANGED) {
-                refresh()
-            }
-        }
-    }
-
+    /**
+     * 履歴画面のCompose UIを初期化し、
+     * 表示状態（未読のみ/ソート）とデータ（履歴取得/クリーンアップ/再計算）の連携を設定する。
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityHistoryBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        supportActionBar?.title = getString(R.string.history_title)
-
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                WindowInsetsCompat.CONSUMED
-            }
+        val uiPrefs = getSharedPreferences("com.valoser.futaburakari.history.ui", MODE_PRIVATE)
+        val initialUnreadOnly = uiPrefs.getBoolean("unread_only", false)
+        val initialSort = when (uiPrefs.getString("sort_mode", HistorySortMode.MIXED.name)) {
+            HistorySortMode.UPDATED.name -> HistorySortMode.UPDATED
+            HistorySortMode.VIEWED.name -> HistorySortMode.VIEWED
+            HistorySortMode.UNREAD.name -> HistorySortMode.UNREAD
+            else -> HistorySortMode.MIXED
         }
 
-        adapter = HistoryAdapter { entry ->
-            val intent = Intent(this, DetailActivity::class.java).apply {
-                putExtra(DetailActivity.EXTRA_URL, entry.url)
-                putExtra(DetailActivity.EXTRA_TITLE, entry.title)
-            }
-            startActivity(intent)
-        }
-        binding.recyclerView.layoutManager = LinearLayoutManager(this)
-        binding.recyclerView.adapter = adapter
 
-        // Pad bottom for gesture nav/system bars
-        val rv = binding.recyclerView
-        val origBottom = rv.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(rv) { v, insets ->
-            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, origBottom + sys.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
+        setContent {
+            FutaburakariTheme(expressive = true) {
+                var showUnreadOnly by remember { mutableStateOf(initialUnreadOnly) }
+                var sortMode by remember { mutableStateOf(initialSort) }
+                var entries by remember { mutableStateOf(listOf<HistoryEntry>()) }
 
-        // swipe to delete
-        val touchHelper = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
-            override fun onMove(
-                recyclerView: RecyclerView,
-                viewHolder: RecyclerView.ViewHolder,
-                target: RecyclerView.ViewHolder
-            ): Boolean = false
-
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
-                val pos = viewHolder.bindingAdapterPosition
-                val item = adapter.currentList.getOrNull(pos) ?: return
-                HistoryManager.delete(this@HistoryActivity, item.key)
-                // 監視も停止
-                com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
-                // キャッシュ/アーカイブも削除
-                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).apply {
-                    invalidateCache(item.url)
-                    clearArchiveForUrl(item.url)
+                // 履歴を取得し、必要に応じてクリーンアップ/フィルタ/ソートして `entries` を更新する
+                fun computeAndSet() {
+                    val base = HistoryManager.getAll(this@HistoryActivity)
+                    // 自動クリーンアップ: ユーザー設定の上限(MB)を超えないよう、
+                    // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
+                    runCatching {
+                        val p = PreferenceManager.getDefaultSharedPreferences(this@HistoryActivity)
+                        val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
+                        if (mb > 0) {
+                            val limitBytes = mb * 1024L * 1024L
+                            val cm = com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity)
+                            cm.enforceLimit(limitBytes, base) { entry ->
+                                HistoryManager.clearThumbnail(this@HistoryActivity, entry.url)
+                            }
+                        }
+                    }
+                    // 未読のみ表示が有効な場合は未読件数>0のスレッドだけ残す
+                    val filtered = if (showUnreadOnly) base.filter { it.unreadCount > 0 } else base
+                    val list = when (sortMode) {
+                        // MIXED: 未読を先頭に、未読は更新日時、既読は閲覧日時を優先。
+                        // 最後に閲覧日時で安定ソートして見た順を保つ。
+                        HistorySortMode.MIXED -> filtered.sortedWith(
+                            compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount > 0 }
+                                .thenByDescending { if (it.unreadCount > 0) it.lastUpdatedAt else it.lastViewedAt }
+                                .thenByDescending { it.lastViewedAt }
+                        )
+                        // UPDATED: 最終更新日時の降順
+                        HistorySortMode.UPDATED -> filtered.sortedByDescending { it.lastUpdatedAt }
+                        // VIEWED: 最終閲覧日時の降順
+                        HistorySortMode.VIEWED -> filtered.sortedByDescending { it.lastViewedAt }
+                        // UNREAD: 未読件数の降順、同数なら更新日時の降順
+                        HistorySortMode.UNREAD -> filtered.sortedWith(
+                            compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount }
+                                .thenByDescending { it.lastUpdatedAt }
+                        )
+                    }
+                    entries = list
                 }
-                refresh()
-            }
-        })
-        touchHelper.attachToRecyclerView(binding.recyclerView)
 
-        loadPrefs()
-        refresh()
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.history_menu, menu)
-        // メニューの状態反映
-        val unreadItem = menu.findItem(R.id.action_toggle_unread_only)
-        unreadItem.title = if (showUnreadOnly) "未読のみ表示（ON）" else "未読のみ表示（OFF）"
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
-        R.id.action_clear_history -> {
-            AlertDialog.Builder(this)
-                .setMessage(getString(R.string.confirm_clear_history))
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    HistoryManager.clear(this)
-                    // 監視を全停止
-                    com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this)
-                    // すべてのキャッシュ/アーカイブも削除
-                    com.valoser.futaburakari.cache.DetailCacheManager(this).clearAllCache()
-                    refresh()
+                // UI状態の変更（未読のみ/ソート）を検知して再計算し、
+                // 併せて状態を `uiPrefs` に永続化する。
+                LaunchedEffect(showUnreadOnly, sortMode) {
+                    computeAndSet()
+                    // 保存: ユーザーの表示設定を次回起動時に復元できるようにする
+                    uiPrefs.edit()
+                        .putBoolean("unread_only", showUnreadOnly)
+                        .putString("sort_mode", sortMode.name)
+                        .apply()
                 }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-            true
-        }
-        R.id.action_toggle_unread_only -> {
-            showUnreadOnly = !showUnreadOnly
-            savePrefs()
-            invalidateOptionsMenu()
-            refresh()
-            true
-        }
-        R.id.sort_mixed -> { sortMode = SortMode.MIXED; savePrefs(); refresh(); true }
-        R.id.sort_updated -> { sortMode = SortMode.UPDATED; savePrefs(); refresh(); true }
-        R.id.sort_viewed -> { sortMode = SortMode.VIEWED; savePrefs(); refresh(); true }
-        R.id.sort_unread -> { sortMode = SortMode.UNREAD; savePrefs(); refresh(); true }
-        else -> super.onOptionsItemSelected(item)
-    }
 
-    private fun refresh() {
-        val base = HistoryManager.getAll(this)
+                // 変更ブロードキャスト受信で再読込。
+                // ライフサイクルに合わせて登録/解除し、API 33 以降はエクスポート不可で登録する。
+                DisposableEffect(Unit) {
+                    val receiver = object : BroadcastReceiver() {
+                        override fun onReceive(context: Context?, intent: Intent?) {
+                            if (intent?.action == HistoryManager.ACTION_HISTORY_CHANGED) {
+                                computeAndSet()
+                            }
+                        }
+                    }
+                    val filter = IntentFilter(HistoryManager.ACTION_HISTORY_CHANGED)
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        registerReceiver(receiver, filter)
+                    }
+                    onDispose { runCatching { unregisterReceiver(receiver) } }
+                }
 
-        // 自動クリーンアップ（設定値に基づき媒体と詳細キャッシュを間引き）
-        runCatching {
-            val p = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-            val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
-            if (mb > 0) {
-                val limitBytes = mb * 1024L * 1024L
-                val cm = com.valoser.futaburakari.cache.DetailCacheManager(this)
-                cm.enforceLimit(limitBytes, base) { entry ->
-                    // サムネイルは無効化（存在しないローカルURIを避ける）
-                    HistoryManager.clearThumbnail(this, entry.url)
+                var showConfirm by remember { mutableStateOf(false) }
+
+                // 履歴一覧のUI本体。各種コールバックでナビゲーションや削除、
+                // 表示切替（未読のみ/ソート）を扱い、必要に応じて再計算する。
+                HistoryScreen(
+                    title = getString(R.string.history_title),
+                    entries = entries,
+                    showUnreadOnly = showUnreadOnly,
+                    sortMode = sortMode,
+                    onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
+                    onSelectSort = { sort -> sortMode = sort },
+                    onClearAll = {
+                        showConfirm = true
+                    },
+                    onClickItem = { entry ->
+                        val intent = Intent(this@HistoryActivity, DetailActivity::class.java).apply {
+                            putExtra(DetailActivity.EXTRA_URL, entry.url)
+                            putExtra(DetailActivity.EXTRA_TITLE, entry.title)
+                        }
+                        startActivity(intent)
+                    },
+                    onDeleteItem = { item ->
+                        // 履歴アイテムの削除時: 履歴本体の削除、関連ワーカーの停止、
+                        // 当該URLのキャッシュ/アーカイブを無効化・削除してから再計算。
+                        HistoryManager.delete(this@HistoryActivity, item.key)
+                        com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
+                        com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).apply {
+                            invalidateCache(item.url)
+                            clearArchiveForUrl(item.url)
+                        }
+                        computeAndSet()
+                    }
+                )
+
+                if (showConfirm) {
+                    // 全削除確認ダイアログ: OKで履歴/関連ワーカー/全キャッシュを一括クリアし再計算。
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showConfirm = false },
+                        title = { androidx.compose.material3.Text(text = getString(R.string.history_title)) },
+                        text = { androidx.compose.material3.Text(text = getString(R.string.confirm_clear_history)) },
+                        confirmButton = {
+                            androidx.compose.material3.TextButton(onClick = {
+                                showConfirm = false
+                                HistoryManager.clear(this@HistoryActivity)
+                                com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
+                                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).clearAllCache()
+                                computeAndSet()
+                            }) { androidx.compose.material3.Text(text = getString(android.R.string.ok)) }
+                        },
+                        dismissButton = {
+                            androidx.compose.material3.TextButton(onClick = { showConfirm = false }) { androidx.compose.material3.Text(text = getString(android.R.string.cancel)) }
+                        }
+                    )
                 }
             }
         }
-        val filtered = if (showUnreadOnly) base.filter { it.unreadCount > 0 } else base
-        val list = when (sortMode) {
-            SortMode.MIXED -> filtered.sortedWith(compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount > 0 }
-                .thenByDescending { if (it.unreadCount > 0) it.lastUpdatedAt else it.lastViewedAt }
-                .thenByDescending { it.lastViewedAt })
-            SortMode.UPDATED -> filtered.sortedByDescending { it.lastUpdatedAt }
-            SortMode.VIEWED -> filtered.sortedByDescending { it.lastViewedAt }
-            SortMode.UNREAD -> filtered.sortedWith(compareByDescending<com.valoser.futaburakari.HistoryEntry> { it.unreadCount }
-                .thenByDescending { it.lastUpdatedAt })
-        }
-        binding.emptyView.text = getString(R.string.no_history)
-        binding.emptyView.visibility = if (list.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
-        adapter.submitList(list)
-    }
-
-    private fun loadPrefs() {
-        val p = getSharedPreferences("com.valoser.futaburakari.history.ui", MODE_PRIVATE)
-        showUnreadOnly = p.getBoolean("unread_only", false)
-        sortMode = when (p.getString("sort_mode", SortMode.MIXED.name)) {
-            SortMode.UPDATED.name -> SortMode.UPDATED
-            SortMode.VIEWED.name -> SortMode.VIEWED
-            SortMode.UNREAD.name -> SortMode.UNREAD
-            else -> SortMode.MIXED
-        }
-    }
-
-    private fun savePrefs() {
-        val p = getSharedPreferences("com.valoser.futaburakari.history.ui", MODE_PRIVATE)
-        p.edit().putBoolean("unread_only", showUnreadOnly)
-            .putString("sort_mode", sortMode.name)
-            .apply()
-    }
-
-    override fun onStart() {
-        super.onStart()
-        // 再表示時に最新状態へ
-        refresh()
-        // レシーバ登録（Android 13+ は exported 指定が必須）
-        val filter = IntentFilter(HistoryManager.ACTION_HISTORY_CHANGED)
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(historyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(historyReceiver, filter)
-        }
-    }
-
-    override fun onStop() {
-        runCatching { unregisterReceiver(historyReceiver) }
-        super.onStop()
     }
 }

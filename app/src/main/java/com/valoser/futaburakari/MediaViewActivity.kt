@@ -1,237 +1,86 @@
 package com.valoser.futaburakari
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.Manifest
-import android.net.Uri
-import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-// import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.isVisible
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.lifecycleScope
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.core.content.ContextCompat
-import androidx.core.app.ActivityCompat
 import android.content.pm.PackageManager
 import android.os.Build
-import coil.load
-import com.valoser.futaburakari.databinding.ActivityMediaViewBinding // ViewBindingを生成後にインポート
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.compose.setContent
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.valoser.futaburakari.ui.compose.MediaViewScreen
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
+/**
+ * 画像/動画/テキストを表示するメディアビューア。
+ *
+ * - `MediaViewScreen` に種類（画像/動画/テキスト）とURL/テキストを渡して表示
+ * - 画像/動画は保存ボタンを提供（API 28以下は書き込み権限を事前確認）
+ */
 class MediaViewActivity : BaseActivity() {
-
-    private lateinit var binding: ActivityMediaViewBinding
-    private var exoPlayer: ExoPlayer? = null
 
     private var currentType: String? = null
     private var currentUrl: String? = null
     private var currentText: String? = null // テキスト用（画像メタ/明示テキスト）
 
+    // ネットワークアクセス（表示/保存時の取得等）に利用するクライアントを EntryPoint から取得
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
 
     companion object {
+        // 表示種別: 画像/動画/テキスト
         const val EXTRA_TYPE = "EXTRA_TYPE"
+        // 表示/保存対象のURL（画像/動画の場合）
         const val EXTRA_URL = "EXTRA_URL"
-        const val EXTRA_TEXT = "EXTRA_TEXT" // テキスト表示用
+        // テキスト表示用の内容（プロンプト等）
+        const val EXTRA_TEXT = "EXTRA_TEXT"
         const val TYPE_IMAGE = "image"
         const val TYPE_VIDEO = "video"
-        const val TYPE_TEXT = "text" // プロンプト表示用
-    }
-
-    // ActivityResultLauncher for creating a text file
-    private val createTextFileLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri: Uri? ->
-        uri?.let {
-            // Handle the URI for the created file (e.g., write text to it)
-            val textToSave = currentText ?: ""
-            if (textToSave.isNotEmpty()) {
-                try {
-                    contentResolver.openOutputStream(it)?.use { outputStream ->
-                        outputStream.write(textToSave.toByteArray())
-                        Toast.makeText(this, "テキストを保存しました", Toast.LENGTH_SHORT).show()
-                    }
-                } catch (e: Exception) {
-                    Toast.makeText(this, "テキストの保存に失敗しました: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            } else {
-                Toast.makeText(this, "保存するテキストがありません", Toast.LENGTH_SHORT).show()
-            }
-        }
+        const val TYPE_TEXT = "text"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMediaViewBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        supportActionBar?.setDisplayShowHomeEnabled(true)
-
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                WindowInsetsCompat.CONSUMED
-            }
-        }
 
         currentType = intent.getStringExtra(EXTRA_TYPE)
         currentUrl = intent.getStringExtra(EXTRA_URL)
         currentText = intent.getStringExtra(EXTRA_TEXT)
 
-        when (currentType) {
-            TYPE_IMAGE -> {
-                binding.scrollContainer.isVisible = false
-                binding.imageView.isVisible = true
-                binding.playerView.isVisible = false
-                binding.textView.isVisible = false
-                currentUrl?.let {
-                    binding.imageView.load(it) {
-                        crossfade(true)
-                        placeholder(R.drawable.ic_launcher_background)
-                        error(android.R.drawable.ic_dialog_alert)
-                    }
-                    // Try extracting prompt/metadata in background
-                    lifecycleScope.launch {
-                        val prompt = MetadataExtractor.extract(this@MediaViewActivity, it, networkClient)
-                        if (!prompt.isNullOrBlank()) {
-                            currentText = prompt
-                            supportActionBar?.subtitle = prompt
-                            invalidateOptionsMenu()
-                        }
-                    }
+        // テーマ適用済みのコンテンツを構築（表現的なカラースキーム）
+
+        setContent {
+            FutaburakariTheme(expressive = true) {
+                val title = when (currentType) {
+                    TYPE_IMAGE -> "画像ビューア"
+                    TYPE_VIDEO -> "動画ビューア"
+                    TYPE_TEXT -> "テキスト"
+                    else -> getString(R.string.app_name)
                 }
-                supportActionBar?.title = "画像ビューア"
-                currentText?.let { supportActionBar?.subtitle = it }
-            }
-            TYPE_VIDEO -> {
-                binding.scrollContainer.isVisible = false
-                binding.imageView.isVisible = false
-                binding.playerView.isVisible = true
-                binding.textView.isVisible = false
-                currentUrl?.let { initializePlayer(it) }
-                supportActionBar?.title = "動画ビューア"
-                currentText?.let { supportActionBar?.subtitle = it }
-            }
-            TYPE_TEXT -> {
-                binding.scrollContainer.isVisible = true
-                binding.imageView.isVisible = false
-                binding.playerView.isVisible = false
-                binding.textView.isVisible = true
-                binding.textView.text = currentText ?: "テキストがありません"
-                supportActionBar?.title = "テキストビューア"
-            }
-            else -> {
-                Toast.makeText(this, "不明なメディアタイプです", Toast.LENGTH_LONG).show()
-                finish()
-            }
-        }
-
-        // Pad text scroll container for bottom system bars when visible
-        run {
-            val sc = binding.scrollContainer
-            val orig = sc.paddingBottom
-            ViewCompat.setOnApplyWindowInsetsListener(sc) { v, insets ->
-                val bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, orig + bottom)
-                WindowInsetsCompat.CONSUMED
+                // Composeのメディア表示画面へ必要情報とコールバックを渡す
+                MediaViewScreen(
+                    title = title,
+                    type = currentType ?: TYPE_TEXT,
+                    url = currentUrl,
+                    initialText = currentText,
+                    networkClient = networkClient,
+                    onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onSaveImage = if (currentType == TYPE_IMAGE) ({ saveImage() }) else null,
+                    onSaveVideo = if (currentType == TYPE_VIDEO) ({ saveVideo() }) else null
+                )
             }
         }
     }
 
-    private fun initializePlayer(videoUrl: String) {
-        exoPlayer = ExoPlayer.Builder(this).build().also { player ->
-            binding.playerView.player = player
-            val mediaItem = MediaItem.fromUri(Uri.parse(videoUrl))
-            player.setMediaItem(mediaItem)
-            player.playWhenReady = true // 自動再生
-            player.prepare()
-        }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.media_view_menu, menu) // Ensure this is media_view_menu.xml
-        when (currentType) {
-            TYPE_TEXT -> {
-                menu.findItem(R.id.action_copy_text)?.isVisible = true
-                menu.findItem(R.id.action_save_text)?.isVisible = true
-                menu.findItem(R.id.action_save_media)?.isVisible = false
-            }
-            TYPE_IMAGE, TYPE_VIDEO -> {
-                // copy_text can be visible if there's a prompt/text associated with image/video
-                val hasTextContent = !currentText.isNullOrEmpty()
-                menu.findItem(R.id.action_copy_text)?.isVisible = hasTextContent
-                menu.findItem(R.id.action_save_text)?.isVisible = false // Text save only for TYPE_TEXT
-                menu.findItem(R.id.action_save_media)?.isVisible = true
-            }
-            else -> { // Should not happen if type is validated in onCreate
-                menu.findItem(R.id.action_copy_text)?.isVisible = false
-                menu.findItem(R.id.action_save_text)?.isVisible = false
-                menu.findItem(R.id.action_save_media)?.isVisible = false
-            }
-        }
-        return true
-    }
-
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
-            R.id.action_copy_text -> {
-                copyTextToClipboard()
-                true
-            }
-            R.id.action_save_text -> {
-                val defaultName = buildDefaultFileName()
-                // Ensure currentText is not null before launching
-                if (!currentText.isNullOrEmpty()) {
-                    createTextFileLauncher.launch("$defaultName.txt")
-                } else {
-                    Toast.makeText(this, "保存するテキストがありません", Toast.LENGTH_SHORT).show()
-                }
-                true
-            }
-            R.id.action_save_media -> {
-                when (currentType) {
-                    TYPE_IMAGE -> saveImage()
-                    TYPE_VIDEO -> saveVideo()
-                    else -> Toast.makeText(this, "このタイプのメディアは保存できません", Toast.LENGTH_SHORT).show()
-                }
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
-        }
-    }
-
-    private fun copyTextToClipboard() {
-        val textToCopy = currentText
-        if (!textToCopy.isNullOrEmpty()) {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Copied Content", textToCopy)
-            clipboard.setPrimaryClip(clip)
-            Toast.makeText(this, "テキストをコピーしました", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "コピーするテキストがありません", Toast.LENGTH_SHORT).show()
-        }
-    }
-
+    /**
+     * 表示中の画像を端末へ保存する。
+     * API < 29（Android 9以下）では事前に WRITE_EXTERNAL_STORAGE 権限を確認する。
+     */
     private fun saveImage() {
+        // API < 29 では WRITE_EXTERNAL_STORAGE 権限が必要
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -246,14 +95,20 @@ class MediaViewActivity : BaseActivity() {
                 return
             }
         }
+        // URL が存在する場合のみMediaSaverで保存
         currentUrl?.let { url ->
             lifecycleScope.launch {
                 MediaSaver.saveImage(this@MediaViewActivity, url, networkClient)
             }
-        } ?: Toast.makeText(this, "画像URLがありません", Toast.LENGTH_SHORT).show()
+        }
     }
 
+    /**
+     * 表示中の動画を端末へ保存する。
+     * API < 29（Android 9以下）では事前に WRITE_EXTERNAL_STORAGE 権限を確認する。
+     */
     private fun saveVideo() {
+        // API < 29 では WRITE_EXTERNAL_STORAGE 権限が必要
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -268,42 +123,11 @@ class MediaViewActivity : BaseActivity() {
                 return
             }
         }
+        // URL が存在する場合のみMediaSaverで保存
         currentUrl?.let { url ->
             lifecycleScope.launch {
                 MediaSaver.saveVideo(this@MediaViewActivity, url, networkClient)
             }
-        } ?: Toast.makeText(this, "動画URLがありません", Toast.LENGTH_SHORT).show()
-    }
-
-
-    private fun buildDefaultFileName(): String {
-        val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-        val timestamp = sdf.format(Date())
-        // You can use a portion of the text content if available, sanitized for filename
-        val textHint = (currentText)?.take(15)?.replace(Regex("[^a-zA-Z0-9_]"), "_") ?: "text"
-        return "${textHint}_$timestamp"
-    }
-
-
-    override fun onPause() {
-        super.onPause()
-        if (currentType == TYPE_VIDEO) {
-            exoPlayer?.pause()
-        }
-    }
-
-    override fun onStop() {
-        super.onStop()
-        if (currentType == TYPE_VIDEO) {
-            releasePlayer()
-        }
-    }
-
-    private fun releasePlayer() {
-        exoPlayer?.let { player ->
-            player.release()
-            exoPlayer = null
-            binding.playerView.player = null
         }
     }
 }

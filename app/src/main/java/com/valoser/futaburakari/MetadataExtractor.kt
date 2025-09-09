@@ -26,33 +26,51 @@ import kotlin.math.min
 
 // 動画プロンプト解析に関連する外部パーサーは削除
 
+/**
+ * 画像からプロンプト/説明テキストを抽出するユーティリティ。
+ *
+ * - 入力: ローカルURI/ファイル、HTTP(S) URL をサポート（HTTP は `NetworkClient` 経由）。
+ * - 取得戦略: セマフォで同時接続数を制限しつつ、Range/HEAD を用いて必要最小限のバイトのみ取得。
+ * - JPEG/WEBP: EXIF → JPEGの APP1(XMP) / APP13(IPTC) → プレーンテキスト走査の順に試行。
+ * - PNG: tEXt / zTXt / iTXt および XMP をストリーミング走査（IEND まで、または上限まで）。
+ * - 解析: XMP/JSON/単純テキストから `prompt` / `parameters` 相当を正規表現で抽出。
+ * - 非対応: 動画は解析対象外（常に null を返す）。
+ * - 呼び出し元: 詳細画面の段階反映（`DetailViewModel.updateMetadataInBackground`）、メディアビュー（`MediaViewScreen`）。
+ * - 戦略: 失敗時は null を返す（例外を投げない）ため、UI 側で段階反映・リトライ戦略を取りやすい。
+ * - 備考: file://（アーカイブ済みのローカル画像）に対しても同様に抽出可能で、dat落ち履歴からの復元に寄与。
+ */
 object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定 ======
-    private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を2に制限
+    private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を1に制限
     private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
     private val activeConnectionCount = AtomicInteger(0)
 
     // ====== 既存の設定値 ======
-    private const val CONNECT_TIMEOUT_MS = 5_000
-    private const val READ_TIMEOUT_MS = 5_000
+    private const val CONNECT_TIMEOUT_MS = 10_000
+    private const val READ_TIMEOUT_MS = 10_000
 
-    private const val FIRST_EXIF_BYTES = 64 * 1024
-    private const val PNG_WINDOW_BYTES = 64 * 1024
-    private const val GLOBAL_MAX_BYTES = 256 * 1024
+    private const val FIRST_EXIF_BYTES = 128 * 1024
+    private const val PNG_WINDOW_BYTES = 128 * 1024
+    private const val GLOBAL_MAX_BYTES = 512 * 1024
 
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
 
     // ====== Public API ======
+    /**
+     * URI/URL からプロンプトらしき文字列を抽出して返す。見つからなければ null。
+     * 種別に応じて、先頭範囲のみ取得やチャンク走査を行う。
+     */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
             if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
                 context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
                     // ローカルは全体（または上限）を読んでタイプ別に抽出
                     val all = input.readBytes(limit = GLOBAL_MAX_BYTES)
-                    return@withContext extractByType(all, uriOrUrl)
+                    // EXIF のみではなく、JPEG の APP1(XMP)/APP13(IPTC)、テキスト走査まで含む経路で抽出
+                    return@withContext extractBySniff(all, uriOrUrl)
                 }
                 return@withContext null
             }
@@ -122,6 +140,7 @@ object MetadataExtractor {
     }
 
     // ====== PNG: 同時接続数制限付きストリーミング処理 ======
+    // 初回は固定サイズを取得し、必要に応じて窓を広げて tEXt/zTXt/iTXt や XMP を検出する。
     private suspend fun extractPngPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
         var windowSize = PNG_WINDOW_BYTES
         var totalFetched = 0
@@ -151,11 +170,7 @@ object MetadataExtractor {
         return null
     }
 
-    // ====== MP4: 同時接続数制限付きストリーミング処理 ======
-    private suspend fun extractMp4PromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
-        // 動画のプロンプト取得は廃止
-        return null
-    }
+    // 動画のプロンプト取得は廃止のため、動画解析用メソッドは削除済み
 
     // ====== 接続管理用のユーティリティ関数 ======
 
@@ -186,6 +201,7 @@ object MetadataExtractor {
 
     // ====== 既存の処理ロジック（変更なし） ======
 
+    // バイト列の種類に応じて抽出方法を切り替える簡易ルータ
     private fun extractByType(fileBytes: ByteArray, uriOrUrl: String): String? {
         return when {
             // 動画のプロンプト取得は廃止
@@ -194,6 +210,7 @@ object MetadataExtractor {
         }
     }
 
+    // バイト先頭を嗅ぎ分けてEXIF/JPEGセグメント/テキストを順に試すフォールバック
     private fun extractBySniff(bytes: ByteArray, @Suppress("UNUSED_PARAMETER") uriOrUrl: String): String? {
         if (isPng(bytes)) {
             return extractFromPngChunks(bytes)
@@ -205,13 +222,11 @@ object MetadataExtractor {
 
     
 
-    // ====== WebM: 動画のプロンプト取得は廃止 ======
-    private suspend fun extractWebmPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
-        return null
-    }
+    // WebM についても同様に取得処理は廃止
 
     
 
+    // テキスト中から prompt/workflow/CLIPTextEncode 由来の候補を正規表現で抽出
     private fun scanTextForPrompts(text: String): String? {
         val promptPattern = Pattern.compile("""prompt"\s*:\s*("([^"\\]*(\\.[^"\\]*)*)"|\{.*?\})""", Pattern.DOTALL)
         promptPattern.matcher(text).apply {
@@ -233,6 +248,7 @@ object MetadataExtractor {
 
     // ====== 以下、既存のメソッドをそのまま保持 ======
 
+    // EXIF の UserComment/ImageDescription/XPComment から最初に見つかったものを返す
     private fun extractFromExif(fileBytes: ByteArray): String? {
         return try {
             val exif = ExifInterface(ByteArrayInputStream(fileBytes))
@@ -248,6 +264,7 @@ object MetadataExtractor {
 
     
 
+    // XPComment は UTF-16LE を ISO-8859-1 として受け取るため、UTF-16LE で復号
     private fun decodeXpString(raw: String): String? {
         val bytes = raw.toByteArray(StandardCharsets.ISO_8859_1)
         return try {
@@ -270,6 +287,7 @@ object MetadataExtractor {
                 fileBytes[7] == 10.toByte()
     }
 
+    // PNG の tEXt/zTXt/iTXt からキー(parameters/description/comment/prompt)や XMP を抽出
     private fun extractFromPngChunks(bytes: ByteArray): String? {
         if (!isPng(bytes)) return null
         val prompts = mutableListOf<String>()
@@ -556,6 +574,7 @@ object MetadataExtractor {
         return null
     }
 
+    // JPEG の APP1(XMP) と APP13(Photoshop IRB/IPTC) を簡易パース
     private fun extractFromJpegAppSegments(bytes: ByteArray): String? {
         // JPEGシグネチャ確認
         if (bytes.size < 4 || bytes[0] != 0xFF.toByte() || bytes[1] != 0xD8.toByte()) return null
@@ -589,6 +608,7 @@ object MetadataExtractor {
         return null
     }
 
+    // Photoshop IRB ブロックから IPTC(IIM) を取り出し、説明に相当する項目を抽出
     private fun parsePhotoshopIrbForIptc(app13: ByteArray): String? {
         val header = "Photoshop 3.0\u0000".toByteArray(StandardCharsets.ISO_8859_1)
         if (app13.size < header.size || !app13.copyOfRange(0, header.size).contentEquals(header)) return null
@@ -619,6 +639,7 @@ object MetadataExtractor {
         return null
     }
 
+    // IPTC IIM の見出し(2:xxx)から説明/キャプション相当を抽出
     private fun parseIptcIimForPrompt(data: ByteArray): String? {
         var p = 0
         while (p + 5 <= data.size) {

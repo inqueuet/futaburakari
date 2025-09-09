@@ -6,15 +6,25 @@ import android.content.SharedPreferences
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
+/**
+ * 履歴データの読み書き・更新・並び替えを担うマネージャ。
+ *
+ * - `SharedPreferences` に JSON として保存/復元
+ * - サムネイルURLや閲覧/更新情報、未読数の更新を提供
+ * - 互換用の旧キーから現行キーへのマイグレーションを内包
+ * - 変更時にアプリ内通知ブロードキャスト（`ACTION_HISTORY_CHANGED`）を送出
+ */
 object HistoryManager {
 
     private const val PREFS_NAME = "com.valoser.futaburakari.history"
     private const val KEY_HISTORY = "history_list"
     const val ACTION_HISTORY_CHANGED = "com.valoser.futaburakari.ACTION_HISTORY_CHANGED"
 
+    // 履歴保存先の SharedPreferences を取得
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    // JSON から履歴リストを復元。失敗時は空リストを返す。
     private fun load(context: Context): MutableList<HistoryEntry> {
         val json = prefs(context).getString(KEY_HISTORY, null)
         if (json.isNullOrBlank()) return mutableListOf()
@@ -26,12 +36,20 @@ object HistoryManager {
         }
     }
 
+    // 履歴リストを JSON で保存し、変更通知を送出する。
     private fun save(context: Context, list: List<HistoryEntry>) {
         prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
-        // 変更通知（同一プロセス内向けの簡易ブロードキャスト）
+        // 変更通知（アプリ内向けの簡易ブロードキャスト）
         context.sendBroadcast(Intent(ACTION_HISTORY_CHANGED))
     }
 
+    /**
+     * 履歴を追加または更新。
+     *
+     * - 旧キーが存在する場合は現行キーへ差し替えてマイグレーション
+     * - タイトル/最終閲覧時刻/サムネイルURL（指定時のみ上書き）を更新
+     * - 並び順は getAll() 側のルールに委譲
+     */
     fun addOrUpdate(context: Context, url: String, title: String, thumbnailUrl: String? = null) {
         val key = UrlNormalizer.threadKey(url)
         val legacyKey = UrlNormalizer.legacyThreadKey(url)
@@ -74,6 +92,13 @@ object HistoryManager {
         save(context, list)
     }
 
+    /**
+     * すべての履歴を取得。
+     *
+     * - 未読ありを優先
+     * - 未読あり同士: `lastUpdatedAt` 降順
+     * - 未読なし同士: `lastViewedAt` 降順
+     */
     fun getAll(context: Context): List<HistoryEntry> {
         val list = load(context)
         // 未読ありを優先 → 未読あり同士は lastUpdatedAt 降順 → 未読なしは lastViewedAt 降順
@@ -82,16 +107,24 @@ object HistoryManager {
             .thenByDescending { it.lastViewedAt })
     }
 
+    /** 指定キーの履歴を削除し、変更を保存。 */
     fun delete(context: Context, key: String) {
         val list = load(context)
         val newList = list.filterNot { it.key == key }
         save(context, newList)
     }
 
+    /** 全履歴をクリア。 */
     fun clear(context: Context) {
         save(context, emptyList())
     }
 
+    /**
+     * サムネイルURLを更新。
+     *
+     * - 旧キーが見つかった場合は現行キーへ差し替え
+     * - 値が変化したときのみ保存/通知
+     */
     fun updateThumbnail(context: Context, url: String, thumbnailUrl: String) {
         val key = UrlNormalizer.threadKey(url)
         val legacyKey = UrlNormalizer.legacyThreadKey(url)
@@ -129,6 +162,8 @@ object HistoryManager {
     }
 
     // 取得結果の反映（バックグラウンド更新などから呼び出し）
+    // 最新レス番号が増えている場合に更新時刻/未読数/既知番号を反映。
+    // 変化がなくても最新番号のみ更新する場合がある。
     fun applyFetchResult(context: Context, url: String, latestReplyNo: Int) {
         val key = UrlNormalizer.threadKey(url)
         val list = load(context)
@@ -152,7 +187,8 @@ object HistoryManager {
         }
     }
 
-    // ユーザ閲覧の反映（詳細画面を見たとき等）
+    // ユーザ閲覧の反映（詳細画面を見たとき等）。
+    // 閲覧時刻/最終閲覧レス番号/未読数を更新する。
     fun markViewed(context: Context, url: String, lastViewedReplyNo: Int) {
         val key = UrlNormalizer.threadKey(url)
         val list = load(context)
@@ -170,7 +206,7 @@ object HistoryManager {
         }
     }
 
-    // dat落ち等を検知した際にアーカイブとしてマーク
+    // dat落ち等を検知した際にアーカイブとしてマーク。
     fun markArchived(context: Context, url: String) {
         val key = UrlNormalizer.threadKey(url)
         val list = load(context)
