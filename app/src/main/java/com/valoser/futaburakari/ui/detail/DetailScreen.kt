@@ -91,8 +91,10 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onSodaneClick`: 「そうだね」押下時のハンドラ（null で非表示）。
  * - `onDeletePost`: 削除要求のハンドラ（レス番/画像のみ指定）。
  * - `onSubmitSearch`/`onDebouncedSearch`/`onClearSearch`: 検索の確定/遅延/クリア時ハンドラ。
+ * - `onSearchPrev`/`onSearchNext`: 検索ヒットの前/次へ移動するためのハンドラ。
  * - `onReapplyNgFilter`: NG ルール変更後に再適用するためのフック。
  * - `searchStateFlow`/`searchActiveFlow`/`onSearchActiveChange`: 検索 UI の状態連携。
+ * - `bottomOffsetPxFlow`: 既存実装との互換用の下部オフセット（広告等の高さを px で通知）。
  * - `recentSearchesFlow`: 検索サジェスト用の履歴。
  * - `showAds`/`adUnitId`/`onBottomPaddingChange`/`bottomOffsetPxFlow`: 広告や下部パディングの制御。
  * - `threadUrl`: NG ルールの sourceKey 生成向けのスレ URL。
@@ -735,8 +737,26 @@ fun DetailScreenScaffold(
                     ) {
                         items(images.size) { idx ->
                             val e = images[idx]
-                            coil.compose.AsyncImage(
-                                model = e.url,
+                            // Gridセルと同一のサイズ指定でリクエストし、プリフェッチとキャッシュキーを一致させる
+                            val ctx = androidx.compose.ui.platform.LocalContext.current
+                            val config = androidx.compose.ui.platform.LocalConfiguration.current
+                            val density = androidx.compose.ui.platform.LocalDensity.current
+                            val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+                            val cellWidthPx = (screenWidthPx / 3).coerceAtLeast(1)
+                            val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+
+                            val request = coil.request.ImageRequest.Builder(ctx)
+                                .data(e.url)
+                                .size(coil.size.Size(coil.size.Dimension.Pixels(cellWidthPx), coil.size.Dimension.Pixels(cellHeightPx)))
+                                .scale(coil.size.Scale.FILL)
+                                .precision(coil.size.Precision.INEXACT)
+                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .build()
+
+                            coil.compose.SubcomposeAsyncImage(
+                                model = request,
+                                imageLoader = ctx.imageLoader,
                                 contentDescription = null,
                                 modifier = Modifier
                                     .padding(LocalSpacing.current.xs)
@@ -746,7 +766,19 @@ fun DetailScreenScaffold(
                                         scope.launch { listState.scrollToItem(e.parentTextIdx) }
                                         openMediaSheet = false
                                     },
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                loading = {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(110.dp)
+                                    ) {
+                                        androidx.compose.material3.CircularProgressIndicator(
+                                            modifier = Modifier
+                                                .align(androidx.compose.ui.Alignment.Center)
+                                        )
+                                    }
+                                }
                             )
                         }
                     }

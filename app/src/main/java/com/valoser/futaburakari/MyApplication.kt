@@ -20,6 +20,7 @@ import coil.decode.VideoFrameDecoder
 import coil.decode.SvgDecoder
 import coil.util.DebugLogger
 import dagger.hilt.android.HiltAndroidApp
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,14 +34,17 @@ import com.valoser.futaburakari.HistoryManager
 /**
  * アプリ全体の初期化を担う `Application` 実装。
  *
- * - WorkManager の設定（HiltWorkerFactory/ログレベル/プロセス名）
+ * - WorkManager の設定（HiltWorkerFactory/ログレベル/デフォルトプロセス名）
  * - OkHttp の安全なウォームアップ（初回リクエストの遅延を軽減）
- * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG/AVIF のデコードを有効化）
+ * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG のデコードを有効化）
  */
 class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    lateinit var okHttpClient: OkHttpClient
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -112,12 +116,14 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
 
     /**
      * Coil の ImageLoader を構築して提供する。
-     * - GIF/動画フレーム/SVG/AVIF のデコードを有効化
+     * - GIF/動画フレーム/SVG のデコードを有効化
      * - メモリ/ディスクキャッシュを調整し、再利用性を高める
-     * - 開発時のデバッグロガーを有効化
+     * - デバッグロガーを有効化（失敗理由の追跡に有用）
      */
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            // アプリ共有の OkHttpClient を利用（タイムアウト/UA/Cookie 設定を共有）
+            .okHttpClient(okHttpClient)
             .components {
                 // アニメーションGIFのデコードを有効化
                 if (Build.VERSION.SDK_INT >= 28) {

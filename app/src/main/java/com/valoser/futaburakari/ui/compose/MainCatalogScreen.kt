@@ -39,7 +39,7 @@ import coil.size.Precision
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.valoser.futaburakari.ImageItem
 import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
@@ -365,7 +365,7 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
                 val heightPx = (widthPx * 4f / 3f)
-                AsyncImage(
+                SubcomposeAsyncImage(
                     modifier = Modifier
                         .fillMaxWidth()
                         // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
@@ -375,7 +375,19 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                         .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                         .precision(Precision.INEXACT)
                         .build(),
-                    contentDescription = item.title
+                    imageLoader = LocalContext.current.imageLoader,
+                    contentDescription = item.title,
+                    loading = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(3f / 4f)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        }
+                    }
                 )
             }
 

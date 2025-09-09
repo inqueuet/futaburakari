@@ -39,6 +39,7 @@ package com.valoser.futaburakari.ui.detail
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
@@ -418,7 +419,7 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        AsyncImage(
+                        coil.compose.SubcomposeAsyncImage(
                             model = item.imageUrl,
                             contentDescription = null,
                             modifier = Modifier
@@ -432,6 +433,17 @@ fun DetailListCompose(
                                     ctx.startActivity(i)
                                 },
                             contentScale = ContentScale.Fit,
+                            loading = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 120.dp)
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                    )
+                                }
+                            },
                             onSuccess = { onImageLoaded?.invoke() }
                         )
                         // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。長文はタップで展開/折りたたみ。
@@ -461,7 +473,7 @@ fun DetailListCompose(
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        AsyncImage(
+                        coil.compose.SubcomposeAsyncImage(
                             model = item.videoUrl,
                             contentDescription = null,
                             modifier = Modifier
@@ -474,6 +486,17 @@ fun DetailListCompose(
                                     ctx.startActivity(i)
                                 },
                             contentScale = ContentScale.Fit,
+                            loading = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 120.dp)
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                    )
+                                }
+                            },
                             onSuccess = { onImageLoaded?.invoke() }
                         )
                         // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
