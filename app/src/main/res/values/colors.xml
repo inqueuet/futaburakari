@@ -1,12 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
+    <!-- Expressive palette (light) -->
     <color name="my_expressive_primary">#0061A4</color>
     <color name="my_expressive_onPrimary">#FFFFFF</color>
     <color name="my_expressive_primaryContainer">#D1E4FF</color>
@@ -21,8 +15,6 @@
     <color name="my_expressive_onTertiaryContainer">#00210F</color>
     <color name="my_expressive_background">#FDFCFF</color>
     <color name="my_expressive_onBackground">#1A1C1E</color>
-    <color name="light_gray">#F5F5F5</color>
-    <!-- Green color mode (day) -->
-    <color name="green_primary">#004D2D</color>
-    <color name="green_primaryVariant">#00361F</color>
+
+    <!-- General neutrals removed: light_gray (unused) -->
 </resources>

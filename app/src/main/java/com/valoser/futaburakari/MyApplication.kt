@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import com.valoser.futaburakari.HistoryManager
 
@@ -42,6 +43,22 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
         // OkHttp（PublicSuffixDatabase など）の初期化を安全に実行
         initializeOkHttpSafely()
         // WorkManager の AutoInit はこの Configuration 経由で行われる
+
+        // Preferences migration: remove legacy color mode keys (no longer used)
+        try {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+            val editor = prefs.edit()
+            var changed = false
+            listOf(
+                "pref_key_color_mode",
+                "pref_key_color_theme"
+            ).forEach { key ->
+                if (prefs.contains(key)) { editor.remove(key); changed = true }
+            }
+            if (changed) editor.apply()
+        } catch (t: Throwable) {
+            Log.w("MyApplication", "Preference migration (legacy color) skipped", t)
+        }
 
         // 履歴に登録済みのスレッドはバックグラウンド監視を常時有効化（再起動後も再スケジュール）
         applicationScope.launch {
