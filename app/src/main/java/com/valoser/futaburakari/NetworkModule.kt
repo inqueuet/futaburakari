@@ -17,6 +17,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import okhttp3.CookieJar
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
@@ -37,17 +38,30 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(cookieJar: CookieJar): OkHttpClient {
         return try {
+            // 同時接続数を抑制（特にホスト単位）。Coil等の並列アクセスを穏やかにする
+            val dispatcher = Dispatcher().apply {
+                maxRequests = 16
+                maxRequestsPerHost = 1
+            }
+
             OkHttpClient.Builder()
+                .dispatcher(dispatcher)
                 .cookieJar(cookieJar)
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .addInterceptor { chain ->
                     val originalRequest = chain.request()
-                    val requestWithUserAgent = originalRequest.newBuilder()
+                    val host = originalRequest.url.host
+                    val builder = originalRequest.newBuilder()
                         .header("User-Agent", Ua.STRING)
-                        .build()
-                    chain.proceed(requestWithUserAgent)
+
+                    // 2chan 系はアクセス頻度をさらに抑制
+                    if (host == "2chan.net" || host.endsWith(".2chan.net")) {
+                        try { Thread.sleep(200L) } catch (_: InterruptedException) {}
+                    }
+
+                    chain.proceed(builder.build())
                 }
                 .build()
         } catch (e: Exception) {
