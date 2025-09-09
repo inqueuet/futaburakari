@@ -259,7 +259,13 @@ fun DetailListCompose(
                                 )
                             }
                     ) {
-                        ClickableText(text = annotated, onClick = { offset ->
+                        ClickableText(
+                            text = annotated,
+                            // 明示的にテーマの文字色を適用して、ダークモードでの黒固定を回避
+                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+                            ),
+                            onClick = { offset ->
                             val tags = annotated.getStringAnnotations(start = offset, end = offset)
                             val res = tags.firstOrNull { it.tag == "res" }?.item
                             val filename = tags.firstOrNull { it.tag == "filename" }?.item
@@ -301,7 +307,8 @@ fun DetailListCompose(
                             if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
                                 bodyForDialog = item
                             }
-                        })
+                            }
+                        )
                     }
                 }
 
