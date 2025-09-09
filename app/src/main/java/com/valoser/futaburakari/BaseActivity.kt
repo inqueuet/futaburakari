@@ -13,7 +13,7 @@ import androidx.preference.PreferenceManager
  *
  * 機能概要:
  * - フォントサイズ: 共有設定の `pref_key_font_scale` を参照して `attachBaseContext` で反映。
- *   - 既定値は 1.30（標準より大きめ）。ユーザー設定で変更可能。
+ *   - 既定値は 1.0（設定UIの「標準」と一致）。ユーザー設定で変更可能。
  *   - 復帰時（onResume）に設定と現在の `Configuration.fontScale` を比較し、差があれば `recreate()` で即時反映。
  * - テーマ: ライト/ダーク/システムのモードを起動前に適用（色テーマは固定）。
  *   - 最後に適用したテーマモードを保持し、復帰時の変更を検知して再生成。
@@ -28,11 +28,11 @@ open class BaseActivity : AppCompatActivity() {
     /**
      * 共有設定のフォント倍率を反映した `Configuration` でベースコンテキストをラップする。
      * `pref_key_font_scale`（既定値 "1.0"）を読み取り、`Configuration.fontScale` を設定してからアタッチする。
-     */
+    */
     override fun attachBaseContext(newBase: Context) {
         val prefs = PreferenceManager.getDefaultSharedPreferences(newBase)
-        // 既定のフォント倍率を 1.0 → 1.30 に拡大（全体を見やすく）
-        val scaleStr = prefs.getString("pref_key_font_scale", "1.30") ?: "1.30"
+        // 既定のフォント倍率は設定UIの既定（標準=1.0）に合わせる
+        val scaleStr = prefs.getString("pref_key_font_scale", "1.0") ?: "1.0"
         val scale = scaleStr.toFloatOrNull() ?: 1.0f
 
         val current = newBase.resources.configuration
@@ -78,7 +78,7 @@ open class BaseActivity : AppCompatActivity() {
         // Material3 のナビゲーションアイコン/色はテーマに準拠させる（カスタム上書きは行わない）
         // バックグラウンド中に設定が変更されていた場合は再生成して反映する
         val targetScale = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_font_scale", "1.30")?.toFloatOrNull() ?: 1.30f
+            .getString("pref_key_font_scale", "1.0")?.toFloatOrNull() ?: 1.0f
         val current = resources.configuration.fontScale
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         val themeModeNow = prefs.getString("pref_key_theme_mode", "system")
