@@ -106,6 +106,10 @@ dependencies {
     // Removed legacy View dependencies: SwipeRefreshLayout/RecyclerView/ConstraintLayout (Compose only)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.preference.ktx)
+    // Material Components (XML Material 3 themes, widgets, and bridge)
+    implementation(libs.material)
+    // SplashScreen compat to enable postSplashScreenTheme and backward support
+    implementation(libs.androidx.core.splashscreen)
 
     // Coil extensions
     implementation(libs.coil.core)

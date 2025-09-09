@@ -1,10 +1,22 @@
 <resources>
-    <!-- 基底テーマ（AppCompat）。
-         画面内部は Compose の MaterialTheme を使用するため、
-         XML 側は最小限（背景とカットアウト動作）のみ設定します。 -->
-    <style name="Theme.Futaburakari" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="android:colorBackground">@color/my_expressive_background</item>
+    <!-- 基底テーマ（Material3）。
+         画面内部は Compose の MaterialTheme に委譲しつつ、
+         Window/Splash/システムバーなど外縁は M3 に統一します。 -->
+    <style name="Theme.Futaburakari" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Edge-to-Edge を前提に、システムバーを透明化（明度はコード側で制御） -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <!-- Display cutout の動作（デフォルトで良いが明示） -->
         <item name="android:windowLayoutInDisplayCutoutMode">default</item>
+
+        <!-- SplashScreen API (Android 12+) -->
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowSplashScreenBackground">@color/my_expressive_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Futaburakari</item>
+
+        <!-- 12 未満向けのフォールバック背景 -->
+        <item name="android:windowBackground">@color/my_expressive_background</item>
     </style>
 
     <!-- 既存の M3 オーバーレイは未使用のため削除。必要になれば AppCompat 相当を定義します。 -->
