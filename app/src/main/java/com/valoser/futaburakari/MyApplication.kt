@@ -8,6 +8,8 @@ import androidx.work.Configuration
 import android.os.Build
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.decode.VideoFrameDecoder
@@ -108,6 +110,19 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
                 // 動画の代表フレームの抽出を有効化
                 add(VideoFrameDecoder.Factory())
             }
+            // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
+            .memoryCache(
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25) // メモリの25%まで
+                    .build()
+            )
+            .diskCache(
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(256L * 1024L * 1024L) // 256MB
+                    .build()
+            )
+            .respectCacheHeaders(false) // サーバーのキャッシュヘッダが厳しい場合でも再利用
             .build()
     }
 }

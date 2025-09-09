@@ -34,6 +34,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import coil.imageLoader
 import coil.request.ImageRequest
+import coil.size.Dimension
+import coil.size.Precision
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -113,6 +115,12 @@ fun MainCatalogScreen(
 
     val gridState = rememberLazyGridState()
 
+    // CompositionLocals はコンポーズ文脈内で取得しておき、
+    // LaunchedEffect 内では非 @Composable な値（Dp など）として参照する
+    val spacing = LocalSpacing.current
+    val sDp = spacing.s
+    val xsDp = spacing.xs
+
     // バウンス（端でのオーバースクロール）検出用の状態
     val density = LocalDensity.current
     val minBouncePx = with(density) { 120.dp.toPx() }.coerceAtLeast(48f) // トリガーに必要な最小距離
@@ -169,33 +177,52 @@ fun MainCatalogScreen(
     }
 
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
+    // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
     val context = LocalContext.current
-    LaunchedEffect(items, gridState) {
+    val prefetchDensity = LocalDensity.current
+    LaunchedEffect(items, gridState, spanCount) {
         snapshotFlow {
             val layout = gridState.layoutInfo
             val first = layout.visibleItemsInfo.firstOrNull()?.index ?: 0
             val last = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
-            first to last
+            // ビューポート幅
+            val viewportWidthPx = layout.viewportSize.width
+            Triple(first, last, viewportWidthPx)
         }
             .distinctUntilChanged()
-            .collect { (first, last) ->
+            .collect { (first, last, viewportWidthPx) ->
                 if (last <= 0 || items.isEmpty()) return@collect
-                val prefetchAhead = 8
+
+                // 1行あたりのアイテム幅（コンテンツ左右余白＋カード内余白を考慮）
+                val sPx = with(prefetchDensity) { sDp.toPx() }
+                val xsPx = with(prefetchDensity) { xsDp.toPx() }
+                val contentWidthPx = (viewportWidthPx - (sPx * 2)).coerceAtLeast(0f)
+                val cellWidthPx = ((contentWidthPx / spanCount) - (xsPx * 2)).coerceAtLeast(64f)
+                val cellHeightPx = (cellWidthPx * 4f / 3f)
+
+                // 先読み行数は画面内の行数と同程度（2画面分）
+                val visibleCount = (last - first + 1).coerceAtLeast(spanCount)
+                val rowsVisible = (visibleCount + spanCount - 1) / spanCount
+                val prefetchRows = (rowsVisible * 2).coerceAtLeast(2)
+                val prefetchAhead = (prefetchRows * spanCount)
+
                 val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
                 val start = first.coerceAtLeast(0)
-                val dm = context.resources.displayMetrics
-                val thumbPx = (200 * dm.density).toInt().coerceAtLeast(120)
+
                 val urls = items.subList(start, end + 1)
                     .mapNotNull { it.fullImageUrl ?: it.previewUrl }
-                urls.chunked(4).forEach { batch ->
+
+                // 過度な同時リクエストを避けつつ並列プリフェッチ
+                urls.chunked(6).forEach { batch ->
                     batch.forEach { url ->
                         val req = ImageRequest.Builder(context)
                             .data(url)
-                            .size(thumbPx)
+                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
+                            .precision(Precision.INEXACT)
                             .build()
                         context.imageLoader.enqueue(req)
                     }
-                    delay(50)
+                    delay(40)
                 }
             }
     }
@@ -334,14 +361,23 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
-            AsyncImage(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
-                    .aspectRatio(3f / 4f),
-                model = item.fullImageUrl ?: item.previewUrl,
-                contentDescription = item.title
-            )
+            // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
+                val heightPx = (widthPx * 4f / 3f)
+                AsyncImage(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
+                        .aspectRatio(3f / 4f),
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(item.fullImageUrl ?: item.previewUrl)
+                        .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
+                        .precision(Precision.INEXACT)
+                        .build(),
+                    contentDescription = item.title
+                )
+            }
 
             // 動画の場合は中央に再生アイコンを重ねる
             val isVideo = (item.fullImageUrl ?: item.previewUrl).let { url ->
