@@ -28,6 +28,8 @@ package com.valoser.futaburakari.ui.detail
  *   また、日付や閉じカッコ `)` の直後に No が隣接してしまう場合、および `ID:` と `No` が隣接する場合は
  *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
  *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
+ * - パフォーマンス: 可視範囲の変化に応じて前方/後方のメディア（画像/動画）を Coil にプリフェッチし、
+ *   スクロール時の初回表示を高速化（前方6件・後方2件を目安に先読み）。
  * - 本文返信の引用テキスト: 先頭ヘッダ（ID/ID無し/No/日付時刻/ファイル情報/先行引用）を除いた「本文のみ」を `>` で引用。
  * - レイアウト: `modifier` で外側からサイズ指定を受け取る。
  *   - 画面全体のリストでは `Modifier.fillMaxSize()` を渡す。
@@ -77,6 +79,13 @@ import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.R
 import android.text.Html
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import coil.size.Dimension
+import coil.size.Precision
+import coil.size.Scale
+import coil.size.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
 import android.util.Patterns
@@ -159,6 +168,82 @@ fun DetailListCompose(
         initialFirstVisibleItemIndex = safeIndex,
         initialFirstVisibleItemScrollOffset = safeOffset
     )
+
+    // スクロール外の画像を先読み（プリフェッチ）
+    // - 現在の可視範囲から前後に数件分のメディア(Image/Video)をCoilへ事前リクエスト
+    // - メモリサイズが不明なため、サイズは幅ピクセルを優先（高さは同値でINEXACT精度）
+    // - 既に処理したURLは重複プリフェッチを避けるためセットで管理
+    run {
+        val ctx = LocalContext.current
+        val imageLoader = ctx.imageLoader
+        val prefetched = remember(items) { mutableSetOf<String>() }
+        val config = androidx.compose.ui.platform.LocalConfiguration.current
+        val density = LocalDensity.current
+        val screenWidthPx = remember(config.screenWidthDp, density) {
+            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+        }
+        val prefetchAhead = 6
+        val prefetchBack = 2
+
+        LaunchedEffect(items, internalState) {
+            snapshotFlow { internalState.layoutInfo.visibleItemsInfo }
+                .map { vis ->
+                    val first = vis.minOfOrNull { it.index } ?: 0
+                    val last = vis.maxOfOrNull { it.index } ?: -1
+                    first to last
+                }
+                .distinctUntilChanged()
+                .collectLatest { (first, last) ->
+                    if (items.isEmpty()) return@collectLatest
+                    val startAhead = (last + 1).coerceAtLeast(0)
+                    val endAhead = (last + prefetchAhead).coerceAtMost(items.lastIndex)
+                    val startBack = (first - prefetchBack).coerceAtLeast(0)
+                    val endBack = (first - 1).coerceAtLeast(-1)
+
+                    fun urlFor(i: Int): String? = when (val c = items.getOrNull(i)) {
+                        is DetailContent.Image -> c.imageUrl
+                        is DetailContent.Video -> c.videoUrl
+                        else -> null
+                    }
+
+                    // 前方プリフェッチ
+                    for (i in startAhead..endAhead) {
+                        val url = urlFor(i) ?: continue
+                        if (prefetched.add(url)) {
+                            val req = ImageRequest.Builder(ctx)
+                                .data(url)
+                                .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
+                                .scale(Scale.FIT)
+                                .precision(Precision.INEXACT)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .networkCachePolicy(CachePolicy.ENABLED)
+                                .build()
+                            imageLoader.enqueue(req)
+                        }
+                    }
+
+                    // 後方（少しだけ戻り）のプリフェッチ
+                    if (endBack >= startBack) {
+                        for (i in startBack..endBack) {
+                            val url = urlFor(i) ?: continue
+                            if (prefetched.add(url)) {
+                                val req = ImageRequest.Builder(ctx)
+                                    .data(url)
+                                    .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
+                                    .scale(Scale.FIT)
+                                    .precision(Precision.INEXACT)
+                                    .diskCachePolicy(CachePolicy.ENABLED)
+                                    .memoryCachePolicy(CachePolicy.ENABLED)
+                                    .networkCachePolicy(CachePolicy.ENABLED)
+                                    .build()
+                                imageLoader.enqueue(req)
+                            }
+                        }
+                    }
+                }
+        }
+    }
 
     // Compose内で検索ヒット位置を計算してナビゲーションを提供
     var hitPositions by remember(items, searchQuery) { mutableStateOf<List<Int>>(emptyList()) }

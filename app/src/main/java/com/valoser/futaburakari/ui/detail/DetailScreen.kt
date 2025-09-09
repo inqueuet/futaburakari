@@ -56,6 +56,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import coil.imageLoader
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -75,6 +79,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
+ *   一覧グリッドは可視範囲の前後にあるサムネイルを Coil でプリフェッチし、スクロール直後の表示遅延を低減。
  * - AppBar: 戻る/更新/検索/メディア一覧のアイコンに加え、
  *            右上メニュー（More）から「返信 → NG 管理 → 画像編集（任意）」を提供。
  *
@@ -631,12 +636,12 @@ fun DetailScreenScaffold(
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
                 // シート内の操作用のローカルスコープ（例: クリックで親リストへスクロール）
                 val scope = rememberCoroutineScope()
-                androidx.compose.material3.ModalBottomSheet(
-                    onDismissRequest = { openMediaSheet = false },
-                    sheetState = sheetState
-                ) {
-                    // Compose 標準のグリッドで表示
-                    val images = remember(items) {
+                    androidx.compose.material3.ModalBottomSheet(
+                        onDismissRequest = { openMediaSheet = false },
+                        sheetState = sheetState
+                    ) {
+                        // Compose 標準のグリッドで表示
+                        val images = remember(items) {
                         data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
                         fun findParentTextPosition(from: Int): Int {
                             for (i in from downTo 0) if (items[i] is com.valoser.futaburakari.DetailContent.Text) return i
@@ -650,8 +655,82 @@ fun DetailScreenScaffold(
                             }
                         }
                     }
+                    // グリッドの可視範囲を監視し、オフスクリーンを先読み
+                    // - 前方12件・後方6件を目安にサムネイルを事前デコード
+                    // - セルサイズに近い解像度（幅=画面幅/3, 高さ=110dp, Precision.INEXACT）でキャッシュを温める
+                    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+                    run {
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        val imageLoader = ctx.imageLoader
+                        val prefetched = remember(images) { mutableSetOf<String>() }
+                        val config = androidx.compose.ui.platform.LocalConfiguration.current
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val screenWidthPx = remember(config.screenWidthDp, density) {
+                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+                        }
+                        val cellWidthPx = remember(screenWidthPx) { (screenWidthPx / 3).coerceAtLeast(1) }
+                        val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+                        val prefetchAhead = 12
+                        val prefetchBack = 6
+
+                        LaunchedEffect(images, gridState) {
+                            snapshotFlow { gridState.layoutInfo.visibleItemsInfo }
+                                .map { vis ->
+                                    val first = vis.minOfOrNull { it.index } ?: 0
+                                    val last = vis.maxOfOrNull { it.index } ?: -1
+                                    first to last
+                                }
+                                .distinctUntilChanged()
+                                .collectLatest { (first, last) ->
+                                    if (images.isEmpty()) return@collectLatest
+                                    val startAhead = (last + 1).coerceAtLeast(0)
+                                    val endAhead = (last + prefetchAhead).coerceAtMost(images.lastIndex)
+                                    val startBack = (first - prefetchBack).coerceAtLeast(0)
+                                    val endBack = (first - 1).coerceAtLeast(-1)
+
+                                    fun urlFor(i: Int): String? = images.getOrNull(i)?.url
+
+                                    // 前方プリフェッチ
+                                    for (i in startAhead..endAhead) {
+                                        val url = urlFor(i) ?: continue
+                                        if (prefetched.add(url)) {
+                                            val req = coil.request.ImageRequest.Builder(ctx)
+                                                .data(url)
+                                                .size(coil.size.Size(coil.size.Dimension.Pixels(cellWidthPx), coil.size.Dimension.Pixels(cellHeightPx)))
+                                                .scale(coil.size.Scale.FILL)
+                                                .precision(coil.size.Precision.INEXACT)
+                                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                .networkCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                .build()
+                                            imageLoader.enqueue(req)
+                                        }
+                                    }
+
+                                    // 後方（少しだけ戻り）のプリフェッチ
+                                    if (endBack >= startBack) {
+                                        for (i in startBack..endBack) {
+                                            val url = urlFor(i) ?: continue
+                                            if (prefetched.add(url)) {
+                                                val req = coil.request.ImageRequest.Builder(ctx)
+                                                    .data(url)
+                                                    .size(coil.size.Size(coil.size.Dimension.Pixels(cellWidthPx), coil.size.Dimension.Pixels(cellHeightPx)))
+                                                    .scale(coil.size.Scale.FILL)
+                                                    .precision(coil.size.Precision.INEXACT)
+                                                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                    .networkCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                    .build()
+                                                imageLoader.enqueue(req)
+                                            }
+                                        }
+                                    }
+                                }
+                        }
+                    }
                     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                         columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                        state = gridState,
                         contentPadding = PaddingValues(LocalSpacing.current.s)
                     ) {
                         items(images.size) { idx ->
