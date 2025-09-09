@@ -13,8 +13,17 @@
     <color name="my_expressive_onTertiary">#FFFFFF</color>
     <color name="my_expressive_tertiaryContainer">#9AF6B9</color>
     <color name="my_expressive_onTertiaryContainer">#00210F</color>
+    <color name="my_expressive_error">#B00020</color>
+    <color name="my_expressive_onError">#FFFFFF</color>
+    <color name="my_expressive_errorContainer">#FCD8DF</color>
+    <color name="my_expressive_onErrorContainer">#410E0B</color>
     <color name="my_expressive_background">#FDFCFF</color>
     <color name="my_expressive_onBackground">#1A1C1E</color>
+    <color name="my_expressive_surface">#FDFCFF</color>
+    <color name="my_expressive_onSurface">#1A1C1E</color>
+    <color name="my_expressive_surfaceVariant">#E7E0EC</color>
+    <color name="my_expressive_onSurfaceVariant">#49454F</color>
+    <color name="my_expressive_outline">#79747E</color>
 
     <!-- General neutrals removed: light_gray (unused) -->
 </resources>

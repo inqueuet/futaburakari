@@ -18,6 +18,19 @@
         <item name="colorTertiaryContainer">@color/my_expressive_tertiaryContainer</item>
         <item name="colorOnTertiaryContainer">@color/my_expressive_onTertiaryContainer</item>
 
+        <!-- Surface / Background / Error / Variant / Outline -->
+        <item name="android:colorBackground">@color/my_expressive_background</item>
+        <item name="colorOnBackground">@color/my_expressive_onBackground</item>
+        <item name="colorSurface">@color/my_expressive_surface</item>
+        <item name="colorOnSurface">@color/my_expressive_onSurface</item>
+        <item name="colorSurfaceVariant">@color/my_expressive_surfaceVariant</item>
+        <item name="colorOnSurfaceVariant">@color/my_expressive_onSurfaceVariant</item>
+        <item name="colorError">@color/my_expressive_error</item>
+        <item name="colorOnError">@color/my_expressive_onError</item>
+        <item name="colorErrorContainer">@color/my_expressive_errorContainer</item>
+        <item name="colorOnErrorContainer">@color/my_expressive_onErrorContainer</item>
+        <item name="colorOutline">@color/my_expressive_outline</item>
+
         <item name="android:windowLayoutInDisplayCutoutMode">default</item>
     </style>
 
