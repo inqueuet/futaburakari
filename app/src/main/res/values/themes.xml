@@ -1,28 +1,29 @@
 <resources>
-    <!-- 基底テーマ -->
-    <style name="Theme.Futaburakari" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- ツールバーのオーバーフローアイコンの色は専用styleで制御 -->
-        <item name="actionOverflowButtonStyle">@style/OverflowButtonStyle</item>
+    <!-- 基底テーマ（Material3）。
+         画面内部は Compose の MaterialTheme に委譲しつつ、
+         Window/Splash/システムバーなど外縁は M3 に統一します。 -->
+    <style name="Theme.Futaburakari" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Edge-to-Edge を前提に、システムバーを透明化（明度はコード側で制御） -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
 
-        <!-- デフォルトカラー設定 -->
-        <item name="colorPrimary">@color/my_expressive_primary</item>
-        <item name="colorPrimaryVariant">@color/purple_700</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <!-- ブランドの第二色。 -->
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
-        <!-- Edge-to-edge managed at runtime via enableEdgeToEdge() -->
-        <!-- On Android 15+, SHORT_EDGES is deprecated. Avoid forcing it via library defaults. -->
+        <!-- Display cutout の動作（デフォルトで良いが明示） -->
         <item name="android:windowLayoutInDisplayCutoutMode">default</item>
+
+        <!-- SplashScreen API (Android 12+) -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_inset</item>
+        <item name="android:windowSplashScreenBackground">@color/my_expressive_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Futaburakari</item>
+
+        <!-- 12 未満向けのフォールバック背景 -->
+        <item name="android:windowBackground">@color/my_expressive_background</item>
     </style>
 
-    <style name="Theme.Futaburakari.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+    <!-- 既存の M3 オーバーレイは未使用のため削除。必要になれば AppCompat 相当を定義します。 -->
 
-    <style name="Theme.Futaburakari.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
-
+    <!-- ツールバーのタイトル用テキスト外観（AppCompat 由来のコンポーネント互換）。 -->
     <style name="Toolbar.TitleText" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
-        <item name="android:textColor">?attr/colorOnPrimary</item>
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
         <item name="android:textSize">24sp</item>
     </style>
 

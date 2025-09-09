@@ -11,7 +11,7 @@ plugins {
 }
 
 kotlin {
-    // JDK は 11 を使用（必要なら 17 にしてOK）
+    // JDK は 17 を使用（ビルド環境のツールチェーン）
     jvmToolchain(17)
     compilerOptions {
         // 旧 kotlinOptions { jvmTarget = "11" } の代替（deprecated解消）
@@ -27,8 +27,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 23
-        versionName = "3.3"
+        versionCode = 30
+        versionName = "4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -68,6 +68,11 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    // Compose Foundation (LazyVerticalGrid など)
+    implementation("androidx.compose.foundation:foundation")
+
+     // Material Icons
+    implementation("androidx.compose.material:material-icons-extended")
 
     // ViewModel for Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose.android)
@@ -77,11 +82,10 @@ dependencies {
     implementation(libs.jsoup)
     // Lifecycle-aware state collection
     implementation(libs.androidx.lifecycle.runtime.compose)
+    // LiveData -> Compose State
+    implementation("androidx.compose.runtime:runtime-livedata")
 
     // Unified dependencies from catalog
-    implementation(libs.androidx.constraintlayout)
-    implementation(libs.androidx.recyclerview)
-    implementation(libs.google.material)
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
     implementation(libs.gson)
@@ -99,9 +103,13 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
-    implementation(libs.androidx.swiperefreshlayout)
+    // Removed legacy View dependencies: SwipeRefreshLayout/RecyclerView/ConstraintLayout (Compose only)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.preference.ktx)
+    // Material Components (XML Material 3 themes, widgets, and bridge)
+    implementation(libs.material)
+    // SplashScreen compat to enable postSplashScreenTheme and backward support
+    implementation(libs.androidx.core.splashscreen)
 
     // Coil extensions
     implementation(libs.coil.core)

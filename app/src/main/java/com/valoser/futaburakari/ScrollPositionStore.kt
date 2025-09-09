@@ -2,21 +2,26 @@ package com.valoser.futaburakari
 
 import android.content.Context
 
+/**
+ * リストのスクロール位置を `SharedPreferences` に保存・復元するためのストア。
+ * URL をキーに、先頭可視アイテムの位置とピクセルオフセットを保持します。
+ * 旧仕様で保存されたキー（ドメイン無し）にもフォールバックして読み出します。
+ */
 class ScrollPositionStore(context: Context) {
-
+    // スクロール位置専用の SharedPreferences。名前は "scroll_position_prefs"。
     private val prefs = context.getSharedPreferences("scroll_position_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        // キーの一部として使うプレフィックス
+        // URL ごとにキーを組み立てるための接頭辞
         private const val KEY_PREFIX_POSITION = "scroll_pos_pos_"
         private const val KEY_PREFIX_OFFSET = "scroll_pos_off_"
     }
 
     /**
-     * RecyclerViewのスクロール状態（先頭アイテムの位置とオフセット）を保存します。
-     * @param url 一意のキーとして使用するURL
-     * @param position 先頭に表示されているアイテムのAdapter内での位置
-     * @param offset 先頭アイテムのビューの上端からRecyclerViewの上端までのピクセル単位のオフセット
+     * リストのスクロール状態（先頭アイテムの位置とオフセット）を保存します。
+     * @param url 一意のキーとして使用する URL
+     * @param position 先頭に表示されているアイテムの位置（0 始まり）
+     * @param offset 先頭アイテムの上端から表示領域上端までのピクセル単位のオフセット
      */
     fun saveScrollState(url: String, position: Int, offset: Int) {
         prefs.edit()
@@ -26,9 +31,11 @@ class ScrollPositionStore(context: Context) {
     }
 
     /**
-     * 保存されたRecyclerViewのスクロール状態を取得します。
-     * @param url 取得したいスクロール状態のURL
-     * @return アイテムの位置とオフセットのペア。保存された値がなければ (0, 0) を返す。
+     * 保存されたスクロール状態を取得します。
+     * @param url 取得したいスクロール状態の URL
+     * @return 位置とオフセットのペア。
+     * 保存が存在しない場合はドメイン無しの旧キーへフォールバックし、
+     * それでも見つからなければ (0, 0) を返します。
      */
     fun getScrollState(url: String): Pair<Int, Int> {
         var position = prefs.getInt(KEY_PREFIX_POSITION + url, Int.MIN_VALUE)

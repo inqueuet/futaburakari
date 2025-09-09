@@ -5,57 +5,65 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.Html
-import android.view.Menu
-import android.view.MenuItem
-import android.view.View
-import android.view.ViewGroup
-import coil.load
-import androidx.recyclerview.widget.GridLayoutManager
+ 
+ 
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 // import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.isVisible
+ 
 import androidx.activity.viewModels
 import androidx.lifecycle.Observer
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.valoser.futaburakari.databinding.ActivityDetailBinding
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import androidx.appcompat.app.AlertDialog
+ 
+ 
+import androidx.activity.compose.setContent
+ 
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.Normalizer
+ 
 import androidx.preference.PreferenceManager
-import com.google.android.gms.ads.AdRequest
-import com.google.android.gms.ads.AdListener
-import com.google.android.gms.ads.LoadAdError
+ 
 
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
+import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.valoser.futaburakari.search.RecentSearchStore
 
+/**
+ * スレッドの詳細を Compose UI で表示する画面。
+ *
+ * 役割:
+ * - `DetailViewModel` を用いてスレッドの詳細を読み込み、更新を監視
+ * - スレッドURLごとにリストのスクロール位置を保存/復元
+ * - 返信・削除・NGフィルタ更新・検索・ソーダネの操作を処理
+ * - 履歴（最新レス番号とサムネイル）を更新し、スナップショット取得をトリガー
+ * - ユーザー設定（テーマ/広告）や戻る操作のUXを反映
+ * - 画像編集の起動（トップバーの「画像編集」アクションから `ImagePickerActivity` へ遷移）
+ * - タイトル整形: カタログから渡されるタイトル文字列を 1 行表示向けに整形
+ *   - HTML をプレーン化 → 改行（\n/\r）手前でカット
+ *   - 改行が無い場合、半角/全角スペースの連続（3 つ以上）で手前を採用
+ *   - さらに切れない場合、「スレ」という語で手前を採用（例: "◯◯スレ……" → "◯◯スレ"）
+ *   - 整形後のタイトルは TopBar と履歴記録の双方に使用
+ *   - 例: 「キルヒアイスレ<br>生き残って…」→ TopBar では「キルヒアイスレ」
+ */
 @AndroidEntryPoint
-class DetailActivity : BaseActivity(), SearchManagerCallback {
+class DetailActivity : BaseActivity() {
 
-    private lateinit var binding: ActivityDetailBinding
     private val viewModel: DetailViewModel by viewModels()
-    private lateinit var detailAdapter: DetailAdapter
-    private lateinit var layoutManager: LinearLayoutManager
-    private lateinit var detailSearchManager: DetailSearchManager
     private lateinit var scrollStore: ScrollPositionStore
-
-    private var pendingScrollPosition: Pair<Int, Int>? = null
 
     private var currentUrl: String? = null
 
     private var isRequestingMore = false   // 追加：多重呼び出し防止
-
-    private var isInitialLoad = true // ★クラスのプロパティとして初期化
-
-    private var isFastScrolling = false // 追加
+    private var isInitialLoad = true // 初期ロード復元の制御に使用（再読み込み時にリセット）
 
     // メインスレッドハンドラ / 既読更新デバウンス
     private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -73,13 +81,19 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         const val EXTRA_TITLE = "extra_title"
     }
 
-    private var suppressNextRestore: Boolean = false
+    private var suppressNextRestore: Boolean = false // 次回のスクロール復元を抑制するフラグ（使用中）
 
     private lateinit var prefs: SharedPreferences
+    private val adsEnabledFlowInternal = MutableStateFlow(false)
+    private val adsEnabledFlow = adsEnabledFlowInternal.asStateFlow()
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             // 広告設定の即時反映
-            "pref_key_ads_enabled" -> setupAdBanner()
+            "pref_key_ads_enabled" -> {
+                setupAdBanner()
+                val enabled = prefs.getBoolean("pref_key_ads_enabled", false)
+                adsEnabledFlowInternal.value = enabled
+            }
             // NGルール変更を即時反映（NgStore は DefaultSharedPreferences を使用）
             "ng_rules_json" -> viewModel.reapplyNgFilter()
         }
@@ -100,52 +114,157 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         viewModel.reapplyNgFilter()
     }
 
+    private var toolbarTitleText: String = ""
+    private val bottomOffsetFlowInternal = MutableStateFlow(0)
+    private val bottomOffsetFlow = bottomOffsetFlowInternal.asStateFlow()
+    private val searchBarActiveFlowInternal = MutableStateFlow(false)
+    private val searchBarActiveFlow = searchBarActiveFlowInternal.asStateFlow()
+    private val recentSearchStore by lazy { RecentSearchStore(this) }
+
+    /**
+     * テーマ適用済みの Compose コンテンツを初期化し、UIの各種コールバックを ViewModel/ストアへ接続する。
+     * 併せて履歴の記録、スナップショットの起動、戻る操作のハンドリングを設定する。
+     * TopAppBar の主なアクション: 戻る/返信/再読み込み/検索/NG 管理/メディア一覧/画像編集。
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityDetailBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
-        // ★ ここですぐに初期化
+        // Compose のトップバーおよび履歴表示用のタイトル（HTML改行 <br> 等も考慮し、改行以降を除去して1行に）
+        toolbarTitleText = (intent.getStringExtra(EXTRA_TITLE) ?: "").let { raw ->
+            val plain = Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString()
+                .replace("\u200B", "") // ZWSP 除去
+            // 1) 改行優先
+            val cutByNewline = plain.substringBefore('\n').substringBefore('\r').trim()
+            if (cutByNewline.isNotBlank() && cutByNewline.length < plain.length) return@let cutByNewline
+            // 2) 改行が無い場合のヒューリスティック: 連続する空白（半角/全角）3つ以上で区切る
+            val m = Regex("[\\s\u3000]{3,}").find(plain)
+            if (m != null && m.range.first > 0) return@let plain.substring(0, m.range.first).trim()
+            // 3) スレ名ヒューリスティック: 「スレ」で切る（例: "キルヒアイスレ生き残…" → "キルヒアイスレ"）
+            val idxSre = plain.indexOf("スレ")
+            if (idxSre in 1 until plain.length) return@let plain.substring(0, idxSre + 2).trim()
+            plain.trim()
+        }
+        currentUrl = intent.getStringExtra(EXTRA_URL)
+        // スクロール位置の保存/復元に用いるストアを先に初期化（Compose へ初期状態を渡す）
         scrollStore = ScrollPositionStore(this)
-
-        setSupportActionBar(binding.toolbar)
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                androidx.core.view.WindowInsetsCompat.CONSUMED
+        val initialScroll: Pair<Int, Int> = currentUrl?.let { url ->
+            val key = UrlNormalizer.threadKey(url)
+            scrollStore.getScrollState(key)
+        } ?: (0 to 0)
+        // Compose のコンテナへ切替（トップバー含む）。
+        // メモ: カラーモード設定の個別制御は廃止（テーマに準拠）
+        val showAdsPref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getBoolean("pref_key_ads_enabled", false)
+        adsEnabledFlowInternal.value = showAdsPref
+        val adUnitId = getString(R.string.admob_banner_id)
+        setContent {
+            FutaburakariTheme(expressive = true) {
+                val showAds by adsEnabledFlow.collectAsState()
+                DetailScreenScaffold(
+                    title = toolbarTitleText,
+                    onBack = {
+                        onBackPressedDispatcher.onBackPressed()
+                    },
+                    onReply = { launchReplyActivity("") },
+                    onReload = { reloadDetails() },
+                    onOpenNg = { openNgManager() },
+                    onOpenMedia = { },
+                    // 画像編集: 端末の画像を選んで `ImageEditActivity` へ渡すフローの起点
+                    onImageEdit = { startActivity(Intent(this@DetailActivity, ImagePickerActivity::class.java)) },
+                    onSodaneClick = { resNum -> viewModel.postSodaNe(resNum) },
+                    onDeletePost = { resNum, onlyImage ->
+                        val threadUrl = currentUrl ?: return@DetailScreenScaffold
+                        val boardBasePath = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                        val postUrl = boardBasePath + "futaba.php?guid=on"
+                        val pwd = AppPreferences.getPwd(this)
+                        viewModel.deletePost(
+                            postUrl = postUrl,
+                            referer = threadUrl,
+                            resNum = resNum,
+                            pwd = pwd ?: "",
+                            onlyImage = onlyImage,
+                        )
+                    },
+                    onSubmitSearch = { q ->
+                        recentSearchStore.add(q)
+                        viewModel.performSearch(q)
+                    },
+                    onDebouncedSearch = { q -> viewModel.performSearch(q) },
+                    onClearSearch = { viewModel.clearSearch() },
+                    onReapplyNgFilter = { viewModel.reapplyNgFilter() },
+                    searchStateFlow = viewModel.searchState,
+                    onSearchPrev = { viewModel.navigateToPrevHit() },
+                    onSearchNext = { viewModel.navigateToNextHit() },
+                    bottomOffsetPxFlow = bottomOffsetFlow,
+                    searchActiveFlow = searchBarActiveFlow,
+                    onSearchActiveChange = { active -> searchBarActiveFlowInternal.value = active },
+                    recentSearchesFlow = recentSearchStore.items,
+                    showAds = showAds,
+                    adUnitId = adUnitId,
+                    onBottomPaddingChange = { h -> bottomOffsetFlowInternal.value = h },
+                    // Compose list scroll state persistence
+                    initialScrollIndex = initialScroll.first,
+                    initialScrollOffset = initialScroll.second,
+                    onSaveScroll = { pos, off ->
+                        val url = currentUrl ?: return@DetailScreenScaffold
+                        val key = UrlNormalizer.threadKey(url)
+                        scrollStore.saveScrollState(key, pos, off)
+                    },
+                    itemsFlow = viewModel.detailContent,
+                    currentQueryFlow = viewModel.currentQuery,
+                    getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
+                    // Compose側で引用一覧を表示するため、ここでは何もしない
+                    onQuoteClick = null,
+                    onResNumClick = { _, resBody ->
+                        if (resBody.isNotEmpty()) launchReplyActivity(resBody)
+                    },
+                    onResNumConfirmClick = { _ -> },
+                    onResNumDelClick = { resNum ->
+                        // keep same as adapter behavior
+                        val url = currentUrl ?: return@DetailScreenScaffold
+                        val threadId = url.substringAfterLast("/").substringBefore(".htm")
+                        val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
+                        val postUrl = boardBasePath + "futaba.php?guid=on"
+                        val pwd = AppPreferences.getPwd(this)
+                        viewModel.deletePost(postUrl, url, resNum, pwd ?: "", onlyImage = false)
+                    },
+                    onBodyClick = { quotedBody -> launchReplyActivity(quotedBody) },
+                    // Compose側でNG追加ダイアログを表示するため、ここでは何もしない
+                    onAddNgFromBody = { _ -> },
+                    onThreadEndTimeClick = { reloadDetails() },
+                    onImageLoaded = {
+                        // no-op; Compose handles scrolling alignment
+                    },
+                    isRefreshingFlow = viewModel.isLoading,
+                    onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) },
+                    sodaneUpdates = viewModel.sodaneUpdate,
+                    threadUrl = currentUrl,
+                    onNearListEnd = {
+                        val url = currentUrl ?: return@DetailScreenScaffold
+                        if (isRequestingMore) return@DetailScreenScaffold
+                        // Compose側でファストスクロール中は抑制済み
+                        isRequestingMore = true
+                        suppressNextRestore = true
+                        val postCount = countPostItems()
+                        viewModel.checkForUpdates(url, postCount) { _ ->
+                            isRequestingMore = false
+                        }
+                    }
+                )
             }
         }
-        supportActionBar?.setDisplayHomeAsUpEnabled(false)
 
         // Hilt により viewModel は注入済み（by viewModels()）
         // SharedPreferences 準備（設定変更のリッスンに使用）
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        currentUrl = intent.getStringExtra(EXTRA_URL)
-        binding.toolbarTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: ""
 
         // 履歴に記録（タイトルがない場合はURL末尾などで代替も可）
         currentUrl?.let { url ->
-            val title = binding.toolbarTitle.text?.toString().orEmpty().ifBlank { url }
+            val title = toolbarTitleText.ifBlank { url }
             HistoryManager.addOrUpdate(this, url, title)
             // すぐ閉じた場合でも本文を含めてローカルに残せるよう、単発のスナップショット取得を即時キュー
             ThreadMonitorWorker.snapshotNow(this, url)
-        }
-
-        setupRecyclerView()
-
-        // DetailSearchManager は (binding, callback) で生成
-        detailSearchManager = DetailSearchManager(binding, this)
-        detailSearchManager.setupSearchNavigation()
-
-        // bottom_container（検索ナビ + 広告）の高さ変化に追従してRecyclerViewの下パディングを更新
-        binding.bottomContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            updateRecyclerBottomPadding()
-            // 検索UIや広告の高さが変わったときに、ヒット項目が隠れないよう再吸着
-            detailSearchManager.realignToCurrentHitIfActive()
+            // 以降の更新を自動監視（常時有効）
+            ThreadMonitorWorker.schedule(this, url)
         }
 
         observeViewModel()
@@ -154,79 +273,46 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         // 端末戻る：検索展開中は閉じる
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (detailSearchManager.handleOnBackPressed()) return
-                // ★ ここでスクロール位置を保存
-                saveScroll()
-
+                // Compose検索バーが開いていれば先に閉じる
+                if (searchBarActiveFlowInternal.value) {
+                    searchBarActiveFlowInternal.value = false
+                    return
+                }
                 // デフォルトの戻るへ委譲
                 isEnabled = false
                 onBackPressedDispatcher.onBackPressed()
             }
         })
 
-        binding.swipeRefreshLayout.setOnRefreshListener { reloadDetails() }
-        binding.backButton.setOnClickListener {
-            saveScroll()
-            onBackPressedDispatcher.onBackPressed()
-        }
-
-        // Ensure bottom container sits above navigation bar
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.bottomContainer) { v, insets ->
-            val sys = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, sys.bottom)
-            // RecyclerView bottom padding mirrors bottomContainer height; this will be picked up
-            androidx.core.view.WindowInsetsCompat.CONSUMED
-        }
+        // 旧来のUIリスナは削除済み（リフレッシュ/インセット処理はCompose側で対応）
     }
 
+    /**
+     * Compose 側が監視する広告表示状態を更新（バナーの表示/非表示を切り替え）。
+     */
     private fun setupAdBanner() {
-        // 既定は OFF（設定で有効化したときのみ表示）
-        val showAds = prefs.getBoolean("pref_key_ads_enabled", false)
-        val adView = binding.adView
-        if (showAds) {
-            adView.isVisible = true
-            // Basic diagnostics to surface load status
-            adView.setAdListener(object : AdListener() {
-                override fun onAdLoaded() {
-                    // Ad loaded successfully; bottom container height may change
-                    updateRecyclerBottomPadding()
-                }
-
-                override fun onAdFailedToLoad(error: LoadAdError) {
-                    // Toast.makeText(this@DetailActivity, "広告の読み込み失敗: ${error.code}", Toast.LENGTH_SHORT).show()
-                }
-            })
-            // 再開してからロード（OFF→ON直後のケースを考慮）
-            adView.resume()
-            val adRequest = AdRequest.Builder().build()
-            adView.loadAd(adRequest)
-            // Keep RecyclerView padding in sync with bottom container height
-            updateRecyclerBottomPadding()
-        } else {
-            // 完全に非表示・停止（既に読み込んだ広告が残らないよう念のためクリア）
-            adView.isVisible = false
-            // 一部バージョンでは非null指定のため、空リスナーで解除相当とする
-            adView.setAdListener(object : AdListener() {})
-            adView.pause()
-            // 子ビューの強制除去は再ロード不可の原因になるため行わない
-            updateRecyclerBottomPadding()
-        }
+        // Compose側で表示を制御するため、状態のみ更新
+        val enabled = prefs.getBoolean("pref_key_ads_enabled", false)
+        adsEnabledFlowInternal.value = enabled
     }
 
+    /**
+     * 設定変更の監視を開始し、広告表示状態を最新に更新する。
+     */
     override fun onStart() {
         super.onStart()
         // 設定変更（広告ON/OFF）を戻り時にも反映
+        // レガシーUI使用時のみバナー制御（Compose移行時はCompose側で表示）
         setupAdBanner()
         // 設定変更の監視を開始
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
-        // アクティビティが表示されるたびにスクロール位置の復元を試みる
-        // isInitialLoadフラグはリロード時の復元制御に利用するため残す
+        // Compose 側で初期スクロールを受け取るため、ここでの復元は不要
         isInitialLoad = true
-        if (!suppressNextRestore) {
-            restoreScroll()
-        }
     }
 
+    /**
+     * 設定変更の監視を停止する。
+     */
     override fun onStop() {
         // 設定変更の監視を停止
         if (this::prefs.isInitialized) {
@@ -235,226 +321,38 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         super.onStop()
     }
 
-    private fun setRecyclerBottomPaddingDp(dp: Int) {
-        val density = resources.displayMetrics.density
-        val px = (dp * density).toInt()
-        val rv = binding.detailRecyclerView
-        rv.setPadding(rv.paddingLeft, rv.paddingTop, rv.paddingRight, px)
-    }
+    // Recycler の下部余白ヘルパーは Compose 移行により不要
 
-    private fun updateRecyclerBottomPadding() {
-        val rv = binding.detailRecyclerView
-        val bottom = binding.bottomContainer.height
-        if (rv.paddingBottom != bottom) {
-            rv.setPadding(rv.paddingLeft, rv.paddingTop, rv.paddingRight, bottom)
-        }
-    }
-
-    // -------------------------
-    // RecyclerView 設定
-    // -------------------------
-    private fun setupRecyclerView() {
-        detailAdapter = DetailAdapter()
-        layoutManager = LinearLayoutManager(this@DetailActivity)
-
-        // 「そうだね」状態
-        detailAdapter.getSodaNeState = { resNum -> viewModel.getSodaNeState(resNum) }
-
-        // 画像読み込み完了時にスクロール位置と検索位置を再補正する
-        detailAdapter.onImageLoaded = {
-            applyPendingScroll()
-            detailSearchManager.realignToCurrentHitIfActive()
-        }
-
-        // ユーザーが手動でスクロールを開始したら、保留中の自動スクロールをキャンセルする
-        binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                super.onScrollStateChanged(recyclerView, newState)
-                // ユーザーが指でドラッグし始めたら、自動復元を停止
-                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-                    pendingScrollPosition = null
-                }
-            }
-        })
-
-        // 引用（> / >> / >>> ...）タップ → ポップアップ表示
-        detailAdapter.onQuoteClickListener = { token ->
-            // 先頭の '>' 個数を引用レベルに
-            val levelRaw = token.takeWhile { it == '>' }.length
-            val quoteLevel = if (levelRaw <= 0) 1 else levelRaw
-            val core = token.drop(levelRaw).trim()
-            QuotePopupFragment.showForQuote(supportFragmentManager, core, quoteLevel)
-        }
-
-        // ID タップ → メニュー（同一ID表示 / NG追加）
-        detailAdapter.onIdClickListener = { id ->
-            val items = arrayOf("同一IDの投稿を表示", "このIDをNGに追加")
-            AlertDialog.Builder(this)
-                .setItems(items) { _, which ->
-                    when (which) {
-                        0 -> QuotePopupFragment.showForId(supportFragmentManager, id)
-                        1 -> showAddNgDialog(type = RuleType.ID, prefill = id)
-                    }
-                }
-                .show()
-        }
-
-        // 「そうだね」: 楽観的にUIを+1してから送信
-        detailAdapter.onSodaNeClickListener = { resNum ->
-            detailAdapter.bumpSodaneOptimistic(resNum)
-            viewModel.postSodaNe(resNum)
-        }
-
-        // スレ終端 → リロード
-        detailAdapter.onThreadEndTimeClickListener = {
-            binding.swipeRefreshLayout.isRefreshing = true
-            reloadDetails()
-        }
-
-        // ★ 変更点 1: No.xxxタップ時の処理を共通メソッド呼び出しに変更
-        // レス番号(No.xxx)タップ → メニューの「返信」 → 返信画面へ
-        detailAdapter.onResNumClickListener = { resNum, resBody ->
-            if (resBody.isEmpty()) {
-                // 削除の場合
-                confirmAndDelete(resNum)
-            } else {
-                // 返信の場合
-                launchReplyActivity(resBody)
-            }
-        }
-
-        // ★ 変更点 2: 本文タップ時の処理を新規追加
-        detailAdapter.onBodyClickListener = { quotedBody ->
-            launchReplyActivity(quotedBody)
-        }
-
-        // 本文長押し → NG追加
-        detailAdapter.onAddNgFromBodyListener = { bodyText ->
-            showAddNgDialog(type = RuleType.BODY, prefill = bodyText)
-        }
-
-        // setupRecyclerView() 内に追記
-        detailAdapter.onResNumConfirmClickListener = { resNum ->
-            showResReferencesPopup(resNum)
-        }
-        // del（管理削除）
-        detailAdapter.onResNumDelClickListener = { resNum ->
-            // 確認ダイアログ（誤タップ防止）。不要なら直接呼んでもOK。
-            AlertDialog.Builder(this)
-                .setTitle("del(通報) 実行")
-                .setMessage("No.$resNum を通報しますか？")
-                .setPositiveButton("実行") { _, _ ->
-                    viewModel.deleteViaDelPhp(resNum)
-                }
-                .setNegativeButton("キャンセル", null)
-                .show()
-        }
-        // レス番号(No.xxx)タップ → 返信画面へ（引用文付き）
-        //detailAdapter.onResNumClickListener = { _, resBody ->
-        //    currentUrl?.let { url ->
-        //        val threadId = url.substringAfterLast("/").substringBefore(".htm")
-        //        val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
-        //        val boardPostUrl = boardBasePath + "futaba.php"
-        //        val intent = Intent(this, ReplyActivity::class.java).apply {
-        //            putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
-        //            putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
-        //            putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
-        //            putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, resBody)
-        //        }
-        //        replyActivityResultLauncher.launch(intent)
-        //    }
-        //}
-
-        binding.detailRecyclerView.apply {
-            adapter = detailAdapter
-            layoutManager = this@DetailActivity.layoutManager
-            // 動的に高さが変わるアイテムがあるため固定サイズは無効化
-            setHasFixedSize(false)
-            itemAnimator = null
-            setItemViewCacheSize(150)
-
-            // 「塊の末尾だけ」線を引くデコレーション
-            // 画面端ピッタリで良ければ paddingStartDp/paddingEndDp は 0 のままでOK。
-            // 例えば少し内側に寄せたいなら 8dp などに調整してください。
-            addItemDecoration(BlockDividerDecoration(detailAdapter, context, paddingStartDp = 0, paddingEndDp = 0))
-
-        }
-
-        // ★ 追加：無限スクロール（底から1件手前で発火）
-        binding.detailRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                super.onScrollStateChanged(recyclerView, newState)
-                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    markViewedByCurrentScroll()
-                }
-            }
-
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0) return
-                if (isRequestingMore) return
-                if (isFastScrolling) return
-
-                val lastVisible = layoutManager.findLastVisibleItemPosition()
-                if (lastVisible == RecyclerView.NO_POSITION) return
-
-                val lastContentIndex = findLastContentAdapterIndex()
-                if (lastContentIndex < 0) return
-
-                val threshold = 1
-                // ★ ThreadEndTime は判定から除外：可視最終位置が実質末尾 - threshold 以上なら発火
-                if (lastVisible >= lastContentIndex - threshold) {
-                    val url = currentUrl ?: return
-
-                    isRequestingMore = true
-                    suppressNextRestore = true
-
-                    // ★ レス数だけをサーバへ渡す
-                    val postCount = countPostItems()
-                    viewModel.checkForUpdates(url, postCount) { hasNew ->
-                        // 新着有無に関わらず解除
-                        isRequestingMore = false
-                    }
-                }
-            }
-        })
-
-        // ★ FastScroll 初期化（ドラッグ状態コールバックを渡す）
-        FastScrollHelper(
-            recyclerView = binding.detailRecyclerView,
-            fastScrollTrack = binding.fastScrollTrack,
-            fastScrollThumb = binding.fastScrollThumb,
-            layoutManager = layoutManager
-        ) { dragging ->
-            isFastScrolling = dragging
-            // プル更新の誤発火を防ぐ
-            binding.swipeRefreshLayout.isEnabled = !dragging
-        }
-    }
+    // RecyclerView 経路はCompose移行に伴い削除
 
     
 
     // -------------------------
-    // LiveData監視
+    // Flow監視
     // -------------------------
+    /**
+     * ViewModel の Flow/LiveData を収集し、副作用を適用する:
+     * - 履歴（未読数とサムネイル）の更新
+     * - 検索用プレーンテキストキャッシュのバックグラウンド構築
+     * - スクロール復元用の一時フラグのリセット
+     */
     private fun observeViewModel() {
-        viewModel.detailContent.observe(this, Observer { list ->
-            binding.swipeRefreshLayout.isRefreshing = false
-
-            // ★ ここで ThreadEndTime を最後の1件に絞る
-            val normalized = normalizeThreadEndTime(list)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.detailContent.collect { list ->
 
             // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
             runCatching {
-                val latestReplyNo = normalized.count { it is DetailContent.Text }
+                val latestReplyNo = list.count { it is DetailContent.Text }
                 val threadUrl = currentUrl
                 if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.applyFetchResult(this, threadUrl, latestReplyNo)
+                    HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
                 }
             }
 
             // 履歴のサムネイル更新（最初のメディアを採用）
             runCatching {
-                val media = normalized.firstOrNull {
+                val media = list.firstOrNull {
                     it is DetailContent.Image || it is DetailContent.Video
                 }
                 val url = when (media) {
@@ -464,22 +362,16 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 }
                 val threadUrl = currentUrl
                 if (!url.isNullOrBlank() && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.updateThumbnail(this, threadUrl, url)
+                    HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
                 }
             }
 
-            // ↓↓↓★ submitListに完了コールバックを追加 ★↓↓↓
-            detailAdapter.submitList(normalized) {
-                // リストの更新が完了したタイミングで、保留中のスクロールを適用する
-                applyPendingScroll()
-                // リスト更新後に検索ヒットも再吸着
-                detailSearchManager.realignToCurrentHitIfActive()
-            }
+            // Compose側は LiveData を直接購読しているため、ここでのAdapter更新は不要
 
             // プレーンテキストキャッシュをバックグラウンドで構築
             buildPlainCacheJob?.cancel()
             buildPlainCacheJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-                val cache = normalized.asSequence()
+                val cache = list.asSequence()
                     .filterIsInstance<DetailContent.Text>()
                     .associate { t ->
                         val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT)
@@ -489,178 +381,49 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
                 withContext(kotlinx.coroutines.Dispatchers.Main) { plainTextCache = cache }
             }
 
-            // （必要なら）検索ナビの表示切替
-            binding.searchNavigationControls.isVisible = detailSearchManager.isSearchActive()
+            // 検索ナビの表示は ViewModel.searchState に統一
 
             // suppressNextRestoreフラグのリセットのみ残す
             if (suppressNextRestore) {
                 suppressNextRestore = false
             }
-        })
-
-        viewModel.error.observe(this, Observer { err ->
-            binding.swipeRefreshLayout.isRefreshing = false
-            err?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
-        })
-
-        viewModel.isLoading.observe(this, Observer { isLoading ->
-            if (!binding.swipeRefreshLayout.isRefreshing) {
-                binding.progressBar.isVisible = isLoading
-            }
-        })
-
-        // ★ 追加: 「そうだね」更新を購読して Adapter に反映
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.sodaneUpdate.collect { (resNum, count) ->
-                    detailAdapter.updateSodane(resNum, count)
                 }
             }
         }
 
+        viewModel.error.observe(this, Observer { err ->
+            err?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
+        })
+
+        // Compose リストはUI内で楽観更新のため、Adapter反映やProgressBarは不要
+
     }
 
+    /**
+     * Forces reloading of details while preserving Compose-managed scroll state.
+     */
     private fun reloadDetails() {
         currentUrl?.let { url ->
             suppressNextRestore = false
-            // 現在の位置を保存し、その場で復元対象としてキューに積む
-            saveScroll()
-            restoreScroll()
-            detailSearchManager.clearSearch()
+            // Compose側でスクロールは保持・保存されるため明示の保存/復元は不要
+            viewModel.clearSearch()
             isInitialLoad = true // ★リロード時は再度復元を許可する
             viewModel.fetchDetails(url, forceRefresh = true)
         }
     }
 
-    override fun onPause() {
-        super.onPause()
-        // AdMob: 一時停止
-        if (::binding.isInitialized) {
-            binding.adView.pause()
-        }
-        // 最終的な既読反映（現在の可視範囲から）
-        runCatching { markViewedByCurrentScroll() }
-        saveScroll()
-    }
+    // AdMob のライフサイクル制御は Compose 側で不要
 
-    override fun onResume() {
-        super.onResume()
-        // AdMob: 再開
-        if (::binding.isInitialized) {
-            binding.adView.resume()
-        }
-    }
+    // スクロール保存/復元は Compose 側の onSaveScroll と initialScrollIndex/Offset で処理
 
-    override fun onDestroy() {
-        // AdMob: 解放
-        if (::binding.isInitialized) {
-            binding.adView.destroy()
-        }
-        super.onDestroy()
-    }
+    // メニューはCompose TopBarで提供するため未使用
 
-    private fun saveScroll() {
-        val first = layoutManager.findFirstVisibleItemPosition()
-        if (first != RecyclerView.NO_POSITION) {
-            val v = layoutManager.findViewByPosition(first)
-            val off = v?.top ?: 0
-            currentUrl?.let { url ->
-                val key = UrlNormalizer.threadKey(url)  // ★ ここで正規化
-                scrollStore.saveScrollState(key, first, off)
-            }
-        }
-    }
-
-    private fun restoreScroll() {
-        if (!::scrollStore.isInitialized) {
-            return
-        }
-        currentUrl?.let { url ->
-            val key = UrlNormalizer.threadKey(url)     // ★ ここで正規化
-            val (pos, off) = scrollStore.getScrollState(key)
-            // 既存保存がない (0,0) は保留しない（後の画像読み込みで“先頭へ戻る”の再適用を防止）
-            if (pos > 0 || off > 0) {
-                pendingScrollPosition = pos to off
-            } else {
-                pendingScrollPosition = null
-            }
-            //applyPendingScroll()
-        }
-    }
-
-    // ↓↓↓★ このメソッドをまるごと追加 ★↓↓↓
-    private fun applyPendingScroll() {
-        // 保留中のスクロール位置がある場合のみ実行
-        pendingScrollPosition?.let { (pos, off) ->
-            // (0,0) は意図的な指定とみなさずスキップ
-            if (pos == 0 && off == 0) {
-                pendingScrollPosition = null
-                return
-            }
-            // アダプターにアイテムがあり、位置が有効な範囲内か確認
-            if (detailAdapter.itemCount > 0 && pos < detailAdapter.itemCount) {
-                // RecyclerViewのレイアウトが完了した後にスクロールを実行
-                binding.detailRecyclerView.post {
-                    layoutManager.scrollToPositionWithOffset(pos, off)
-                }
-            }
-        }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.detail_menu, menu)
-        detailSearchManager.setupSearch(menu) // 検索メニューの初期化
-        // メディア一覧（ID参照に依存せずタイトルでバインド）
-        for (i in 0 until menu.size()) {
-            val mi = menu.getItem(i)
-            if (mi.title?.toString() == "メディア一覧") {
-                mi.setOnMenuItemClickListener {
-                    showMediaList()
-                    true
-                }
-                break
-            }
-        }
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        android.R.id.home -> { onBackPressedDispatcher.onBackPressed(); true }
-        R.id.action_reply -> {
-            currentUrl?.let { url ->
-                val threadId = url.substringAfterLast("/").substringBefore(".htm")
-                val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
-                val boardPostUrl = boardBasePath + "futaba.php"
-                val intent = Intent(this, ReplyActivity::class.java).apply {
-                    putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
-                    putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
-                    putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
-                    putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, "")
-                }
-                //replyActivityResultLauncher.launch(intent)
-            }
-            launchReplyActivity("")
-            true
-        }
-        R.id.action_reload -> { binding.swipeRefreshLayout.isRefreshing = true; reloadDetails(); true }
-        R.id.action_ng_manage -> { openNgManager(); true }
-        else -> super.onOptionsItemSelected(item)
-    }
-
-    // ===== SearchManagerCallback 実装 =====
-    override fun getDetailContent(): List<DetailContent>? = viewModel.detailContent.value
-    override fun getDetailAdapter(): DetailAdapter = detailAdapter
-    override fun getLayoutManager(): LinearLayoutManager = layoutManager
-    override fun showToast(message: String, duration: Int) { Toast.makeText(this, message, duration).show() }
-    override fun getStringResource(resId: Int): String = getString(resId)
-    override fun getStringResource(resId: Int, vararg formatArgs: Any): String = getString(resId, *formatArgs)
-    override fun onSearchCleared() {
-        // 検索クリア時のUIを必要に応じて更新
-        binding.searchNavigationControls.isVisible = false
-    }
-    override fun isBindingInitialized(): Boolean = ::binding.isInitialized
+    // ViewBindingは撤去済み
 
     // ★ 変更点 4: 返信画面を起動する共通メソッド
+    /**
+     * Launches the reply UI for the current thread with an optional quoted body.
+     */
     private fun launchReplyActivity(quote: String) {
         currentUrl?.let { url ->
             val threadId = url.substringAfterLast("/").substringBefore(".htm")
@@ -668,7 +431,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
             val boardPostUrl = boardBasePath + "futaba.php"
             val intent = Intent(this, ReplyActivity::class.java).apply {
                 putExtra(ReplyActivity.EXTRA_THREAD_ID, threadId)
-                putExtra(ReplyActivity.EXTRA_THREAD_TITLE, binding.toolbarTitle.text.toString())
+                putExtra(ReplyActivity.EXTRA_THREAD_TITLE, toolbarTitleText)
                 putExtra(ReplyActivity.EXTRA_BOARD_URL, boardPostUrl)
                 putExtra(ReplyActivity.EXTRA_QUOTE_TEXT, quote)
             }
@@ -676,285 +439,43 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         }
     }
 
+    /** NG管理画面を開く。詳細画面からの起動時はスレタイNGを非表示にする。 */
     private fun openNgManager() {
-        ngManagerLauncher.launch(Intent(this, NgManagerActivity::class.java))
-    }
-
-    private fun showAddNgDialog(type: RuleType, prefill: String) {
-        if (type == RuleType.ID) {
-            AlertDialog.Builder(this)
-                .setTitle("IDをNGに追加")
-                .setMessage("ID: $prefill をNGにしますか？")
-                .setPositiveButton("追加") { _, _ ->
-                    val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
-                    ngStore.addRule(RuleType.ID, prefill, MatchType.EXACT, sourceKey = source, ephemeral = true)
-                    viewModel.reapplyNgFilter()
-                    Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("キャンセル", null)
-                .show()
-            return
-        }
-
-        // BODY: 入力 + マッチ方法選択
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(32, 16, 32, 0)
-        }
-        val input = android.widget.EditText(this).apply {
-            hint = "含めたくない語句（例: スパム語）"
-            setText(prefill)
-        }
-        val radio: android.widget.RadioGroup
-        val idSub = android.view.View.generateViewId()
-        val idPre = android.view.View.generateViewId()
-        val idRe  = android.view.View.generateViewId()
-        radio = android.widget.RadioGroup(this).apply {
-            val optSub = android.widget.RadioButton(context).apply { text = "部分一致"; id = idSub; isChecked = true }
-            val optPre = android.widget.RadioButton(context).apply { text = "前方一致"; id = idPre }
-            val optRe  = android.widget.RadioButton(context).apply { text = "正規表現"; id = idRe }
-            addView(optSub); addView(optPre); addView(optRe)
-        }
-        container.addView(input)
-        container.addView(radio)
-
-        AlertDialog.Builder(this)
-            .setTitle("本文でNG追加")
-            .setView(container)
-            .setPositiveButton("追加") { _, _ ->
-                val pat = input.text?.toString()?.trim().orEmpty()
-                if (pat.isEmpty()) return@setPositiveButton
-                val mt = when (radio.checkedRadioButtonId) {
-                    idPre -> MatchType.PREFIX
-                    idRe -> MatchType.REGEX
-                    else -> MatchType.SUBSTRING
-                }
-                val source = currentUrl?.let { UrlNormalizer.threadKey(it) }
-                ngStore.addRule(RuleType.BODY, pat, mt, sourceKey = source, ephemeral = true)
-                viewModel.reapplyNgFilter()
-                Toast.makeText(this, "追加しました", Toast.LENGTH_SHORT).show()
+        ngManagerLauncher.launch(
+            Intent(this, NgManagerActivity::class.java).apply {
+                // DetailActivityからの起動時はスレタイNGは不要
+                putExtra(NgManagerActivity.EXTRA_HIDE_TITLE, true)
             }
-            .setNegativeButton("キャンセル", null)
-            .show()
+        )
     }
+
+    // showAddNgDialog はComposeに移行済みのため削除しました
 
     // =========================================================
     // ここから：ポップアップ表示（引用 / ID）と検索ヘルパー
     // =========================================================
 
     // 引用ポップアップ：> / >> / >>> など多段対応（複数候補にも対応）
-    private fun showQuotePopup(quotedText: String, quoteLevel: Int) {
-        val all = viewModel.detailContent.value ?: return
-
-        // 1) 本文に needle を含む「全Textインデックス」を集める
-        val needle = quotedText.trim().replace(Regex("\\s+"), " ")
-        val textIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text &&
-                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
-                        .toString()
-                        .replace(Regex("\\s+"), " ")
-                        .contains(needle, ignoreCase = true)
-        }.map { it.index }
-
-        if (textIndexes.isEmpty()) {
-            showToastOnUiThread("引用先が見つかりませんでした", Toast.LENGTH_SHORT)
-            return
-        }
-
-        // 2) 直後の画像/動画も同梱して収集
-        val result = mutableListOf<DetailContent>()
-        for (i in textIndexes) {
-            result += all[i]
-            var j = i + 1
-            while (j < all.size) {
-                when (val c = all[j]) {
-                    is DetailContent.Image, is DetailContent.Video -> { result += c; j++ }
-                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
-                }
-            }
-        }
-
-        val ordered = result
-            .distinctBy { it.id }
-            .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
-        showContentListBottomSheet(ordered)
-    }
-
-    // IDポップアップ：同一IDの投稿一覧（テキスト＋直後の画像/動画も同梱）
-    private fun showIdPostsPopup(id: String) {
-        val all = viewModel.detailContent.value ?: return
-        val key = "ID:$id"
-
-        // IDを含むテキストのインデックス
-        val textIndexes = all.withIndex().filter { (_, c) ->
-            c is DetailContent.Text &&
-                    Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().contains(key)
-        }.map { it.index }
-
-        if (textIndexes.isEmpty()) {
-            showToastOnUiThread("同じIDの投稿が見つかりませんでした", Toast.LENGTH_SHORT)
-            return
-        }
-
-        val result = mutableListOf<DetailContent>()
-        for (i in textIndexes) {
-            result += all[i] // テキスト本体
-
-            // 直後のメディア（次の Text/ThreadEndTime まで）を同梱
-            var j = i + 1
-            while (j < all.size) {
-                when (val c = all[j]) {
-                    is DetailContent.Image,
-                    is DetailContent.Video -> { result += c; j++ }
-                    is DetailContent.Text,
-                    is DetailContent.ThreadEndTime -> break
-                }
-            }
-        }
-
-        val ordered = result
-            .distinctBy { it.id }
-            .sortedWith(compareBy<DetailContent> { extractResNo(it) ?: Int.MAX_VALUE })
-        showContentListBottomSheet(ordered)
-    }
+    // showQuotePopup/showIdPostsPopup はComposeへ移行済み
 
     // BottomSheet に DetailAdapter で並べる（遷移は無効化）
-    private fun showContentListBottomSheet(items: List<DetailContent>) {
-        val dialog = BottomSheetDialog(this)
-        val popupAdapter = DetailAdapter().apply {
-            onQuoteClickListener = null
-            onIdClickListener = null
-            onSodaNeClickListener = null
-            onResNumClickListener = null
-            onThreadEndTimeClickListener = null
-            getSodaNeState = { false }
-            submitList(items)
-        }
+    // 旧Viewベースのシート表示やメディア一覧はComposeへ移行済み
 
-        val recycler = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@DetailActivity)
-            adapter = popupAdapter
-            // Draw dividers only at end of a block (same as other popups)
-            addItemDecoration(
-                BlockDividerDecoration(popupAdapter, context, paddingStartDp = 0, paddingEndDp = 0)
-            )
-        }
-        dialog.setContentView(recycler)
-        dialog.show()
-    }
-
-    // メディア一覧（画像のみ・3列）のシートを表示し、選択でそのレス位置へスクロール
-    private fun showMediaList() {
-        val current = detailAdapter.currentList
-        if (current.isEmpty()) {
-            Toast.makeText(this, "コンテンツがありません", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        data class ImageEntry(
-            val imageAdapterPosition: Int, // 画像アイテムの位置
-            val parentTextPosition: Int,   // 直前のレス(Text)の位置（スクロール先）
-            val url: String
-        )
-
-        fun findParentTextPosition(from: Int): Int {
-            for (i in from downTo 0) {
-                if (current[i] is DetailContent.Text) return i
-            }
-            return from
-        }
-
-        val images = mutableListOf<ImageEntry>()
-        current.withIndex().forEach { (i, c) ->
-            when (c) {
-                is DetailContent.Image -> {
-                    val parent = findParentTextPosition(i)
-                    images += ImageEntry(i, parent, c.imageUrl)
-                }
-                is DetailContent.Video -> {
-                    // 動画もグリッドに含める（CoilのVideoFrameDecoderで代表フレームを表示）
-                    val parent = findParentTextPosition(i)
-                    images += ImageEntry(i, parent, c.videoUrl)
-                }
-                else -> {}
-            }
-        }
-
-        if (images.isEmpty()) {
-            Toast.makeText(this, "画像はありません", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val dialog = BottomSheetDialog(this)
-
-        // グリッド（3列）のサムネイルアダプタ（画像のみ）
-        class ImageGridAdapter(
-            private val data: List<ImageEntry>,
-            private val onClick: (ImageEntry) -> Unit
-        ) : RecyclerView.Adapter<ImageGridAdapter.VH>() {
-            inner class VH(val iv: android.widget.ImageView) : RecyclerView.ViewHolder(iv)
-
-            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-                val ctx = parent.context
-                val density = ctx.resources.displayMetrics.density
-                val sizeDp = 110
-                val sizePx = (sizeDp * density).toInt()
-                val iv = android.widget.ImageView(ctx).apply {
-                    layoutParams = ViewGroup.MarginLayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        sizePx
-                    ).apply {
-                        val m = (4 * density).toInt()
-                        setMargins(m, m, m, m)
-                    }
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                    setBackgroundColor(0xFF222222.toInt())
-                }
-                return VH(iv)
-            }
-
-            override fun onBindViewHolder(holder: VH, position: Int) {
-                val item = data[position]
-                holder.iv.load(item.url)
-                holder.iv.setOnClickListener { onClick(item) }
-            }
-
-            override fun getItemCount(): Int = data.size
-        }
-
-        val rv = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@DetailActivity, 3)
-            setHasFixedSize(true)
-        }
-        val adapter = ImageGridAdapter(images) { entry ->
-            dialog.dismiss()
-            // そのレス位置まで移動（Text位置を優先）
-            val target = entry.parentTextPosition.takeIf { it >= 0 } ?: entry.imageAdapterPosition
-            layoutManager.scrollToPositionWithOffset(target, 0)
-        }
-        rv.adapter = adapter
-        dialog.setContentView(rv)
-        dialog.show()
-    }
-
-    // 現在のスクロール位置から「見えた最大の投稿序数」を算出して既読更新
-    private fun markViewedByCurrentScroll() {
-        // デバウンス（300ms）してバックグラウンドで実行
+    // Compose リスト用：可視最大序数が通知されたら既読を更新（デバウンスあり）
+    /**
+     * 画面上で可視となった最大序数に基づき、最終既読レス番号をデバウンス更新する。
+     */
+    private fun markViewedByOrdinal(maxOrdinal: Int) {
+        if (maxOrdinal <= 0) return
         markViewedRunnable?.let { mainHandler.removeCallbacks(it) }
         val r = Runnable {
             markViewedJob?.cancel()
-            markViewedJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            markViewedJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val url = currentUrl ?: return@launch
-                val list = viewModel.detailContent.value ?: return@launch
-                if (list.isEmpty()) return@launch
-                val maxOrdinal = computeMaxVisiblePostOrdinal(list)
-                if (maxOrdinal <= 0) return@launch
-                withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val current = HistoryManager.getAll(this@DetailActivity).firstOrNull { it.url == url }
-                    val curViewed = current?.lastViewedReplyNo ?: 0
-                    if (maxOrdinal > curViewed) {
-                        HistoryManager.markViewed(this@DetailActivity, url, maxOrdinal)
-                    }
+                val current = HistoryManager.getAll(this@DetailActivity).firstOrNull { it.url == url }
+                val curViewed = current?.lastViewedReplyNo ?: 0
+                if (maxOrdinal > curViewed) {
+                    HistoryManager.markViewed(this@DetailActivity, url, maxOrdinal)
                 }
             }
         }
@@ -962,45 +483,16 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         mainHandler.postDelayed(r, 300L)
     }
 
-    // 画面に50%以上見えているアイテムから、その所属する投稿（Text単位）の序数を計算し、その最大値を返す
-    private fun computeMaxVisiblePostOrdinal(items: List<DetailContent>): Int {
-        val first = layoutManager.findFirstVisibleItemPosition()
-        val last = layoutManager.findLastVisibleItemPosition()
-        if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) return 0
-        var maxOrdinal = 0
-        for (pos in first..last) {
-            val v = layoutManager.findViewByPosition(pos) ?: continue
-            val visible = android.graphics.Rect()
-            val isVisible = v.getLocalVisibleRect(visible)
-            if (!isVisible) continue
-            val ratio = visible.height().toFloat() / (v.height.takeIf { it > 0 } ?: 1)
-            if (ratio < 0.5f) continue
-            val ordinal = postOrdinalForAdapterPosition(items, pos)
-            if (ordinal > maxOrdinal) maxOrdinal = ordinal
-        }
-        // 一番下まで到達している場合の補正（見切れている末尾を既読にしやすく）
-        val contentLastIndex = findLastContentAdapterIndex()
-        if (last >= contentLastIndex) {
-            val lastOrdinal = postOrdinalForAdapterPosition(items, contentLastIndex)
-            if (lastOrdinal > maxOrdinal) maxOrdinal = lastOrdinal
-        }
-        return maxOrdinal
-    }
-
-    // 与えられたアダプタ位置が属する投稿（Text単位）の序数（1始まり）を返す
-    private fun postOrdinalForAdapterPosition(items: List<DetailContent>, pos: Int): Int {
-        if (pos < 0 || pos >= items.size) return 0
-        var ordinal = 0
-        var i = 0
-        while (i <= pos && i < items.size) {
-            if (items[i] is DetailContent.Text) ordinal++
-            i++
-        }
-        // もし pos が Text 以外（画像/動画）の場合でも、直前の Text にぶら下げた投稿としてカウントされる
-        return ordinal
-    }
+    // 既読更新（Compose版）は onVisibleMaxOrdinal -> markViewedByOrdinal に統一
 
     // 「No.xxx」「ファイル名」「本文一部」いずれかで対象を検索
+    /**
+     * クエリ文字列に基づき対象コンテンツを検索する。
+     * サポート:
+     * 1) 本文中の "No.<番号>" マッチ
+     * 2) 画像/動画のファイル名またはURL末尾の一致
+     * 3) 本文プレーンテキストの部分一致（大文字小文字無視）
+     */
     private fun findContentByText(all: List<DetailContent>, searchText: String): DetailContent? {
         // 1) No.\d+
         Regex("""No\.(\d+)""").find(searchText)?.groupValues?.getOrNull(1)?.let { num ->
@@ -1030,6 +522,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     // 行頭が '>' 1個の引用行（最初の1つ）を返す（旧：単一版）
+    /** 行頭が '>' 1個の引用行（最初の1つ）を抽出する。 */
     private fun extractFirstLevelQuoteCore(item: DetailContent.Text): String? {
         val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         val m = Regex("^>([^>].+)$", RegexOption.MULTILINE).find(plain)
@@ -1037,6 +530,7 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
     }
 
     // 行頭が '>' 1個の引用行を「複数」返す（多段で複数候補がある場合に使用）
+    /** 行頭が '>' 1個の引用行（複数）をすべて抽出する。 */
     private fun extractFirstLevelQuoteCores(item: DetailContent.Text): List<String> {
         val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
         return Regex("^>([^>].+)$", RegexOption.MULTILINE)
@@ -1050,170 +544,21 @@ class DetailActivity : BaseActivity(), SearchManagerCallback {
         runOnUiThread { Toast.makeText(this, message, duration).show() }
     }
 
-    private fun confirmAndDelete(resNum: String) {
-        val pwd = AppPreferences.getPwd(this) ?: ""
-        val threadUrl = currentUrl ?: return
-        val boardBase = threadUrl.substringBeforeLast("/").substringBeforeLast("/") + "/"
-        val postUrl = boardBase + "futaba.php?guid=on"
+    // 削除確認ダイアログはCompose側に統一
 
-        // 削除方法を選択するダイアログ
-        AlertDialog.Builder(this)
-            .setTitle("No.$resNum の削除")
-            .setMessage("削除方法を選択してください")
-            .setPositiveButton("画像のみ削除") { _, _ ->
-                viewModel.deletePost(
-                    postUrl = postUrl,
-                    referer = threadUrl,
-                    resNum = resNum,
-                    pwd = pwd,
-                    onlyImage = true,
-                )
-            }
-            .setNeutralButton("レスごと削除") { _, _ ->
-                viewModel.deletePost(
-                    postUrl = postUrl,
-                    referer = threadUrl,
-                    resNum = resNum,
-                    pwd = pwd,
-                    onlyImage = false,
-                )
-            }
-            .setNegativeButton("キャンセル", null)
-            .show()
-    }
+    // RecyclerView末尾探索は不要
 
-    private fun extractResNo(c: DetailContent): Int? = when (c) {
-        is DetailContent.Text -> {
-            val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-            Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
-        }
-        else -> null
-    }
-
-    // 末尾の ThreadEndTime を除いた「実質の最終アダプタ位置」を返す
-    private fun findLastContentAdapterIndex(): Int {
-        val list = viewModel.detailContent.value ?: return -1
-        // 末尾から走査して Text/Image/Video の最終位置を返す
-        for (i in list.size - 1 downTo 0) {
-            when (list[i]) {
-                is DetailContent.Text, is DetailContent.Image, is DetailContent.Video -> return i
-                else -> {}
-            }
-        }
-        return -1
-    }
-
-    // 末尾の ThreadEndTime を1件だけ残す
-    private fun normalizeThreadEndTime(src: List<DetailContent>): List<DetailContent> {
-        val endIndexes = src.withIndex()
-            .filter { it.value is DetailContent.ThreadEndTime }
-            .map { it.index }
-
-        if (endIndexes.isEmpty()) return src
-        val keepIndex = endIndexes.last()
-
-        val out = ArrayList<DetailContent>(src.size - (endIndexes.size - 1))
-        for ((i, item) in src.withIndex()) {
-            if (item is DetailContent.ThreadEndTime) {
-                if (i == keepIndex) out += item
-            } else {
-                out += item
-            }
-        }
-        return out
-    }
+    // ThreadEndTime の表示正規化は Compose 側に統一
 
     // レス数（Text/Image/Video の件数）を返す
     private fun countPostItems(): Int {
-        val list = viewModel.detailContent.value ?: return 0
+        val list = viewModel.detailContent.value
         return list.count { it is DetailContent.Text || it is DetailContent.Image || it is DetailContent.Video }
     }
 
-    // 追加：No の参照（引用）を一覧表示
-    private fun showResReferencesPopup(resNum: String) {
-        val all = viewModel.detailContent.value ?: return
-        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-            val hitIndexes = all.withIndex().filter { (_, c) ->
-                c is DetailContent.Text && matchesResRefCached(c, resNum)
-            }.map { it.index }
-
-            if (hitIndexes.isEmpty()) {
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    Toast.makeText(this@DetailActivity, "No.$resNum の引用は見つかりませんでした", Toast.LENGTH_SHORT).show()
-                }
-                return@launch
-            }
-
-            val groups = mutableListOf<List<DetailContent>>()
-            for (i in hitIndexes) {
-                val group = mutableListOf<DetailContent>()
-                group += all[i]
-                var j = i + 1
-                while (j < all.size) {
-                    when (val c = all[j]) {
-                        is DetailContent.Image, is DetailContent.Video -> { group += c; j++ }
-                        is DetailContent.Text, is DetailContent.ThreadEndTime -> break
-                    }
-                }
-                groups += group
-            }
-
-            val distinctGroups = groups.distinctBy { it.firstOrNull()?.id }
-
-            // レス番号順に整序
-            val ordered = distinctGroups
-                .sortedWith(compareBy<List<DetailContent>> { grp ->
-                    val head = grp.firstOrNull()
-                    when (head) {
-                        null -> Int.MAX_VALUE
-                        else -> extractResNo(head) ?: Int.MAX_VALUE
-                    }
-                })
-                .flatten()
-
-            withContext(kotlinx.coroutines.Dispatchers.Main) { showContentListBottomSheet(ordered) }
-        }
-    }
+    // 参照一覧のUIはComposeに統一（Activity側UIなし）
 
     // 追加: 共通のマッチ関数
-    private fun matchesResRefCached(text: DetailContent.Text, resNum: String): Boolean {
-        val plain = plainTextCache[text.id] ?: Html.fromHtml(text.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-
-        // 見た目の差異を吸収（ZWSP, 全角, 記号類）
-        val norm = Normalizer.normalize(
-            plain
-                .replace("\u200B", "")  // ZWSP除去
-                .replace('　', ' ')      // 全角空白→半角
-                .replace('＞', '>')      // 全角> → >
-                .replace('≫', '>')      // ≫    → >
-            , Normalizer.Form.NFKC
-        )
-
-        val esc = Regex.escape(resNum)
-
-        val textPatterns = listOf(
-            // 1) No. の直接表記: "No.1234", "No 1234", "no.1234"
-            Regex("""\bNo\.?\s*$esc\b""", RegexOption.IGNORE_CASE),
-
-            // 2) 引用表記（行頭に '>' が1つ以上）
-            //    ">No.1234", ">>1234", ">>> No.1234" など
-            Regex("""^>+\s*(?:No\.?\s*)?$esc\b""",
-                setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE)),
-
-            // 3) 行頭以外でも ">>1234" / ">> No.1234" を拾う（安全側）
-            Regex("""\B>+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE),
-
-            // 4) 裸の数字（前後が数字じゃない）—必要な場合のみ残す
-            Regex("""(?<!\d)$esc(?!\d)""")
-        )
-        if (textPatterns.any { it.containsMatchIn(norm) }) return true
-
-        // HTML実体化や属性での参照（保険）
-        val htmlPatterns = listOf(
-            Regex("""data-res\s*=\s*["']\s*$esc\s*["']""", RegexOption.IGNORE_CASE),
-            Regex("""&gt;+\s*(?:No\.?\s*)?$esc\b""", RegexOption.IGNORE_CASE) // &gt;&gt;No.1234
-        )
-        return htmlPatterns.any { it.containsMatchIn(text.htmlContent) }
-    }
+    // 引用参照の一致判定はCompose側で実施（ここでは未使用）
 
 }

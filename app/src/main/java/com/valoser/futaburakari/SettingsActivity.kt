@@ -1,47 +1,23 @@
 package com.valoser.futaburakari
 
 import android.os.Bundle
-import com.valoser.futaburakari.databinding.ActivitySettingsBinding
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.activity.compose.setContent
+import com.valoser.futaburakari.ui.compose.SettingsScreen
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
+/**
+ * アプリの設定画面を表示する `Activity`。
+ * Jetpack Compose の `SettingsScreen` を表示し、戻る操作は `onBackPressedDispatcher` に委譲する。
+ */
 class SettingsActivity : BaseActivity() {
-
-    private lateinit var binding: ActivitySettingsBinding
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivitySettingsBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-
-        // Pad toolbar for status bar insets (edge-to-edge)
-        run {
-            val tb = binding.toolbar
-            val origTop = tb.paddingTop
-            ViewCompat.setOnApplyWindowInsetsListener(tb) { v, insets ->
-                val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-                v.setPadding(v.paddingLeft, origTop + top, v.paddingRight, v.paddingBottom)
-                WindowInsetsCompat.CONSUMED
+        setContent {
+            FutaburakariTheme(expressive = true) {
+                // 戻る操作は onBackPressedDispatcher に委譲。
+                SettingsScreen(onBack = { onBackPressedDispatcher.onBackPressed() })
             }
-        }
-
-        if (savedInstanceState == null) {
-            supportFragmentManager
-                .beginTransaction()
-                .replace(R.id.settings_container, SettingsFragment())
-                .commit()
-        }
-
-        // Pad container for bottom system bars
-        val container = binding.settingsContainer
-        val orig = container.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
-            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, orig + sys.bottom)
-            WindowInsetsCompat.CONSUMED
         }
     }
 }

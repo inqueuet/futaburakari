@@ -25,6 +25,23 @@ import com.valoser.futaburakari.cache.DetailCacheManager
 import okhttp3.Request
 import java.io.File
 
+/**
+ * 背景でスレURLを監視し、媒体のアーカイブとキャッシュ/履歴更新を行うWorker。
+ *
+ * スケジューリング:
+ * - URLごとにユニークなOneTimeWorkとして起動。成功後は設定が有効なら再スケジュール。
+ * - 即時スナップショット取得にも対応（設定ON/OFFに関係なく実行）。
+ *
+ * 主な処理:
+ * 1) HTMLを取得・パースして Text/Image/Video の直列リストを作成。
+ * 1.5) 既存のキャッシュ/スナップショットから `prompt` をマージ（nullでの上書きを防止）。
+ * 2) 媒体を内部ストレージへ保存し、URLを file:// に差し替え。
+ * 3) キャッシュ/スナップショットを保存し、履歴（サムネ/最新レス番号）を更新。
+ *
+ * 備考:
+ * - 本Worker自身は新規のメタデータ抽出は行わず、既存の `prompt` を温存する戦略を採用。
+ * - プロンプトの抽出/補完はUI側（`DetailViewModel`）が段階的に行い、保存も併用。
+ */
 @HiltWorker
 class ThreadMonitorWorker @AssistedInject constructor(
     @Assisted appContext: Context,
@@ -32,19 +49,20 @@ class ThreadMonitorWorker @AssistedInject constructor(
     private val networkClient: NetworkClient,
 ) : CoroutineWorker(appContext, params) {
 
+    /**
+     * 監視タスク本体。
+     * - スレHTMLを取得・パースし、媒体をアーカイブ（file://へ置換）。
+     * - 既存キャッシュ/スナップショットの `prompt` をマージしてから保存（nullでの上書きを防止）。
+     * - 履歴（サムネイル/最新レス番号）を更新し、必要に応じて再スケジュール。
+     * - 404はdat落ちとみなし停止。その他のIOエラー時はポリシーに従い再試行。
+     */
     override suspend fun doWork(): Result {
         val url = inputData.getString(KEY_URL) ?: return Result.success()
         val oneShot = inputData.getBoolean(KEY_ONE_SHOT, false)
 
-        // 設定が無効なら即終了
-        val prefs = applicationContext.getSharedPreferences(PREFS_BG, Context.MODE_PRIVATE)
-        if (!oneShot) {
-            if (!prefs.getBoolean(KEY_BG_ENABLED, false)) {
-                return Result.success()
-            }
-        }
+        // 常時有効（ユーザー設定での無効化はなし）
 
-        // 履歴に無いスレッドは監視しない
+        // 履歴に無いスレッドは監視しない（存在しない場合はユニーク作業も停止）
         val key = UrlNormalizer.threadKey(url)
         val inHistory = try {
             HistoryManager.getAll(applicationContext).any { it.key == key }
@@ -67,11 +85,41 @@ class ThreadMonitorWorker @AssistedInject constructor(
             // 1) パース（UI側と同等の簡易ロジック）
             val parsed = parseContentFromDocument(doc, url)
 
-            // 2) メディアを内部保存し、ローカルパスへ差し替え
-            val archived = archiveMedia(applicationContext, url, parsed)
+            // 1.5) 既存キャッシュ/スナップショットのプロンプトをマージ（nullでの上書きを防止）
+            val cacheMgr = DetailCacheManager(applicationContext)
+            val existing: List<DetailContent>? = cacheMgr.loadDetails(url) ?: cacheMgr.loadArchiveSnapshot(url)
+            val merged = if (existing.isNullOrEmpty()) parsed else run {
+                val promptByName: Map<String, String> = existing.mapNotNull { dc ->
+                    when (dc) {
+                        is DetailContent.Image -> dc.fileName?.let { fn -> dc.prompt?.let { fn to it } }
+                        is DetailContent.Video -> dc.fileName?.let { fn -> dc.prompt?.let { fn to it } }
+                        else -> null
+                    }
+                }.toMap()
+                parsed.map { dc ->
+                    when (dc) {
+                        is DetailContent.Image -> {
+                            if (!dc.prompt.isNullOrBlank()) dc else {
+                                val p = dc.fileName?.let { promptByName[it] }
+                                if (p != null) dc.copy(prompt = p) else dc
+                            }
+                        }
+                        is DetailContent.Video -> {
+                            if (!dc.prompt.isNullOrBlank()) dc else {
+                                val p = dc.fileName?.let { promptByName[it] }
+                                if (p != null) dc.copy(prompt = p) else dc
+                            }
+                        }
+                        else -> dc
+                    }
+                }
+            }
+
+            // 2) メディアを内部保存し、ローカル file: URI に差し替え（マージ後のリストを使用）
+            val archived = archiveMedia(applicationContext, url, merged)
 
             // 3) キャッシュへ保存（置き換え保存） + アーカイブスナップショット保存
-            val cm = DetailCacheManager(applicationContext)
+            val cm = cacheMgr
             cm.saveDetails(url, archived)
             cm.saveArchiveSnapshot(url, archived)
 
@@ -96,7 +144,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             if (!oneShot) schedule(applicationContext, url)
             Result.success()
         } catch (e: java.io.IOException) {
-            // fetchDocumentは非200でIOExceptionを投げる
+            // fetchDocument は非200で IOException を投げることがある
             val msg = e.message ?: ""
             if (msg.contains("HTTPエラー: 404")) {
                 // dat落ち（404）とみなし停止
@@ -122,17 +170,18 @@ class ThreadMonitorWorker @AssistedInject constructor(
     companion object {
         private const val KEY_URL = "url"
         private const val KEY_ONE_SHOT = "one_shot"
-        const val PREFS_BG = "com.valoser.futaburakari.bg"
-        const val KEY_BG_ENABLED = "pref_key_bg_monitor_enabled"
+        // removed: background toggle prefs (always enabled)
 
         private fun uniqueName(url: String): String = "monitor-" + UrlNormalizer.threadKey(url)
         private fun uniqueNameLegacy(url: String): String = "monitor-" + UrlNormalizer.legacyThreadKey(url)
         private fun uniqueNameFromKey(key: String): String = "monitor-" + key
 
+        /**
+         * 指定したスレURLの監視を一回分スケジュールする。
+         * - 正規化したスレッドキーからユニーク名を生成し、既存の同名Workを置き換える。
+         * - 短い初期待機を設定し、ネットワーク接続（CONNECTED）を要求する。
+         */
         fun schedule(context: Context, url: String) {
-            val prefs = context.getSharedPreferences(PREFS_BG, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean(KEY_BG_ENABLED, false)) return
-
             val data = workDataOf(KEY_URL to url)
             val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
                 .setInitialDelay(1, TimeUnit.MINUTES)
@@ -152,7 +201,11 @@ class ThreadMonitorWorker @AssistedInject constructor(
             )
         }
 
-        // 即時に単発のスナップショット取得（設定ON/OFFに関係なく実行）
+        /**
+         * 即時に単発のスナップショット取得。
+         * - Expedited リクエスト（クォータ不足時は非Expeditedで実行）。
+         * - ユニーク名は `snapshot-<threadKey>` を使用し、既存を置き換える。
+         */
         fun snapshotNow(context: Context, url: String) {
             val data = workDataOf(KEY_URL to url, KEY_ONE_SHOT to true)
             val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
@@ -169,28 +222,45 @@ class ThreadMonitorWorker @AssistedInject constructor(
             WorkManager.getInstance(context).enqueueUniqueWork(unique, ExistingWorkPolicy.REPLACE, req)
         }
 
+        /**
+         * タグ `thread-monitor` の全Workをキャンセル。
+         */
         fun cancelAll(context: Context) {
             WorkManager.getInstance(context).cancelAllWorkByTag("thread-monitor")
         }
 
+        /**
+         * URLに紐づくユニークWorkをキャンセル（現行キー／互換キーの両方）。
+         */
         fun cancelByUrl(context: Context, url: String) {
             val wm = WorkManager.getInstance(context)
             wm.cancelUniqueWork(uniqueName(url))
             wm.cancelUniqueWork(uniqueNameLegacy(url))
         }
 
+        /**
+         * 正規化済みスレッドキーからユニークWorkをキャンセル。
+         */
         fun cancelByKey(context: Context, key: String) {
             WorkManager.getInstance(context).cancelUniqueWork(uniqueNameFromKey(key))
         }
     }
 
-    private fun isMediaUrl(href: String): Boolean {
+        /** サポートされている画像/動画拡張子で終わるURLなら true を返す。 */
+        private fun isMediaUrl(href: String): Boolean {
         val lower = href.lowercase()
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
                 lower.endsWith(".gif") || lower.endsWith(".webp") ||
                 lower.endsWith(".mp4") || lower.endsWith(".webm")
     }
 
+    /**
+     * スレッドHTMLを直列の `DetailContent` リストへ変換する。
+     * - 先頭のOPブロック（index 0）と、`.rtd` 周辺の table をたどって各返信ブロックを抽出
+     * - 本文テキストはインラインの <img> を除去してHTML文字列として保持
+     * - `target=_blank` かつメディア拡張子を指すリンクがあれば、絶対URLに解決した Image/Video を1件追加
+     * - `contdisp` を含む script タグを走査してスレ終了時刻をベストエフォートで検出
+     */
     private fun parseContentFromDocument(document: Document, baseUrl: String): List<DetailContent> {
         val result = mutableListOf<DetailContent>()
         var textId = 0L
@@ -230,7 +300,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             }
         }
 
-        // thread end time (best-effort; optional)
+        // スレ終了時刻の検出（ベストエフォート・任意）
         val scriptElements = document.select("script")
         for (script in scriptElements) {
             val data = script.data()
@@ -248,6 +318,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
         return result
     }
 
+    /**
+     * 媒体をスレッド別のアーカイブディレクトリに保存し、URLをローカル file URI に差し替える。
+     * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略。
+     */
     private suspend fun archiveMedia(context: Context, threadUrl: String, list: List<DetailContent>): List<DetailContent> {
         val cache = DetailCacheManager(context)
         val dir = cache.getArchiveDirForUrl(threadUrl)
@@ -284,6 +358,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
         }
     }
 
+    /** 文字列のSHA-256（16進表現）。アーカイブのファイル名に使用。 */
     private fun String.sha256(): String {
         return java.security.MessageDigest
             .getInstance("SHA-256")

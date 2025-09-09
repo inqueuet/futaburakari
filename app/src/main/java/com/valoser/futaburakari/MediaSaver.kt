@@ -12,6 +12,15 @@ import kotlinx.coroutines.withContext
 import android.net.Uri
  
 
+/**
+ * 画像/動画をMediaStoreへ保存するユーティリティ。
+ *
+ * - Android 10以降は `RELATIVE_PATH` + `IS_PENDING` を利用してブランドフォルダ（`Futaburakari`）配下へ保存
+ * - Android 9以前は `MediaColumns.DATA` によるパス指定で同フォルダを作成して保存
+ * - `file://`/`content://` はローカルコピー、`http(s)://` は `NetworkClient` でダウンロード
+ * - 拡張子からMIMEを推測（不明時は既定値）
+ * - 成否はトーストで通知
+ */
 object MediaSaver {
 
     suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
@@ -38,6 +47,7 @@ object MediaSaver {
         )
     }
 
+    // 共通の保存処理（画像/動画）。呼び出し元で種別に応じたURIとベースディレクトリを指定する。
     private suspend fun saveMedia(
         context: Context,
         url: String,
@@ -54,11 +64,11 @@ object MediaSaver {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        // Save under brand folder to align with ImageEditActivity
+                        // ImageEditActivity と同じブランドフォルダ配下に保存（RELATIVE_PATH）
                         put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     } else {
-                        // Pre-Q: ensure the target brand folder path via DATA
+                        // Pre-Q: DATA で保存先パスを直接指定。必要ならブランドフォルダを作成。
                         @Suppress("DEPRECATION")
                         val base = Environment.getExternalStoragePublicDirectory(relativeBaseDir)
                         val brandDir = java.io.File(base, "Futaburakari")
@@ -76,7 +86,7 @@ object MediaSaver {
                     return@withContext
                 }
 
-                // ファイルをコピーして書き込む（file:// はローカルコピー、http(s) はダウンロード）
+                // 実体を書き出す：file/content はローカルコピー、http(s) はダウンロード
                 resolver.openOutputStream(uri).use { outputStream ->
                     if (outputStream == null) {
                         showToast(context, "ファイルの保存に失敗しました。")
@@ -116,12 +126,14 @@ object MediaSaver {
         }
     }
 
+    // 拡張子からMIME Typeを推測し、取得できなければ既定値を返す
     private fun getMimeTypeOrDefault(url: String, defaultMime: String): String {
         val extension = MimeTypeMap.getFileExtensionFromUrl(url)
         val guessed = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
         return guessed ?: defaultMime
     }
 
+    // 画像用のMediaStoreコンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）
     private fun imagesContentUri(): Uri {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -130,6 +142,7 @@ object MediaSaver {
         }
     }
 
+    // 動画用のMediaStoreコンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）
     private fun videosContentUri(): Uri {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -138,6 +151,7 @@ object MediaSaver {
         }
     }
 
+    // Toast 表示は Main ディスパッチャで行う
     private suspend fun showToast(context: Context, message: String) {
         withContext(Dispatchers.Main) {
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()

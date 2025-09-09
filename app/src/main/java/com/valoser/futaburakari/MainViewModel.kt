@@ -14,24 +14,39 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.nodes.Document
+import org.jsoup.Jsoup
 import java.net.URL
 import javax.inject.Inject
 
 @HiltViewModel
+/**
+ * カタログ取得・解析・整形を担う ViewModel。
+ *
+ * - HTMLを取得し、`#cattable` 優先で解析（なければ cgi 風フォールバック）
+ * - プレビュー画像URLの検証/補正、フルサイズ画像URLの推測・補完を行う
+ * - 進行状態とエラーを LiveData で公開
+ * - タイトル整形: カタログの `<small>` から取得するタイトルは、先頭の `<br>` 以前（1 行目）のみを採用
+ *   （Jsoup でタグ除去してプレーン化）。cgi/旧サーバの経路でも同様に 1 行化。
+ *   - これにより DetailActivity 側では TopBar タイトルが常に 1 行に収まる（「スレ」などの更なる整形は詳細画面側で実施）。
+ */
 class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
     private val _images = MutableLiveData<List<ImageItem>>()
+    // 画面表示用アイテム一覧
     val images: LiveData<List<ImageItem>> = _images
 
     private val _error = MutableLiveData<String>()
+    // エラー時のメッセージ
     val error: LiveData<String> = _error
 
     private val _isLoading = MutableLiveData<Boolean>()
+    // 通信/解析中フラグ
     val isLoading: LiveData<Boolean> = _isLoading
 
+    // プレビューURLからフル画像URLを推測（thumb/cat -> src、末尾の s. を通常拡張に）
     private fun guessFullFromPreview(previewUrl: String): String? {
         return try {
             var s = previewUrl
@@ -44,6 +59,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    // HEADでURLの存在確認（IOディスパッチャ実行）
     private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(url).head().build()
         runCatching {
@@ -53,6 +69,7 @@ class MainViewModel @Inject constructor(
         }.getOrDefault(false)
     }
 
+    // フル画像URLを補完：推測→HEAD検証→不足分は詳細HTMLから /src/ を抽出
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
@@ -91,7 +108,7 @@ class MainViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val document = networkClient.fetchDocument(url)
-                // ★修正点: urlを渡して解析方法を切り替え
+                // URLに応じて解析手段を切り替え（#cattable 優先 → 準備ページは空 → cgi フォールバック）
                 val baseItems = parseItemsFromDocument(document, url)
                 val previewSafe = validatePreviewUrls(baseItems)
                 val enriched = enrichWithFullImages(previewSafe)
@@ -108,7 +125,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val document = networkClient.fetchDocument(url)
-                // ★修正点: urlを渡して解析方法を切り替え
+                // 解析手段の切り替えは同様。既存のfullImageUrlを引き継ぎ、不足分のみ補完する。
                 val newItemList = parseItemsFromDocument(document, url)
                 val currentItems = _images.value ?: emptyList()
                 val currentMapByDetail = currentItems.associateBy { it.detailUrl }
@@ -140,8 +157,8 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * ドキュメントからImageItemのリストを解析する
-     * URLに応じて適切なパーサーに処理を振り分ける
+     * ドキュメントから ImageItem のリストを解析する。
+     * 構造に応じて処理を振り分け（#cattable 優先、準備ページは空、なければ cgi 風フォールバック）。
      */
     private fun parseItemsFromDocument(document: Document, url: String): List<ImageItem> {
         // 1) まず #cattable を最優先（cgi でも普通に存在する）
@@ -155,7 +172,8 @@ class MainViewModel @Inject constructor(
         return parseCgiFallback(document)
     }
 
-    // 追加：#cattable 用パーサ（旧 parseForStandardServer の実質改名）
+    // #cattable 用パーサ（旧実装の整理版）。
+    // <img> が無い行は res/{id}.htm からIDを抜き、候補URLを1つ構築（後段で検証）。
     private fun parseFromCattable(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
         val cells = document.select("#cattable td")
@@ -185,7 +203,7 @@ class MainViewModel @Inject constructor(
             if (imageUrl.isNullOrEmpty()) continue
 
             // タイトル・レス数（無ければ空でOK）
-            val title = cell.selectFirst("small")?.text() ?: ""
+            val title = firstLineFromSmall(cell.selectFirst("small"))
             val replies = cell.selectFirst("font")?.text() ?: ""
 
             parsedItems.add(
@@ -201,6 +219,7 @@ class MainViewModel @Inject constructor(
         return parsedItems
     }
 
+    // サムネイル候補（cat/thumb の拡張子違い）を列挙
     private fun buildCatalogThumbCandidates(detailUrl: String): List<String> {
         val m = Regex("""/res/(\d+)\.htm""").find(detailUrl) ?: return emptyList()
         val id = m.groupValues[1]
@@ -215,6 +234,21 @@ class MainViewModel @Inject constructor(
         )
     }
 
+    // small 要素から <br> より前の一行目を抽出してプレーンテキスト化
+    // - 例: "タイトル<br>サブタイトル" → "タイトル"
+    // - `<br>` が無い場合は全体をプレーン化して trim のみ
+    private fun firstLineFromSmall(small: org.jsoup.nodes.Element?): String {
+        val html = small?.html() ?: return ""
+        val idx = html.indexOf("<br", ignoreCase = true)
+        val head = if (idx >= 0) html.substring(0, idx) else html
+        return try {
+            Jsoup.parse(head).text().trim()
+        } catch (_: Exception) {
+            head.replace(Regex("<[^>]+>"), "").trim()
+        }
+    }
+
+    // プレビューURLをHEADで検証し、無効なら候補から有効なものに置換
     private suspend fun validatePreviewUrls(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val limited = Dispatchers.IO.limitedParallelism(4)
@@ -242,7 +276,7 @@ class MainViewModel @Inject constructor(
             val imgTag = linkTag.selectFirst("img") ?: continue
             val imageUrl = imgTag.absUrl("src")
             val detailUrl = linkTag.absUrl("href")
-            val infoText = linkTag.parent()?.selectFirst("small")?.text() ?: ""
+            val infoText = firstLineFromSmall(linkTag.parent()?.selectFirst("small"))
             if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
                 parsedItems.add(
                     ImageItem(
@@ -259,8 +293,7 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 標準的なサーバーおよびお絵かき系サーバー用のパーサー
-     * #cattable を探し、タグの欠損に寛容なロジックで解析する
+     * [Legacy] 旧・標準サーバー用パーサ（未使用）。互換のため残置。
      */
     private fun parseForStandardServer(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
@@ -276,7 +309,7 @@ class MainViewModel @Inject constructor(
                 val detailUrl = linkTag.absUrl("href")
 
                 // タイトルとレス数は存在すれば取得し、なければ空文字にする
-                val title = cell.selectFirst("small")?.text() ?: ""
+                val title = firstLineFromSmall(cell.selectFirst("small"))
                 val replies = cell.selectFirst("font")?.text() ?: ""
 
                 if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
@@ -296,8 +329,7 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * cgi.2chan.net サーバー用のパーサー
-     * こちらは #cattable を持たないため、異なるセレクタで解析する
+     * [Legacy] 旧・cgi サーバー用パーサ（未使用）。互換のため残置。
      */
     private fun parseForCgiServer(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
@@ -311,7 +343,7 @@ class MainViewModel @Inject constructor(
                 val detailUrl = linkTag.absUrl("href")
 
                 // cgiサーバーでは、関連情報が <small> タグに入っていることが多い
-                val infoText = linkTag.parent()?.selectFirst("small")?.text() ?: ""
+                val infoText = firstLineFromSmall(linkTag.parent()?.selectFirst("small"))
 
                 if (imageUrl.isNotEmpty() && detailUrl.isNotEmpty()) {
                     parsedItems.add(

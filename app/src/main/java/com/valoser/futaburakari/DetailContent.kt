@@ -1,14 +1,13 @@
 package com.valoser.futaburakari
 
-// import java.util.UUID // ViewModelでIDを生成する場合、ここでは不要になることもあります
-
 /**
- * DetailActivityのRecyclerViewで表示するコンテンツを表すSealed Class。
- * テキストか画像かを区別するために使用します。
+ * スレ詳細画面（Composeリスト）およびキャッシュ層で扱うコンテンツの共通モデル。
+ * Image/Text/Video/ThreadEndTime などの種類を識別するための sealed クラス。
  */
 sealed class DetailContent {
     abstract val id: String
 
+    /** 画像コンテンツ。`imageUrl` は実体へのURL。`prompt` は説明やALT相当、`fileName` は任意。 */
     data class Image(
         override val id: String,
         val imageUrl: String,
@@ -16,11 +15,14 @@ sealed class DetailContent {
         val fileName: String? = null
     ) : DetailContent()
 
-    data class Text(
+        /** HTML本文を含むテキストコンテンツ。`resNum` は投稿番号等（任意）。 */
+        data class Text(
         override val id: String,
-        val htmlContent: String
+        val htmlContent: String,
+        val resNum: String? = null
     ) : DetailContent()
 
+    /** 動画コンテンツ。`videoUrl` は実体へのURL。`prompt` と `fileName` は任意。 */
     data class Video(
         override val id: String,
         val videoUrl: String,
@@ -28,5 +30,6 @@ sealed class DetailContent {
         val fileName: String? = null
     ) : DetailContent()
 
+    /** スレ終了時刻の表示用メタ情報。 */
     data class ThreadEndTime(override val id: String, val endTime: String) : DetailContent()
 }
