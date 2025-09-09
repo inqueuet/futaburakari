@@ -41,7 +41,7 @@ object NetworkModule {
             // 同時接続数を抑制（特にホスト単位）。Coil等の並列アクセスを穏やかにする
             val dispatcher = Dispatcher().apply {
                 maxRequests = 16
-                maxRequestsPerHost = 1
+                maxRequestsPerHost = 2
             }
 
             OkHttpClient.Builder()
