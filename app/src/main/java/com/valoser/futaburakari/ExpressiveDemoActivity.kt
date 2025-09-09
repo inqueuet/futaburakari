@@ -17,6 +17,10 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
  * - 構成要素の実装は `ui.expressive` パッケージ（例: `ExpressiveShowcaseScreen`）にあります。
  */
 class ExpressiveDemoActivity : ComponentActivity() {
+    /**
+     * Expressive ショーケースを起動し、テーマを適用した Compose UI を構築する。
+     * 実運用向けではなく、開発時の見た目検証用エントリ。
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

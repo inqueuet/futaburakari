@@ -239,7 +239,7 @@ fun DetailScreenScaffold(
             // UI をブロックしないためのスコープ（重い集計はメインスレッド外で実行）
             val scope = rememberCoroutineScope()
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
-            // Hoisted "そうだね" 表示カウント
+            // 上位に持ち上げた（hoisted）「そうだね」表示カウント
             val sodaneCounts = remember { androidx.compose.runtime.mutableStateMapOf<String, Int>() }
             LaunchedEffect(sodaneUpdates) {
                 sodaneUpdates?.let { flow ->

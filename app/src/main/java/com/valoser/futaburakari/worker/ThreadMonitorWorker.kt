@@ -26,21 +26,21 @@ import okhttp3.Request
 import java.io.File
 
 /**
- * 背景でスレURLを監視し、媒体のアーカイブとキャッシュ/履歴更新を行うWorker。
+ * 背景でスレ URL を監視し、媒体のアーカイブとキャッシュ/履歴更新を行う Worker。
  *
  * スケジューリング:
- * - URLごとにユニークなOneTimeWorkとして起動。成功後は設定が有効なら再スケジュール。
- * - 即時スナップショット取得にも対応（設定ON/OFFに関係なく実行）。
+ * - URL ごとにユニークな OneTimeWork として起動。成功後は設定が有効なら再スケジュール。
+ * - 即時スナップショット取得にも対応（設定 ON/OFF に関係なく実行）。
  *
  * 主な処理:
- * 1) HTMLを取得・パースして Text/Image/Video の直列リストを作成。
- * 1.5) 既存のキャッシュ/スナップショットから `prompt` をマージ（nullでの上書きを防止）。
- * 2) 媒体を内部ストレージへ保存し、URLを file:// に差し替え。
- * 3) キャッシュ/スナップショットを保存し、履歴（サムネ/最新レス番号）を更新。
+ * 1) HTML を取得・パースして Text/Image/Video の直列リストを作成
+ * 1.5) 既存のキャッシュ/スナップショットから `prompt` をマージ（null での上書きを防止）
+ * 2) 媒体を内部ストレージへ保存し、URL を file:// に差し替え
+ * 3) キャッシュ/スナップショットを保存し、履歴（サムネ/最新レス番号）を更新
  *
  * 備考:
- * - 本Worker自身は新規のメタデータ抽出は行わず、既存の `prompt` を温存する戦略を採用。
- * - プロンプトの抽出/補完はUI側（`DetailViewModel`）が段階的に行い、保存も併用。
+ * - 本 Worker 自身は新規のメタデータ抽出は行わず、既存の `prompt` を温存する戦略を採用
+ * - プロンプトの抽出/補完は UI 側（`DetailViewModel`）が段階的に行い、保存も併用
  */
 @HiltWorker
 class ThreadMonitorWorker @AssistedInject constructor(
@@ -76,13 +76,13 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val doc: Document = networkClient.fetchDocument(url)
             val exists = doc.selectFirst("div.thre") != null
             if (!exists) {
-                // HTMLが取得できたがスレDOMが無い → dat落ちとみなして停止
+                // HTML が取得できたがスレ DOM が無い → dat 落ちとみなして停止
                 HistoryManager.markArchived(applicationContext, url)
                 cancelUnique(url)
                 return Result.success()
             }
 
-            // 1) パース（UI側と同等の簡易ロジック）
+            // 1) パース（UI 側と同等の簡易ロジック）
             val parsed = parseContentFromDocument(doc, url)
 
             // 1.5) 既存キャッシュ/スナップショットのプロンプトをマージ（nullでの上書きを防止）
@@ -144,10 +144,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
             if (!oneShot) schedule(applicationContext, url)
             Result.success()
         } catch (e: java.io.IOException) {
-            // fetchDocument は非200で IOException を投げることがある
+            // fetchDocument は非 200 で IOException を投げることがある
             val msg = e.message ?: ""
             if (msg.contains("HTTPエラー: 404")) {
-                // dat落ち（404）とみなし停止
+                // dat 落ち（404）とみなし停止
                 HistoryManager.markArchived(applicationContext, url)
                 cancelUnique(url)
                 Result.success()
@@ -162,6 +162,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
     }
 
     private fun cancelUnique(url: String) {
+        // URL 正規化キーに基づくユニーク名で登録された Work をキャンセル（互換キーも併せてキャンセル）
         val wm = WorkManager.getInstance(applicationContext)
         wm.cancelUniqueWork(uniqueName(url))
         wm.cancelUniqueWork(uniqueNameLegacy(url))

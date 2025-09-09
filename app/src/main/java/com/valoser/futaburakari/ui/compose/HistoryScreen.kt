@@ -75,8 +75,6 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  */
 enum class HistorySortMode { MIXED, UPDATED, VIEWED, UNREAD }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * 閲覧履歴の一覧画面。
  * 未読のみ表示の切り替え、並び替え、全削除、スワイプによる削除を提供する。
@@ -94,6 +92,8 @@ enum class HistorySortMode { MIXED, UPDATED, VIEWED, UNREAD }
  * - `onClickItem`: 行タップ時のハンドラ。
  * - `onDeleteItem`: 行スワイプ確定時の削除ハンドラ。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun HistoryScreen(
     title: String,
     entries: List<HistoryEntry>,
@@ -280,11 +280,11 @@ fun HistoryScreen(
     }
 }
 
-@Composable
 /**
  * 履歴の 1 行を表示する行コンポーザブル。
  * サムネイル、タイトル、URL、時刻、未読バッジを表示し、タップで `onClick` を呼びます。
  */
+@Composable
 private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
     Row(
         modifier = Modifier
@@ -342,10 +342,10 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
     }
 }
 
-@Composable
 /**
  * スワイプ削除時の背景コンテンツ。左右いずれの方向でも削除アイコンを表示します。
  */
+@Composable
 private fun DismissBackground(state: androidx.compose.material3.SwipeToDismissBoxState) {
     val isStart = state.targetValue == SwipeToDismissBoxValue.StartToEnd
     val isEnd = state.targetValue == SwipeToDismissBoxValue.EndToStart

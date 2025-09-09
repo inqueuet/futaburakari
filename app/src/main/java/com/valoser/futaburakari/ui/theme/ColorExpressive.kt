@@ -2,7 +2,15 @@ package com.valoser.futaburakari.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Light Expressive Colors from colors.xml & M3 defaults
+/**
+ * Expressive テーマ用のカラーパレット定義。
+ * - Material 3 のカラー・ロール（primary/secondary/tertiary など）に対応する色を、
+ *   Light/Dark それぞれで定義しています。
+ * - 値の一部は `colors.xml` と M3 デフォルトをベースに調整しています。
+ *
+ * 注意: ここはカラーの「トークン」定義のみです。Theme への適用は `Theme.kt` 側で行います。
+ */
+// Light パレット（Expressive）
 val expressive_primary_light = Color(0xFF0061A4)
 val expressive_onPrimary_light = Color(0xFFFFFFFF)
 val expressive_primaryContainer_light = Color(0xFFD1E4FF)
@@ -27,7 +35,7 @@ val expressive_surfaceVariant_light = Color(0xFFE7E0EC)
 val expressive_onSurfaceVariant_light = Color(0xFF49454F)
 val expressive_outline_light = Color(0xFF79747E)
 
-// Dark Expressive Colors (approximated from light theme)
+// Dark パレット（Expressive）: Light を基準に暗所向けへ最適化
 val expressive_primary_dark = Color(0xFF9BCAFF)
 val expressive_onPrimary_dark = Color(0xFF003258)
 val expressive_primaryContainer_dark = Color(0xFF00497D)

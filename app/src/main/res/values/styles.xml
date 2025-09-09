@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        スタイル定義（非テーマ要素）。
+        既存のスタイル名・継承元は UI コンポーネントと紐づくため変更しないこと。
+        コメントのみ加筆・修正可。
+    -->
     <!-- 入力フォームのラベル統一スタイル。fontScale に追従（sp）。 -->
     <style name="FormLabelText" parent="TextAppearance.AppCompat.Body2">
         <item name="android:textSize">10sp</item>
@@ -7,14 +12,14 @@
         <item name="android:ellipsize">end</item>
     </style>
 
-    <!-- Removed: legacy color overlays and variant themes (Green/Purple/Blue/Orange) -->
+    <!-- 備考: 旧カラーオーバーレイ/バリアントテーマ（Green/Purple/Blue/Orange）は整理済み -->
 
     <!-- オーバーフローボタンのスタイル -->
     <style name="OverflowButtonStyle" parent="Widget.AppCompat.ActionButton.Overflow">
         <item name="android:tint">?android:attr/textColorPrimary</item>
     </style>
 
-    <!-- ツールバー用のテーマオーバーレイ（未使用のため削除）。必要なら AppCompat 相当で追加してください。 -->
+    <!-- ツールバー用のテーマオーバーレイは未使用。必要時は AppCompat 相当で追加する。 -->
 
     <!-- Preference 画面用オーバーレイ（要素のサマリー色をタイトル色に寄せる）。
          互換のため View ベース設定画面等で利用する想定。 -->

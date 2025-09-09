@@ -1,5 +1,10 @@
 package com.valoser.futaburakari
 
+/**
+ * 画面共通の挙動（フォント倍率・テーマ適用・戻る動作・システムバー外観）をまとめた基底 Activity。
+ * 各画面は本クラスを継承して共通機能を得る。
+ */
+
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
@@ -106,6 +111,10 @@ open class BaseActivity : AppCompatActivity() {
         } else super.onOptionsItemSelected(item)
     }
 
+    /**
+     * ダーク/ライトのテーマ状態に応じてステータスバー/ナビゲーションバーのアイコン色を調整する。
+     * ライトテーマ時はライトバー（暗色アイコン）を有効化し、ダークテーマ時は無効化する。
+     */
     private fun updateSystemBarsAppearance() {
         val nightMask = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         val isNight = nightMask == Configuration.UI_MODE_NIGHT_YES

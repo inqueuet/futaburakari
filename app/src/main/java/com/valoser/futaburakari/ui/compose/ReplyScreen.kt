@@ -60,6 +60,23 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 import androidx.compose.ui.text.style.TextOverflow
 import com.valoser.futaburakari.ReplyViewModel
 
+/**
+ * レス投稿画面のコンポーザブル。
+ *
+ * 機能概要:
+ * - 入力: 名前/メール/題名/コメント/削除キー、任意のファイル添付に対応。
+ * - 初期値: `initialQuote` はコメント初期値、`initialPassword` は削除キー初期値。
+ * - タイトル: `title` が空なら「レスを投稿」を表示。
+ * - 送信中: `UiState.Loading` 中は入力と送信を無効化し、プログレスを表示。
+ * - 添付: ドキュメントピッカーで選択し、読取りの永続権限を取得して保持。`textOnly` は「添付しない」フラグ。
+ *
+ * パラメータ:
+ * - `title`: 上部タイトル。
+ * - `initialQuote`/`initialPassword`: コメント/削除キーの初期値。
+ * - `uiState`: 送信状態（Loading 中は UI をロック）。
+ * - `onBack`: 戻る押下時のハンドラ。
+ * - `onSubmit`: 投稿実行のハンドラ（空文字は null に変換して渡す）。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReplyScreen(

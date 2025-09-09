@@ -1,5 +1,14 @@
 package com.valoser.futaburakari.ui.theme
 
+/**
+ * タイポグラフィ設定。
+ *
+ * - ベースライン: Material 3 既定値をベースに最小限の上書き
+ * - Expressive: 見出しサイズを強調した表現寄りのセット
+ *
+ * `FutaburakariTheme` から `Typography` または `ExpressiveTypography` が選択されます。
+ */
+
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -41,6 +50,7 @@ val Typography = Typography(
 /**
  * Material 3 の「Expressive」寄りのタイポグラフィ。
  * より大きいサイズと見出しのメリハリを強め、情報密度を下げたデザインに適する設定。
+ * `FutaburakariTheme(expressive = true)` 指定時に使用されます。
  */
 val ExpressiveTypography = Typography(
     displayLarge = TextStyle(

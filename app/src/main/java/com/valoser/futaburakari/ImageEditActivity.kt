@@ -101,6 +101,10 @@ class ImageEditActivity : BaseActivity() {
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
+    /**
+     * 編集対象画像の URI を受け取り、編集用の Compose UI と編集エンジンを初期化する。
+     * API レベルに応じて Parcelable 取得方法を切り替え、フォールバックとして `intent.data` も参照する。
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -287,7 +291,7 @@ class ImageEditActivity : BaseActivity() {
         }
     }
 
-    // 現在のツールを切り替える（Compose 側の保存状態初期値にも反映される）
+    /** 現在の編集ツールを切り替える（Compose 側の保存状態初期値にも反映）。 */
     private fun applyTool(tool: Tool) {
         currentTool = tool
     }
@@ -295,11 +299,13 @@ class ImageEditActivity : BaseActivity() {
     // 従来の（非 Compose）UI 初期化は不要。保存/ロック/ボタンは Compose で完結。
 
     @SuppressLint("MissingPermission")
+    /**
+     * 画像をギャラリーへ保存する。
+     * - API < 29: WRITE_EXTERNAL_STORAGE 権限の事前確認が必要。
+     * - API >= 29: MediaStore 経由で相対パス保存（直接書込不要）。
+     * - EXIF: 可能であれば UserComment にプロンプトを埋め込む（失敗時はスキップ）。
+     */
     private fun saveImageToGallery() {
-        // 画像をギャラリーへ保存する処理。
-        // - API < 29: WRITE_EXTERNAL_STORAGE 権限を事前確認。
-        // - API >= 29: MediaStore に相対パス指定で保存（外部ストレージの直接書込不要）。
-        // - EXIF: 可能であれば UserComment にプロンプト文字列を埋め込む（読み込みに失敗した場合はスキップ）。
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -389,6 +395,7 @@ class ImageEditActivity : BaseActivity() {
         }
     }
 
+    /** 権限要求の結果を受け取り、許可された場合は保存処理を再開する。 */
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,

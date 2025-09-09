@@ -1,3 +1,8 @@
+/*
+ * カタログ取得・解析・整形を担う ViewModel。
+ * - HTMLの解析（#cattable 優先/フォールバック）とURL補正、フル画像URLの補完を行う。
+ * - 表示用データ/状態（読込中・エラー）を LiveData で公開する。
+ */
 package com.valoser.futaburakari
 
 import android.util.Log
@@ -103,6 +108,10 @@ class MainViewModel @Inject constructor(
         return headChecked.map { filledMap[it.detailUrl] ?: it }
     }
 
+    /**
+     * 指定URLからカタログを取得し、解析・補完したリストを公開する。
+     * 失敗時はエラーメッセージを公開し、進行状態は isLoading に反映する。
+     */
     fun fetchImagesFromUrl(url: String) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -121,6 +130,10 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 指定URLのカタログ更新を軽量に確認し、更新があればコールバックする。
+     * 既存の fullImageUrl を引き継ぎ、不足分のみを補完する。
+     */
     fun checkForUpdates(url: String, currentItemCount: Int, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {

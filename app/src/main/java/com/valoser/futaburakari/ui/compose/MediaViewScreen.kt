@@ -60,8 +60,6 @@ import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * 画像/動画/テキストを表示する汎用メディア画面。
  *
@@ -82,6 +80,8 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onBack`: 戻る押下時のハンドラ。
  * - `onSaveImage`/`onSaveVideo`: 保存アクションのハンドラ（指定時のみ表示）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun MediaViewScreen(
     title: String,
     type: String,
@@ -184,10 +184,10 @@ fun MediaViewScreen(
     }
 }
 
-@Composable
 /**
  * ズーム可能な画像表示。1:1 のエリアに収め、ピンチやダブルタップで拡大縮小可。
  */
+@Composable
 private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(LocalSpacing.current.m)) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
@@ -201,11 +201,11 @@ private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
     }
 }
 
-@Composable
 /**
  * ExoPlayer を用いた動画表示。URL から `MediaItem` をセットして再生準備。
  * `DisposableEffect` でライフサイクルに合わせてプレイヤーを解放する。
  */
+@Composable
 private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var player: ExoPlayer? by remember { mutableStateOf(null) }
@@ -238,10 +238,10 @@ private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
     }
 }
 
-@Composable
 /**
  * スクロール可能なテキスト表示。
  */
+@Composable
 private fun TextContent(text: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(LocalSpacing.current.l)) {
         Text(
@@ -260,13 +260,13 @@ private fun buildDefaultFileName(text: String?): String {
     return "${textHint}_$timestamp"
 }
 
-@Composable
 /**
  * ピンチ/ドラッグ/ダブルタップに対応したズーム可能な画像コンポーネント。
  * - ピンチで倍率を `minScale..maxScale` にクランプ。
  * - ドラッグでパン（必要に応じてクランプ可能だが本実装では無制限）。
  * - ダブルタップで中間倍率と 1x をトグルし、オフセットをリセット。
  */
+@Composable
 private fun ZoomableAsyncImage(
     model: Any?,
     modifier: Modifier = Modifier,

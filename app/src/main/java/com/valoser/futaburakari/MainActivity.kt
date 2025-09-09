@@ -1,3 +1,8 @@
+/*
+ * カタログ一覧を表示するメインアクティビティ。
+ * - ブックマーク選択/管理、設定・履歴・画像編集への遷移を提供。
+ * - カタログの取得・表示と、設定項目（NGルール/列数/フォントスケール等）の反映を行う。
+ */
 package com.valoser.futaburakari
 
 import android.content.Intent
@@ -261,6 +266,10 @@ class MainActivity : BaseActivity() {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
 
+    /**
+     * アイテム押下時の処理。
+     * - 画像のプリフェッチを試みた上で、詳細画面へ遷移する。
+     */
     private fun handleItemClick(item: ImageItem) {
         val baseUrlString = currentSelectedUrl
         val imageUrlString: String = item.fullImageUrl ?: item.previewUrl
@@ -302,15 +311,19 @@ class MainActivity : BaseActivity() {
         return value.toIntOrNull()?.coerceIn(1, 8) ?: 4
     }
 
-    // 初期ブックマークと副題を設定し、対象URLのデータ取得を開始
+    /**
+     * 初期の選択ブックマークと副題を設定し、現在のURLでデータ取得を開始する。
+     */
     private fun loadAndFetchInitialData() {
         currentSelectedUrl = BookmarkManager.getSelectedBookmarkUrl(this)
         toolbarSubtitleState.value = getCurrentBookmarkName()
         fetchDataForCurrentUrl()
     }
 
-    // 現在のURLで画像一覧を取得。catsetを必要に応じて適用し、
-    // 初回適用だった場合は再度フェッチして表示内容を反映する。
+    /**
+     * 現在のURLで画像一覧を取得する。
+     * - 必要に応じて catset を適用し、新規適用時は再フェッチで反映する。
+     */
     private fun fetchDataForCurrentUrl() {
         val url = currentSelectedUrl
         if (url.isNullOrBlank()) return
