@@ -1,46 +1,17 @@
 <resources>
-    <!-- 基底テーマ（Material Design 3）。
-         Compose と View（XML）で色/トーンの整合を取るため、主要なカラー役割を明示設定。 -->
-    <style name="Theme.Futaburakari" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- 主要カラー役割（M3）を XML にも反映し、Compose / View で統一する。 -->
-        <item name="colorPrimary">@color/my_expressive_primary</item>
-        <item name="colorOnPrimary">@color/my_expressive_onPrimary</item>
-        <item name="colorPrimaryContainer">@color/my_expressive_primaryContainer</item>
-        <item name="colorOnPrimaryContainer">@color/my_expressive_onPrimaryContainer</item>
-
-        <item name="colorSecondary">@color/my_expressive_secondary</item>
-        <item name="colorOnSecondary">@color/my_expressive_onSecondary</item>
-        <item name="colorSecondaryContainer">@color/my_expressive_secondaryContainer</item>
-        <item name="colorOnSecondaryContainer">@color/my_expressive_onSecondaryContainer</item>
-
-        <item name="colorTertiary">@color/my_expressive_tertiary</item>
-        <item name="colorOnTertiary">@color/my_expressive_onTertiary</item>
-        <item name="colorTertiaryContainer">@color/my_expressive_tertiaryContainer</item>
-        <item name="colorOnTertiaryContainer">@color/my_expressive_onTertiaryContainer</item>
-
-        <!-- Surface / Background / Error / Variant / Outline -->
+    <!-- 基底テーマ（AppCompat）。
+         画面内部は Compose の MaterialTheme を使用するため、
+         XML 側は最小限（背景とカットアウト動作）のみ設定します。 -->
+    <style name="Theme.Futaburakari" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:colorBackground">@color/my_expressive_background</item>
-        <item name="colorOnBackground">@color/my_expressive_onBackground</item>
-        <item name="colorSurface">@color/my_expressive_surface</item>
-        <item name="colorOnSurface">@color/my_expressive_onSurface</item>
-        <item name="colorSurfaceVariant">@color/my_expressive_surfaceVariant</item>
-        <item name="colorOnSurfaceVariant">@color/my_expressive_onSurfaceVariant</item>
-        <item name="colorError">@color/my_expressive_error</item>
-        <item name="colorOnError">@color/my_expressive_onError</item>
-        <item name="colorErrorContainer">@color/my_expressive_errorContainer</item>
-        <item name="colorOnErrorContainer">@color/my_expressive_onErrorContainer</item>
-        <item name="colorOutline">@color/my_expressive_outline</item>
-
         <item name="android:windowLayoutInDisplayCutoutMode">default</item>
     </style>
 
-    <style name="Theme.Futaburakari.AppBarOverlay" parent="ThemeOverlay.Material3.Dark.ActionBar" />
-
-    <style name="Theme.Futaburakari.PopupOverlay" parent="ThemeOverlay.Material3" />
+    <!-- 既存の M3 オーバーレイは未使用のため削除。必要になれば AppCompat 相当を定義します。 -->
 
     <!-- ツールバーのタイトル用テキスト外観（AppCompat 由来のコンポーネント互換）。 -->
     <style name="Toolbar.TitleText" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
-        <item name="android:textColor">?attr/colorOnPrimary</item>
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
         <item name="android:textSize">24sp</item>
     </style>
 

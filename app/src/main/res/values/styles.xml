@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- 入力フォームのラベル統一スタイル。fontScale に追従（sp）。 -->
-    <style name="FormLabelText" parent="TextAppearance.Material3.BodySmall">
+    <style name="FormLabelText" parent="TextAppearance.AppCompat.Body2">
         <item name="android:textSize">10sp</item>
         <item name="android:maxLines">2</item>
         <item name="android:ellipsize">end</item>
@@ -11,15 +11,10 @@
 
     <!-- オーバーフローボタンのスタイル -->
     <style name="OverflowButtonStyle" parent="Widget.AppCompat.ActionButton.Overflow">
-        <item name="android:tint">?attr/colorOnPrimary</item>
+        <item name="android:tint">?android:attr/textColorPrimary</item>
     </style>
 
-    <!-- ツールバー用のテーマオーバーレイ -->
-    <style name="ThemeOverlay.Futaburakari.Toolbar" parent="ThemeOverlay.Material3.Dark.ActionBar">
-        <item name="android:textColorPrimary">?attr/colorOnPrimary</item>
-        <item name="android:textColorSecondary">?attr/colorOnPrimary</item>
-        <item name="colorOnSurface">?attr/colorOnPrimary</item>
-    </style>
+    <!-- ツールバー用のテーマオーバーレイ（未使用のため削除）。必要なら AppCompat 相当で追加してください。 -->
 
     <!-- Preference 画面用オーバーレイ（要素のサマリー色をタイトル色に寄せる）。
          互換のため View ベース設定画面等で利用する想定。 -->

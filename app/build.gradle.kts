@@ -86,9 +86,6 @@ dependencies {
     implementation("androidx.compose.runtime:runtime-livedata")
 
     // Unified dependencies from catalog
-    implementation(libs.androidx.constraintlayout)
-    implementation(libs.androidx.recyclerview)
-    implementation(libs.google.material)
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
     implementation(libs.gson)
@@ -106,7 +103,7 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
-    implementation(libs.androidx.swiperefreshlayout)
+    // Removed legacy View dependencies: SwipeRefreshLayout/RecyclerView/ConstraintLayout (Compose only)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.preference.ktx)
 
