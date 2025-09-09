@@ -207,7 +207,7 @@ class MainActivity : BaseActivity() {
                                                     showBookmarkDialog = false
                                                     fetchDataForCurrentUrl()
                                                 }
-                                                .padding(vertical = 12.dp)
+                                                .padding(vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m)
                                         )
                                     }
                                 }

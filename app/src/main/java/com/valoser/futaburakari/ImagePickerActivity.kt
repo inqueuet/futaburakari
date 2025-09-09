@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 // import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 /**
  * 画像をユーザーに選択させ、編集画面へ受け渡すアクティビティ。
@@ -113,8 +114,8 @@ class ImagePickerActivity : BaseActivity() {
                         Column(
                             modifier = Modifier
                                 .align(Alignment.Center)
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                                .padding(LocalSpacing.current.l),
+                            verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.m),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text("ギャラリーから画像を選択します")

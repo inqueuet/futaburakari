@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 /**
  * Expressive（表現豊かな）UIのコンポーネント例を集約したショーケース。
@@ -153,18 +154,18 @@ fun ExpressiveShowcaseScreen(
         Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = modifier.fillMaxSize().padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(LocalSpacing.current.l),
+            verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.l)
         ) {
             item {
                 Text("Buttons", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(LocalSpacing.current.m)) {
                     Button(onClick = { loading = true }) { Text("Primary") }
                     ElevatedButton(onClick = { /* noop */ }) { Text("Elevated") }
                     IconButton(onClick = { /* noop */ }) { Icon(Icons.Default.Favorite, contentDescription = null) }
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(LocalSpacing.current.s))
                 SplitButton(
                     text = "Split",
                     onPrimary = { /* primary */ },
@@ -176,8 +177,8 @@ fun ExpressiveShowcaseScreen(
                 Text("Progress", style = MaterialTheme.typography.titleMedium)
                 if (loading) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Spacer(Modifier.height(LocalSpacing.current.s))
+                    Row(horizontalArrangement = Arrangement.spacedBy(LocalSpacing.current.m)) {
                         CircularProgressIndicator()
                         Text("読み込み中…", style = MaterialTheme.typography.bodyLarge)
                     }
@@ -252,7 +253,7 @@ fun FabMenu(
                 enter = fadeIn() + scaleIn(),
                 exit = fadeOut() + scaleOut()
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.m)) {
                     items.forEach { it ->
                         SmallFloatingActionButton(onClick = { onExpandedChange(false); it.onClick() }) {
                             Icon(it.icon, contentDescription = it.label)
@@ -286,7 +287,7 @@ fun SplitButton(
         Button(
             onClick = { expanded = true },
             colors = ButtonDefaults.filledTonalButtonColors(),
-            contentPadding = PaddingValues(horizontal = 8.dp)
+            contentPadding = PaddingValues(horizontal = LocalSpacing.current.s)
         ) {
             Icon(Icons.Default.ArrowDropDown, contentDescription = null)
         }

@@ -42,6 +42,7 @@ import com.valoser.futaburakari.ImageItem
 import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -278,7 +279,7 @@ fun MainCatalogScreen(
                 modifier = Modifier.fillMaxSize(),
                 state = gridState,
                 columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
-                contentPadding = PaddingValues(4.dp)
+                contentPadding = PaddingValues(LocalSpacing.current.s)
             ) {
                 // 安定キーに `detailUrl` を使用
                 items(filtered, key = { it.detailUrl }) { item ->
@@ -328,7 +329,7 @@ private fun MoreMenu(
 private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier
-            .padding(4.dp),
+            .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs),
         onClick = onClick
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -386,7 +387,7 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 6.dp, end = 6.dp, bottom = 8.dp)
+                    .padding(start = com.valoser.futaburakari.ui.theme.LocalSpacing.current.s, end = com.valoser.futaburakari.ui.theme.LocalSpacing.current.s, bottom = com.valoser.futaburakari.ui.theme.LocalSpacing.current.s)
             )
 
             // 返信数バッジ（右下）。タイトル/オーバーレイより後に描画し、上に重ねる
@@ -397,9 +398,9 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(4.dp)
+                        .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs)
                         .background(Color.Black.copy(alpha = 0.5f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .padding(horizontal = com.valoser.futaburakari.ui.theme.LocalSpacing.current.s, vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.xxs)
                 )
             }
         }

@@ -58,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 /**
  * スレ詳細の Compose スクリーン（Scaffold）。
@@ -384,7 +385,7 @@ fun DetailScreenScaffold(
                         initialScrollOffset = initialScrollOffset,
                         onSaveScroll = onSaveScroll,
                         // 左端に 8dp の余白を追加
-                        contentPadding = PaddingValues(start = 8.dp, end = endPadding, bottom = bottomDp),
+                        contentPadding = PaddingValues(start = LocalSpacing.current.s, end = endPadding, bottom = bottomDp),
                         onProvideSearchNavigator = { p, n ->
                             navPrev = p
                             navNext = n
@@ -512,7 +513,7 @@ fun DetailScreenScaffold(
                                 singleLine = false,
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(LocalSpacing.current.s))
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 val opt = listOf(
                                     com.valoser.futaburakari.MatchType.SUBSTRING to "部分一致",
@@ -524,7 +525,7 @@ fun DetailScreenScaffold(
                                         selected = match == mt,
                                         onClick = { match = mt },
                                         label = { Text(label) },
-                                        modifier = Modifier.padding(end = 8.dp)
+                                        modifier = Modifier.padding(end = LocalSpacing.current.s)
                                     )
                                 }
                             }
@@ -580,7 +581,7 @@ fun DetailScreenScaffold(
                             onSetSodaneCount = null,
                             onImageLoaded = onImageLoaded,
                             onVisibleMaxOrdinal = null,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                            contentPadding = PaddingValues(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.s)
                         )
                     }
                 }
@@ -617,7 +618,7 @@ fun DetailScreenScaffold(
                             onSetSodaneCount = null,
                             onImageLoaded = onImageLoaded,
                             onVisibleMaxOrdinal = null,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                            contentPadding = PaddingValues(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.s)
                         )
                     }
                 }
@@ -651,7 +652,7 @@ fun DetailScreenScaffold(
                     }
                     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                         columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
-                        contentPadding = PaddingValues(8.dp)
+                        contentPadding = PaddingValues(LocalSpacing.current.s)
                     ) {
                         items(images.size) { idx ->
                             val e = images[idx]
@@ -659,7 +660,7 @@ fun DetailScreenScaffold(
                                 model = e.url,
                                 contentDescription = null,
                                 modifier = Modifier
-                                    .padding(4.dp)
+                                    .padding(LocalSpacing.current.xs)
                                     .fillMaxWidth()
                                     .height(110.dp)
                                     .clickable {
@@ -678,7 +679,7 @@ fun DetailScreenScaffold(
                 DockedSearchBar(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(horizontal = 8.dp),
+                        .padding(horizontal = LocalSpacing.current.s),
                     query = query,
                     onQueryChange = { query = it },
                     onSearch = {
@@ -730,29 +731,29 @@ fun DetailScreenScaffold(
                                 }
                             }
                         }
-                        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        Row(modifier = Modifier.padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs)) {
                             QuickFilterChip(label = "画像", onClick = {
                                 query = "画像"
                                 onDebouncedSearch("画像")
                             })
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(LocalSpacing.current.s))
                             QuickFilterChip(label = "動画", onClick = {
                                 query = "動画"
                                 onDebouncedSearch("動画")
                             })
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(LocalSpacing.current.s))
                             QuickFilterChip(label = "No.", onClick = {
                                 query = "No."
                             })
                         }
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(LocalSpacing.current.xs))
                         val recent = recentSearchesFlow?.collectAsState(initial = emptyList())?.value ?: emptyList()
                         if (recent.isNotEmpty()) {
                             Text(
                                 text = "最近の検索",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                modifier = Modifier.padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs)
                             )
                             LazyColumn {
                                 items(recent) { item ->
@@ -765,7 +766,7 @@ fun DetailScreenScaffold(
                                                 onSubmitSearch(item)
                                                 setSearchActive(false)
                                             }
-                                            .padding(horizontal = 4.dp),
+                                            .padding(horizontal = LocalSpacing.current.xs),
                                         leadingContent = {
                                             Icon(Icons.Rounded.Search, contentDescription = null)
                                         },
@@ -786,7 +787,7 @@ fun DetailScreenScaffold(
                     SearchNavigationBar(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.s)
                             .padding(bottom = bottomDp),
                         current = s.currentIndexDisplay,
                         total = s.total,
@@ -890,7 +891,7 @@ private fun SearchNavigationBar(
     ) {
         androidx.compose.foundation.layout.Row(
             modifier = Modifier
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onPrev) {
@@ -899,7 +900,7 @@ private fun SearchNavigationBar(
             Text(
                 text = if (total > 0 && current in 1..total) "$current/$total" else "0/0",
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 8.dp)
+                modifier = Modifier.padding(horizontal = LocalSpacing.current.s)
             )
             IconButton(onClick = onNext) {
                 Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next")

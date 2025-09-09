@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.layout.offset // For positioning the thumb by pixels
@@ -86,7 +87,10 @@ fun FastScroller(
                 .fillMaxSize()
                 .clip(RoundedCornerShape(8.dp))
                 // Keep track nearly transparent unless dragging
-                .background(if (dragging) Color(0x22000000) else Color.Transparent)
+                .background(
+                    if (dragging) MaterialTheme.colorScheme.scrim.copy(alpha = 0.12f)
+                    else Color.Transparent
+                )
                 .onGloballyPositioned { coords ->
                     trackHeightPx = coords.size.height.toFloat()
                     trackTopPx = 0f
@@ -112,7 +116,7 @@ fun FastScroller(
                 .align(Alignment.TopCenter)
                 .offset { IntOffset(x = 0, y = thumbOffsetYPx.roundToInt()) }
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xAA888888))
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.66f))
                 .pointerInput(itemsCount, trackHeightPx, thumbHeight) {
                     detectDragGestures(
                         onDragStart = { dragging = true },

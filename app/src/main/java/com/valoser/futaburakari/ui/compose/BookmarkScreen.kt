@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.Bookmark
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 /**
  * ブックマークの一覧表示と追加/編集/削除を行う画面コンポーザブル。
@@ -112,7 +113,7 @@ fun BookmarkScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(vertical = 8.dp)
+            contentPadding = PaddingValues(vertical = LocalSpacing.current.s)
         ) {
             // URL をキーに安定した項目識別を行い、行を描画（ソートは行わない）
             items(bookmarks, key = { it.url }) { bm ->
@@ -193,15 +194,15 @@ private fun BookmarkRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = bookmark.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(LocalSpacing.current.xxs))
                 Text(text = bookmark.url, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(LocalSpacing.current.xs)) {
                 IconButton(onClick = onEdit) {
                     Icon(Icons.Rounded.Edit, contentDescription = "編集")
                 }
@@ -243,7 +244,7 @@ private fun EditBookmarkDialog(
                     onValueChange = { nameState.value = it },
                     label = { Text("名前") }
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.s))
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = urlState.value,

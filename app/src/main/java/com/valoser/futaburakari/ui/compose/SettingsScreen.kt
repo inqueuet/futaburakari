@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.preference.PreferenceManager
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 import coil.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
@@ -184,14 +185,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
+            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "投稿設定") }
             item {
                 // 投稿時に使う削除キー（パスワード）を保存
                 ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
             }
 
-            item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
+            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "キャッシュ設定") }
             item {
                 val scope = rememberCoroutineScope()
@@ -222,7 +223,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
+            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "広告表示") }
             item {
                 // Detail画面にバナー広告を固定表示するか
@@ -235,7 +236,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             // removed: background monitoring toggle (always enabled)
 
             // その他セクション（必要な1本だけ区切り線を表示）
-            item { Divider(modifier = Modifier.padding(vertical = 6.dp)) }
+            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "その他") }
             item {
                 // 外部ブラウザでプライバシーポリシーを開く
@@ -284,7 +285,7 @@ private fun SectionHeader(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        modifier = Modifier.padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.s)
     )
 }
 
@@ -299,11 +300,11 @@ private fun ListRow(title: String, summary: String, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
     ) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
         if (summary.isNotBlank()) {
-            Spacer(modifier = Modifier.size(2.dp))
+            Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
             Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
     }
@@ -328,7 +329,7 @@ private fun DropdownPreferenceRow(
     androidx.compose.foundation.layout.Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
     ) {
         Column(
             modifier = Modifier
@@ -336,7 +337,7 @@ private fun DropdownPreferenceRow(
                 .clickable { expanded = true }
         ) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Spacer(modifier = Modifier.size(2.dp))
+            Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
             Text(currentLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
 
@@ -365,13 +366,13 @@ private fun SwitchRow(title: String, checked: Boolean, summary: String = "", onT
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             if (summary.isNotBlank()) {
-                Spacer(modifier = Modifier.size(2.dp))
+                Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
                 Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
             }
         }

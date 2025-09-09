@@ -58,6 +58,7 @@ import coil.compose.AsyncImage
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -188,7 +189,7 @@ fun MediaViewScreen(
  * ズーム可能な画像表示。1:1 のエリアに収め、ピンチやダブルタップで拡大縮小可。
  */
 private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(12.dp)) {
+    Column(modifier = modifier.padding(LocalSpacing.current.m)) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
             ZoomableAsyncImage(
                 model = url,
@@ -242,13 +243,13 @@ private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
  * スクロール可能なテキスト表示。
  */
 private fun TextContent(text: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(16.dp)) {
+    Column(modifier = modifier.padding(LocalSpacing.current.l)) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         )
-        Spacer(modifier = Modifier.padding(4.dp))
+        Spacer(modifier = Modifier.padding(LocalSpacing.current.xs))
     }
 }
 

@@ -8,8 +8,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Shapes
+import androidx.compose.ui.platform.LocalDensity
 
 // Expressive Style Color Schemes
 private val LightExpressiveScheme = lightColorScheme(
@@ -90,10 +92,17 @@ fun FutaburakariTheme(
     val typography = if (expressive) ExpressiveTypography else Typography
     val shapes: Shapes = if (expressive) ExpressiveShapes else BaselineShapes
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = typography,
-        shapes = shapes,
-        content = content
-    )
+    // Spacing tokens: choose baseline vs expressive, then scale by current fontScale (from configuration)
+    val baseSpacing = if (expressive) ExpressiveSpacing else BaselineSpacing
+    val fontScale = LocalDensity.current.fontScale
+    val spacing = baseSpacing.scaledByFont(fontScale)
+
+    CompositionLocalProvider(LocalSpacing provides spacing) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = typography,
+            shapes = shapes,
+            content = content
+        )
+    }
 }

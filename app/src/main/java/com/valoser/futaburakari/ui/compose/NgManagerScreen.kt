@@ -78,6 +78,7 @@ import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.ui.expressive.FabMenu
 import com.valoser.futaburakari.ui.expressive.FabMenuItem
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -156,7 +157,7 @@ fun NgManagerScreen(
                 .padding(inner)
         ) {
             // 検索とタイプフィルタ（limitType が未指定の時のみ表示）
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.s)) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -175,8 +176,8 @@ fun NgManagerScreen(
                 )
 
                 if (limitType == null) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.height(LocalSpacing.current.s))
+                    Row(horizontalArrangement = Arrangement.spacedBy(LocalSpacing.current.s)) {
                         TypeFilterChip(
                             label = "すべて",
                             selected = activeTypeFilter == null,
@@ -216,9 +217,9 @@ fun NgManagerScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.s)
             ) {
-                item { Spacer(Modifier.height(4.dp)) }
+                item { Spacer(Modifier.height(LocalSpacing.current.xs)) }
                 items(filtered, key = { it.id }) { rule ->
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { value ->
@@ -248,16 +249,16 @@ fun NgManagerScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(24.dp),
+                                .padding(LocalSpacing.current.xl),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text("該当するNGがありません", style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(LocalSpacing.current.s))
                             Text("検索条件を見直すか、右下の＋で追加", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
-                item { Spacer(Modifier.height(8.dp)) }
+                item { Spacer(Modifier.height(LocalSpacing.current.s)) }
             }
         }
     }
@@ -314,13 +315,13 @@ private fun RuleItem(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp)
+            .padding(horizontal = LocalSpacing.current.m)
             .clickable { onEdit() }
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
@@ -341,7 +342,7 @@ private fun RuleItem(
                     MatchType.SUBSTRING -> "部分一致"
                     MatchType.REGEX -> "正規表現"
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(LocalSpacing.current.s), verticalAlignment = Alignment.CenterVertically) {
                     AssistChip(
                         onClick = {},
                         label = { Text(typeLabel) },
@@ -352,7 +353,7 @@ private fun RuleItem(
                         label = { Text(matchLabel) }
                     )
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(LocalSpacing.current.s))
                 Text(
                     text = rule.pattern,
                     style = MaterialTheme.typography.bodyLarge,
@@ -395,7 +396,7 @@ private fun TypePickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("NGの種類") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.m)) {
                 TypePickRow(label = "ID") { onPick(RuleType.ID) }
                 TypePickRow(label = "本文ワード") { onPick(RuleType.BODY) }
                 if (!hideTitleOption) TypePickRow(label = "スレタイ") { onPick(RuleType.TITLE) }
@@ -423,7 +424,7 @@ private fun RuleEditDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isNew) labelForNewTitle(initial.type) else labelForEditTitle(initial.type)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.m)) {
                 OutlinedTextField(
                     value = pattern,
                     onValueChange = { pattern = it },
@@ -456,7 +457,7 @@ private fun RuleEditDialog(
 private fun MatchTypeSelector(selected: MatchType?, onChange: (MatchType) -> Unit) {
     // 本文/スレタイ用のマッチ方法選択（部分一致/前方一致/正規表現）。
     // 選択がnullの場合はUI上は部分一致が選択されたものとして扱う。
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.s)) {
         Text("マッチ方法", style = MaterialTheme.typography.labelLarge)
         RadioRow(
             label = "部分一致",
@@ -483,11 +484,11 @@ private fun RadioRow(label: String, checked: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(vertical = 4.dp),
+            .padding(vertical = LocalSpacing.current.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
         androidx.compose.material3.RadioButton(selected = checked, onClick = onClick)
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(LocalSpacing.current.s))
         Text(label)
     }
 }
@@ -549,7 +550,7 @@ private fun TypePickRow(label: String, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
@@ -568,7 +569,7 @@ private fun NgDismissBackground(state: androidx.compose.material3.SwipeToDismiss
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = LocalSpacing.current.l),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -64,6 +64,7 @@ import androidx.compose.animation.togetherWith
 import com.valoser.futaburakari.ui.expressive.SplitButton
 import androidx.compose.ui.platform.LocalContext
 import com.valoser.futaburakari.R
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 /**
  * 履歴の並び替えモード。
@@ -188,7 +189,7 @@ fun HistoryScreen(
                         .padding(innerPadding)
                 ) {
                     item {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.s)) {
                             // 並び替え SegmentedButton
                             val sortOptions = listOf(
                                 "新着" to HistorySortMode.MIXED,
@@ -206,7 +207,7 @@ fun HistoryScreen(
                                 }
                             }
 
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(LocalSpacing.current.s))
                             // 未読フィルタ SegmentedButton
                             val unreadOptions = listOf("すべて", "未読のみ")
                             SingleChoiceSegmentedButtonRow {
@@ -222,7 +223,7 @@ fun HistoryScreen(
                                 }
                             }
 
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(LocalSpacing.current.s))
                             // SplitButton: 並び替えショートカット
                             SplitButton(
                                 text = "並び替え",
@@ -288,13 +289,13 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.m)
             .clickable { onClick() }
     ) {
         val thumbModifier = Modifier
             .size(72.dp)
             .clip(MaterialTheme.shapes.medium)
-            .background(Color(0xFFBDBDBD))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
 
         // サムネイルが無い場合はプレースホルダーのボックスを表示
         if (entry.thumbnailUrl.isNullOrBlank()) {
@@ -307,13 +308,13 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             )
         }
 
-        Spacer(modifier = Modifier.size(12.dp))
+        Spacer(modifier = Modifier.size(LocalSpacing.current.m))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.xxs))
             Text(entry.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.xxs))
             Text(
                 text = buildTimeText(entry),
                 style = MaterialTheme.typography.bodySmall,
@@ -323,7 +324,7 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
 
         // 未読がある場合のみバッジを表示（1000 以上は "999+"）
         if (entry.unreadCount > 0) {
-            Spacer(modifier = Modifier.size(8.dp))
+            Spacer(modifier = Modifier.size(LocalSpacing.current.s))
             Surface(
                 color = MaterialTheme.colorScheme.error,
                 contentColor = MaterialTheme.colorScheme.onError,
@@ -331,7 +332,7 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             ) {
                 Text(
                     text = if (entry.unreadCount > 999) "999+" else entry.unreadCount.toString(),
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xxs),
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -353,7 +354,7 @@ private fun DismissBackground(state: androidx.compose.material3.SwipeToDismissBo
         modifier = Modifier
             .fillMaxSize()
             .background(color)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = LocalSpacing.current.l),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {

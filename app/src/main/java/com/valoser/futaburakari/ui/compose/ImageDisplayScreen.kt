@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.valoser.futaburakari.R
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,7 +76,7 @@ fun ImageDisplayScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
         ) {
             // 画像表示エリア（1:1 の正方形）。ContentScale.Crop で中央トリミング表示。
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
@@ -92,7 +93,7 @@ fun ImageDisplayScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.m))
 
             // プロンプト表示カード（本文はスクロール可能）。空のときは代替文言を表示。
             Surface(
@@ -104,7 +105,7 @@ fun ImageDisplayScreen(
                         .fillMaxWidth()
                         .weight(1f, fill = true)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                        .padding(8.dp)
+                        .padding(LocalSpacing.current.s)
                 ) {
                     Text(
                         text = promptText,
@@ -116,7 +117,7 @@ fun ImageDisplayScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.s))
 
             // プロンプトをクリップボードへコピー（空の場合はボタン無効）
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {

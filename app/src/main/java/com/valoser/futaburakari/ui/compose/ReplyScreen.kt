@@ -56,6 +56,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 import androidx.compose.ui.text.style.TextOverflow
 import com.valoser.futaburakari.ReplyViewModel
 
@@ -121,7 +122,7 @@ fun ReplyScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
                 .verticalScroll(rememberScrollState()),
         ) {
             // おなまえ（任意）
@@ -132,7 +133,7 @@ fun ReplyScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.s))
 
             // E-mail（任意）
             OutlinedTextField(
@@ -142,7 +143,7 @@ fun ReplyScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.s))
 
             // 題名（任意）
             OutlinedTextField(
@@ -152,7 +153,7 @@ fun ReplyScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.s))
 
             // コメント（必須）
             OutlinedTextField(
@@ -166,22 +167,22 @@ fun ReplyScreen(
                 minLines = 6
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.m))
             // 添付
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("添付File", style = MaterialTheme.typography.bodyLarge)
-                Spacer(modifier = Modifier.size(12.dp))
+                Spacer(modifier = Modifier.size(LocalSpacing.current.m))
                 Text(
                     text = pickedLabel,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.size(8.dp))
+                Spacer(modifier = Modifier.size(LocalSpacing.current.s))
                 // 任意のMIMEタイプを選択可能。`textOnly`（=添付しない）がオンの間は無効化。
                 androidx.compose.material3.FilledTonalButton(onClick = { pickLauncher.launch(arrayOf("*/*")) }, enabled = !textOnly && !isLoading) {
                     Text("選択…")
                 }
-                Spacer(modifier = Modifier.size(8.dp))
+                Spacer(modifier = Modifier.size(LocalSpacing.current.s))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // ラベルは「画像なし」だが、実装上は「ファイルを添付しない」フラグとして機能する
                     Checkbox(checked = textOnly, onCheckedChange = { textOnly = it })
@@ -189,7 +190,7 @@ fun ReplyScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.m))
 
             OutlinedTextField(
                 value = pwd,
@@ -201,7 +202,7 @@ fun ReplyScreen(
                 visualTransformation = PasswordVisualTransformation()
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(LocalSpacing.current.l))
             Button(
                 onClick = {
                     // 空文字は null に変換して送信。コメントはそのまま必須扱い。
@@ -212,7 +213,7 @@ fun ReplyScreen(
             ) { Text("返信する") }
 
             if (isLoading) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(LocalSpacing.current.m))
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator()
                 }

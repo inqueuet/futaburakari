@@ -173,16 +173,16 @@ class ImageEditActivity : BaseActivity() {
                             }
                         }
 
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
 
                         // コントロール（Compose）
 
-                        ElevatedCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                        ElevatedCard(modifier = Modifier.fillMaxWidth().padding(horizontal = com.valoser.futaburakari.ui.theme.LocalSpacing.current.s)) {
+                            Column(modifier = Modifier.padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.m)) {
                                 // ブラシ太さ
                                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                     Text("太さ: ${brushSize}px")
-                                    Spacer(Modifier.width(12.dp))
+                                    Spacer(Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.m))
                                     Slider(
                                         value = brushSize.toFloat(),
                                         onValueChange = {
@@ -194,13 +194,13 @@ class ImageEditActivity : BaseActivity() {
                                     )
                                 }
 
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
 
                                 // モザイク強さ
                                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                     val pct = (mosaicAlpha / 255f * 100).toInt()
                                     Text("強さ: ${pct}%")
-                                    Spacer(Modifier.width(12.dp))
+                                    Spacer(Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.m))
                                     Slider(
                                         value = mosaicAlpha.toFloat(),
                                         onValueChange = {
@@ -213,25 +213,25 @@ class ImageEditActivity : BaseActivity() {
                                     )
                                 }
 
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
 
                                 Row(modifier = Modifier.fillMaxWidth()) {
                                     if (toolName == Tool.MOSAIC.name) {
                                         androidx.compose.material3.FilledTonalButton(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("モザイク") }
-                                        Spacer(Modifier.width(8.dp))
+                                        Spacer(Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
                                         OutlinedButton(onClick = { applyTool(Tool.ERASER); toolName = Tool.ERASER.name }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
                                     } else if (toolName == Tool.ERASER.name) {
                                         OutlinedButton(onClick = { applyTool(Tool.MOSAIC); toolName = Tool.MOSAIC.name }, modifier = Modifier.weight(1f)) { Text("モザイク") }
-                                        Spacer(Modifier.width(8.dp))
+                                        Spacer(Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
                                         androidx.compose.material3.FilledTonalButton(onClick = { /* no-op */ }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
                                     } else {
                                         OutlinedButton(onClick = { applyTool(Tool.MOSAIC); toolName = Tool.MOSAIC.name }, modifier = Modifier.weight(1f)) { Text("モザイク") }
-                                        Spacer(Modifier.width(8.dp))
+                                        Spacer(Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
                                         OutlinedButton(onClick = { applyTool(Tool.ERASER); toolName = Tool.ERASER.name }, modifier = Modifier.weight(1f)) { Text("消しゴム") }
                                     }
                                 }
 
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
 
                                 Row(modifier = Modifier.fillMaxWidth()) {
                                     OutlinedButton(onClick = {
@@ -244,7 +244,7 @@ class ImageEditActivity : BaseActivity() {
                                     }, modifier = Modifier.weight(1f)) {
                                         Text(if (locked) "解除" else "固定")
                                     }
-                                    Spacer(Modifier.width(8.dp))
+                                    Spacer(Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
                                     Button(onClick = { saveImageToGallery() }, modifier = Modifier.weight(1f)) { Text("保存") }
                                 }
                             }

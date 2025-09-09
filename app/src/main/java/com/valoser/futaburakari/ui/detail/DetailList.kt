@@ -47,6 +47,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.unit.dp
+import com.valoser.futaburakari.ui.theme.LocalSpacing
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -347,7 +348,7 @@ fun DetailListCompose(
                                     maxLines = if (expanded) Int.MAX_VALUE else 3,
                                     overflow = if (expanded) androidx.compose.ui.text.style.TextOverflow.Clip else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     modifier = Modifier
-                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs)
                                         .clickable { expanded = !expanded }
                                 )
                             }
@@ -389,7 +390,7 @@ fun DetailListCompose(
                                     maxLines = if (expanded) Int.MAX_VALUE else 3,
                                     overflow = if (expanded) androidx.compose.ui.text.style.TextOverflow.Clip else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     modifier = Modifier
-                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs)
                                         .clickable { expanded = !expanded }
                                 )
                             }
@@ -404,7 +405,7 @@ fun DetailListCompose(
                         color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp)
+                            .padding(start = LocalSpacing.current.m, end = LocalSpacing.current.m, top = LocalSpacing.current.s, bottom = LocalSpacing.current.l)
                             .clickable { onThreadEndTimeClick?.invoke() },
                     )
                 }
@@ -414,7 +415,7 @@ fun DetailListCompose(
             if (isEndOfBlock(items, index)) {
                 // 視認性のための余白を上下に付与し、コンテンツと線が密着しないようにする
                 androidx.compose.material3.Divider(
-                    modifier = Modifier.padding(vertical = 6.dp),
+                    modifier = Modifier.padding(vertical = LocalSpacing.current.s),
                     thickness = 1.dp,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                 )
