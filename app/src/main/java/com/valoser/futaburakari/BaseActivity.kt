@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.preference.PreferenceManager
+import androidx.core.view.WindowCompat
 
 /**
  * ベースとなる Activity。
@@ -51,6 +52,7 @@ open class BaseActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // Enable edge-to-edge with backward-compatible behavior
         enableEdgeToEdge()
+        updateSystemBarsAppearance()
     }
 
     /**
@@ -87,6 +89,7 @@ open class BaseActivity : AppCompatActivity() {
         if (current != targetScale || themeChanged) {
             recreate()
         }
+        updateSystemBarsAppearance()
     }
 
     /** ActionBar の Up ナビゲーションをバックディスパッチャに委譲して戻る動作とする。 */
@@ -101,5 +104,13 @@ open class BaseActivity : AppCompatActivity() {
             onBackPressedDispatcher.onBackPressed()
             true
         } else super.onOptionsItemSelected(item)
+    }
+
+    private fun updateSystemBarsAppearance() {
+        val nightMask = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        val isNight = nightMask == Configuration.UI_MODE_NIGHT_YES
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !isNight
+        controller.isAppearanceLightNavigationBars = !isNight
     }
 }
