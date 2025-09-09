@@ -1,3 +1,6 @@
+# Version Catalog
+# - バージョンや依存関係はビルド設定と連動するため変更しないこと。
+# - コメントのみ修正・追記可。整理・命名は現状維持。
 [versions]
 agp = "8.12.2"
 ksp = "2.2.10-2.0.2"
@@ -31,6 +34,8 @@ workManager = "2.10.3"
 firebaseBom = "34.2.0"
 
 [libraries]
+# Compose/AndroidX の BOM/各種モジュールはバージョン参照に依存
+# 個別ライブラリの追加はこのセクションへ（重複登録に注意）
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
@@ -45,7 +50,7 @@ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
-# Added libraries
+# 追加ライブラリ（アプリ機能向け）
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coilCompose" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 androidx-lifecycle-viewmodel-compose-android = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose-android", version.ref = "lifecycleViewmodelComposeAndroid" }
@@ -77,6 +82,7 @@ androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscree
  
 
 [plugins]
+# 使用プラグイン（AGP/Kotlin/KSP など）
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

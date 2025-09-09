@@ -1,5 +1,10 @@
 package com.valoser.futaburakari
 
+/**
+ * スレッド詳細画面の Activity（Compose ベース）。
+ * データ取得・既読管理・検索・NG フィルタ・広告表示などの画面ロジックを担う。
+ */
+
 import android.app.Activity
 import android.content.Intent
 import android.content.SharedPreferences
@@ -219,7 +224,7 @@ class DetailActivity : BaseActivity() {
                     },
                     onResNumConfirmClick = { _ -> },
                     onResNumDelClick = { resNum ->
-                        // keep same as adapter behavior
+                        // 旧アダプタと同等の削除動作を実行
                         val url = currentUrl ?: return@DetailScreenScaffold
                         val threadId = url.substringAfterLast("/").substringBefore(".htm")
                         val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
@@ -253,11 +258,11 @@ class DetailActivity : BaseActivity() {
             }
         }
 
-        // Hilt により viewModel は注入済み（by viewModels()）
+        // Hilt により ViewModel は注入済み（by viewModels()）
         // SharedPreferences 準備（設定変更のリッスンに使用）
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
 
-        // 履歴に記録（タイトルがない場合はURL末尾などで代替も可）
+        // 履歴に記録（タイトルがない場合は URL 末尾などで代替）
         currentUrl?.let { url ->
             val title = toolbarTitleText.ifBlank { url }
             HistoryManager.addOrUpdate(this, url, title)
@@ -270,7 +275,7 @@ class DetailActivity : BaseActivity() {
         observeViewModel()
         currentUrl?.let { viewModel.fetchDetails(it) }
 
-        // 端末戻る：検索展開中は閉じる
+        // 端末戻る: 検索バー展開中は先に閉じる
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 // Compose検索バーが開いていれば先に閉じる

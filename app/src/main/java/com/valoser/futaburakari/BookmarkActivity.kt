@@ -1,5 +1,10 @@
 package com.valoser.futaburakari
 
+/**
+ * ブックマーク管理画面の Activity（Compose ベース）。
+ * 追加・更新・削除・選択の操作を提供し、BookmarkManager を通じて永続化する。
+ */
+
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
@@ -25,19 +30,19 @@ import kotlinx.coroutines.launch
 class BookmarkActivity : BaseActivity() {
 
     /**
-     * テーマ適用済みの Compose コンテンツをセットし、各操作を永続化ロジックに接続する。
-     * 各操作時には下部スナックバーでフィードバックを表示する。
+     * テーマ適用済みの Compose コンテンツを設定し、各操作を永続化ロジックに接続する。
+     * 各操作時にはスナックバーでフィードバックを表示する。
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
 
         setContent {
-            // アプリのテーマ（表現的なカラースキーム）を適用
+            // アプリのテーマ（表現的カラースキーム）を適用
             FutaburakariTheme(expressive = true) {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
-                // BookmarkManager のストレージを元にしたUI用のメモリ状態
+                // BookmarkManager のストレージを元にした UI 用のメモリ状態
                 var bookmarks by remember { mutableStateOf(BookmarkManager.getBookmarks(this@BookmarkActivity)) }
 
                 Box {
@@ -46,7 +51,7 @@ class BookmarkActivity : BaseActivity() {
                         bookmarks = bookmarks,
                         onBack = { onBackPressedDispatcher.onBackPressed() },
                         onAddBookmark = { name, url ->
-                            // 入力検証後に永続化し、UI状態を再読込
+                            // 入力検証後に永続化し、UI 状態を再読込
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
@@ -56,7 +61,7 @@ class BookmarkActivity : BaseActivity() {
                             }
                         },
                         onUpdateBookmark = { oldUrl, name, url ->
-                            // ストレージ更新。編集中の項目が選択中だった場合は選択URLも更新
+                            // ストレージ更新。編集中の項目が選択中だった場合は選択 URL も更新
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
@@ -84,7 +89,7 @@ class BookmarkActivity : BaseActivity() {
                             finish()
                         }
                     )
-                    // 画面下部に固定したスナックバー表示領域
+                    // 画面下部に固定したスナックバー表示領域（Compose の SnackbarHost）
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
                 }
             }

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Expressive palette (light) -->
+    <!--
+        ライトテーマ用カラー定義（Material 3 Expressive パレット）。
+        値や名前はアプリ全体で参照されるため変更禁止。必要に応じてコメントのみ調整してください。
+    -->
+    <!-- Expressive パレット（ライト） -->
     <color name="my_expressive_primary">#0061A4</color>
     <color name="my_expressive_onPrimary">#FFFFFF</color>
     <color name="my_expressive_primaryContainer">#D1E4FF</color>
@@ -25,5 +29,5 @@
     <color name="my_expressive_onSurfaceVariant">#49454F</color>
     <color name="my_expressive_outline">#79747E</color>
 
-    <!-- General neutrals removed: light_gray (unused) -->
+    <!-- 備考: 以前存在した一般系ニュートラル（light_gray）は未使用のため削除済み -->
 </resources>

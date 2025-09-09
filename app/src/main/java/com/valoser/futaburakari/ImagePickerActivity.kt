@@ -1,3 +1,8 @@
+/*
+ * 画像選択（ギャラリー/Photo Picker）用アクティビティ。
+ * - Android 13以降はPhoto Picker、12以前はSAFで画像を取得。
+ * - 選択した画像URIを編集画面（ImageEditActivity）へ安全に受け渡す。
+ */
 package com.valoser.futaburakari
 
 import android.Manifest

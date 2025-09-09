@@ -46,8 +46,6 @@ import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 /**
  * 画像カタログの一覧画面（メイン画面）。
  *
@@ -77,6 +75,8 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun MainCatalogScreen(
     modifier: Modifier = Modifier,
     title: String,
@@ -322,11 +322,11 @@ fun MainCatalogScreen(
     }
 }
 
-@Composable
 /**
  * 右上「その他」メニュー。ブックマーク管理・設定・ローカル画像・画像編集を提供。
  * 選択時はメニューを閉じてから各ハンドラを呼び出す。
  */
+@Composable
 private fun MoreMenu(
     onManageBookmarks: () -> Unit,
     onImageEdit: () -> Unit,
@@ -347,12 +347,12 @@ private fun MoreMenu(
     }
 }
 
-@Composable
 /**
  * カタログアイテムのカード表示。
  * 下部グラデーション上にタイトルを配置し、返信数は右下バッジとして上位レイヤーに重ねる。
  * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
  */
+@Composable
 private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier

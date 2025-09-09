@@ -1,3 +1,7 @@
+/*
+ * 画像・動画・テキストの表示を行うメディアビューア。
+ * - 保存操作（API 28以下は書込権限の確認）や戻る操作を提供。
+ */
 package com.valoser.futaburakari
 
 import android.Manifest

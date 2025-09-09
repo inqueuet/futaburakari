@@ -173,7 +173,6 @@ fun BookmarkScreen(
     }
 }
 
-@Composable
 /**
  * ブックマークリストの 1 行を表示するコンポーザブル。
  * 行のタップで `onClick` を呼び、右側のアイコンで編集/削除を行う。
@@ -184,6 +183,7 @@ fun BookmarkScreen(
  * - `onDelete`: 削除アイコン押下時のハンドラ。
  * - `onClick`: 行全体のタップ時のハンドラ。
  */
+@Composable
 private fun BookmarkRow(
     bookmark: Bookmark,
     onEdit: () -> Unit,
@@ -214,7 +214,6 @@ private fun BookmarkRow(
     }
 }
 
-@Composable
 /**
  * ブックマークの追加/編集用ダイアログ。
  * `nameState` と `urlState` は呼び出し元で保持し、入力値をバインドする。
@@ -226,6 +225,7 @@ private fun BookmarkRow(
  * - `onDismiss`: キャンセルなどで閉じる時のハンドラ。
  * - `onConfirm`: 保存確定時のハンドラ。
  */
+@Composable
 private fun EditBookmarkDialog(
     title: String,
     nameState: MutableState<String>,
@@ -262,7 +262,6 @@ private fun EditBookmarkDialog(
     )
 }
 
-@Composable
 /**
  * 汎用の確認ダイアログ。メッセージと確定/キャンセルのコールバックを受け取る。
  *
@@ -271,6 +270,7 @@ private fun EditBookmarkDialog(
  * - `onConfirm`: 確定（ポジティブ）押下時のハンドラ。
  * - `onDismiss`: キャンセル/外側タップ時のハンドラ。
  */
+@Composable
 private fun ConfirmDialog(
     message: String,
     onConfirm: () -> Unit,

@@ -85,6 +85,23 @@ import android.net.Uri
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Column
 
+/**
+ * スレ詳細のコンテンツを表示する Compose リスト。
+ *
+ * 概要:
+ * - `DetailContent` の列を描画（本文/画像/動画/終了時刻）。ブロック区切りや検索ハイライト、クリックアクションに対応。
+ * - No./引用/ID/URL/ファイル名/そうだね の検出とメニュー表示、被引用一覧や同一IDなどの遷移はコールバックで委譲。
+ * - スクロール位置の保存/復元、最大既読序数の通知、検索 Prev/Next ナビの提供に対応。
+ *
+ * パラメータ（主なもの）:
+ * - `items`: 表示対象アイテムのリスト。
+ * - `searchQuery`: 検索語。ハイライトとナビゲータの起点に使用。
+ * - `onQuoteClick`/`onResNumClick`/`onResNumConfirmClick`/`onResNumDelClick`/`onBodyClick`/`onAddNgFromBody`/`onIdClick`: 各クリックのハンドラ。
+ * - `onProvideSearchNavigator`: Prev/Next の関数を上位へ提供するためのコールバック。
+ * - `sodaneCounts`/`onSetSodaneCount`/`getSodaneState`: 「そうだね」の表示上書きと重複防止に関する情報。
+ * - `listState`/`initialScrollIndex`/`initialScrollOffset`/`onSaveScroll`: スクロール状態の外部管理。
+ * - `onVisibleMaxOrdinal`: 画面内で50%以上見えている本文の最大序数を通知。
+ */
 @Composable
 fun DetailListCompose(
     items: List<DetailContent>,
@@ -530,7 +547,10 @@ fun DetailListCompose(
 
 }
 
-// indexまでに現れたText要素の個数（=序数）を求める
+/**
+ * 指定インデックスまでに現れた本文（Text）要素の個数を返す。
+ * これが投稿の序数（1-based の表示順）に相当する。
+ */
 private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
     var ord = 0
     var i = 0
@@ -541,12 +561,12 @@ private fun ordinalForIndex(all: List<DetailContent>, index: Int): Int {
     return ord
 }
 
-// ヘッダ風の行（No./ID行）を除いた本文プレーンテキストを抽出（トップレベルヘルパー）
-// 本文返信用に「本文のみ」を抽出するユーティリティ。
-// - 先頭から以下の行をスキップして本文先頭を決定:
-//   ID 行（ID:xxxx / ID無し）/ No 行（No.1234）/ 日付時刻を含む行 /
-//   ファイル情報行（ファイル名:..., 画像:..., foo.jpg - (123KB ...) 等）/ 先行する引用行(>) / 空行
-// - 決定した行から末尾までを本文として返す（末尾の空行は削除）。
+/**
+ * ヘッダ風の行（No./ID 行など）を除いた「本文のみ」のプレーンテキストを抽出する。
+ * - 先頭から以下をスキップして本文開始位置を決定: ID 行／No 行／日付時刻を含む行／
+ *   ファイル情報行（ファイル名/画像/拡張子付きの情報行）／先行する引用行(>)／空行。
+ * - 決定した行から末尾までを本文として返す（末尾の空行は削除）。
+ */
 private fun extractBodyOnlyPlain(plain: String): String {
     fun normalize(s: String): String = java.text.Normalizer.normalize(
         s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
@@ -579,9 +599,11 @@ private fun extractBodyOnlyPlain(plain: String): String {
     return kept.dropLastWhile { it.isBlank() }.joinToString("\n")
 }
 
-// 本文用の AnnotatedString を構築。
-// - クリック可能: No.xxxx, 引用行(> または 全角＞), スレタイ行, ID:xxxx, URL, ファイル名（xxx.jpg 等）, そうだねトークン。
-// - 検索語は背景色でハイライト。
+/**
+ * 本文テキストから AnnotatedString を構築。
+ * - クリック可能: No.xxxx、引用行(>／全角＞)、スレタイ行、ID:xxxx、URL、ファイル名（xxx.jpg 等）、そうだねトークン。
+ * - 検索語は背景色でハイライト。
+ */
 private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle: String?): AnnotatedString = buildAnnotatedString {
     append(text)
     // No.1234 pattern（ドット任意・全角ドット・空白許容）
@@ -680,8 +702,10 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     }
 }
 
-// プレーンテキスト上で詰まりやすいトークン（ID / No / + / そうだね）の間に空白を補い、
-// No. を含む非引用行の末尾に そうだね トークンが存在しない場合は付与する。
+/**
+ * プレーンテキスト上で詰まりやすいトークン（ID／No／+／そうだね）の間に空白を補正し、
+ * 非引用行で No. を含む行末に そうだね トークンが無ければ付与する。
+ */
 private fun padTokensForSpacing(src: String): String {
     var t = src.replace("\u200B", "")
     // 表記ゆれ吸収: 全角→半角などを正規化し、半角スペースに統一
@@ -719,9 +743,11 @@ private fun padTokensForSpacing(src: String): String {
     return sb.toString()
 }
 
-// Apply optimistic overrides:
-// - そうだねトークン（+／＋／そうだね／そうだねxN）を「そうだねxN」に置換して表示上書き。
-// - 行内から No を抽出（No のドット有無・全角・空白改行に寛容）。行で見つからない場合は selfResNum をフォールバックに使用。
+/**
+ * 「そうだね」の楽観表示を適用してテキストを上書きする。
+ * - そうだねトークン（+／＋／そうだね／そうだねxN）を「そうだねxN」に置換。
+ * - 行内から No を抽出できない場合は selfResNum をフォールバックとして使用。
+ */
 private fun applySodaneDisplay(text: String, overrides: Map<String, Int>, selfResNum: String?): String {
     if (overrides.isEmpty()) return text
     val sb = StringBuilder()
@@ -744,6 +770,10 @@ private fun applySodaneDisplay(text: String, overrides: Map<String, Int>, selfRe
     return sb.toString()
 }
 
+/**
+ * Text + (Image|Video)* のブロックの区切りかを判定する。
+ * 次要素が Text/ThreadEndTime/末尾 の場合に区切りとみなし、末尾(null)では線を描かない。
+ */
 private fun isEndOfBlock(items: List<DetailContent>, index: Int): Boolean {
     if (index !in items.indices) return false
     val next = items.getOrNull(index + 1)

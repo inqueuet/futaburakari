@@ -1,8 +1,13 @@
 <resources>
+    <!--
+        文字列リソース。
+        プレースホルダー（%d, %.1f など）の有無と順序はコードに影響するため変更しないこと。
+        翻訳・文言調整は別途 i18n 方針に従う。ここではコメントのみ修正・追記可。
+    -->
     <string name="app_name">ふたブラ仮</string>
     <string name="reload">再読み込み</string>
     <string name="reloading">再読み込み</string>
-    <!-- ... other strings ... -->
+    <!-- その他の表示文言 -->
     <string name="bookmark_management_title">ブックマーク管理</string>
     <string name="search">Search</string>
     <string name="search_hint">Enter search text...</string>
@@ -10,7 +15,7 @@
     <string name="search_results_format">%d/%d</string>
     <string name="write_mode">書き込みモード</string>
 
-    <!-- New strings for comment dialog -->
+    <!-- コメント投稿ダイアログ関連 -->
     <string name="add_comment_dialog_title">コメントを投稿</string>
     <string name="hint_name">おなまえ</string>
     <string name="hint_email">E-mail</string>
@@ -19,7 +24,7 @@
     <string name="button_send">送信</string>
     <string name="button_cancel">キャンセル</string>
 
-    <!-- Strings for file attachment -->
+    <!-- ファイル添付関連 -->
     <string name="button_select_file">ファイルを選択</string>
     <string name="text_no_file_selected">ファイル未選択</string>
     <string name="error_file_too_large_format">ファイルサイズが大きすぎます (最大 %.1f MB)</string>
@@ -36,10 +41,10 @@
 
     <string name="video_thumbnail">動画サムネイル</string>
 
-    <!-- <string name="reload">Reload</string> -->
+    <!-- 互換/履歴: 旧 Reload 文言（未使用のためコメントアウトのまま保持） -->
 
-    <!-- AdMob test IDs (replace in production) -->
-    <!-- Use official Google test IDs to ensure fill during dev -->
+    <!-- AdMob テスト用 ID（本番では差し替えること） -->
+    <!-- 開発中の配信確認には Google 公式テスト ID を使用 -->
     <string name="admob_app_id">ca-app-pub-6403856201304924~8100902512</string>
     <string name="admob_banner_id">ca-app-pub-6403856201304924/2864069462</string>
 
@@ -53,7 +58,7 @@
     <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
     <string name="settings_inquiry">お問合せ</string>
 
-    <!-- Settings: Display options -->
+    <!-- 設定: 表示オプション（グリッド列数） -->
     <string-array name="pref_grid_span_entries">
         <item>2 列</item>
         <item>3 列</item>
@@ -84,7 +89,7 @@
         <item>1.50</item>
     </string-array>
 
-    <!-- Theme mode -->
+    <!-- 設定: テーマモード -->
     <string-array name="pref_theme_mode_entries">
         <item>システムに合わせる</item>
         <item>ライト</item>
@@ -96,9 +101,9 @@
         <item>dark</item>
     </string-array>
 
-    <!-- Removed: legacy color mode arrays (green/purple/blue/orange) -->
+    <!-- 備考: 旧カラー系モード配列（green/purple/blue/orange）は整理済み -->
 
-    <!-- Auto cleanup limit -->
+    <!-- 設定: 自動クリーンアップ上限（MB 単位） -->
     <string-array name="pref_auto_cleanup_entries">
         <item>無効</item>
         <item>1 GB</item>
