@@ -1,7 +1,16 @@
 /*
  * カタログ取得・解析・整形を担う ViewModel。
- * - HTMLの解析（#cattable 優先/フォールバック）とURL補正、フル画像URLの補完を行う。
- * - 表示用データ/状態（読込中・エラー）を LiveData で公開する。
+ *
+ * 役割
+ * - カタログHTMLの取得・解析（#cattable 優先 → 準備ページは空 → cgi 風フォールバック）
+ * - プレビュー画像URLの検証/補正と、フル画像URLの推測・補完（HEAD 検証つき）
+ * - 表示用データ/状態（読込中/エラー）を LiveData で公開
+ * - 既存リストの更新確認（checkForUpdates）では既知の fullImageUrl を引き継ぎ、不足分のみ補完
+ *
+ * 実装メモ
+ * - フル画像推測は /thumb/ や /cat/ を /src/ に置換し、末尾 "s." を通常拡張子へ置換
+ * - HEAD 検証と補完は IO ディスパッチャで並列度を抑制（limitedParallelism(2)）
+ * - タイトルは <small> の先頭行（<br> より前）を取得して 1 行化
  */
 package com.valoser.futaburakari
 
@@ -25,14 +34,12 @@ import javax.inject.Inject
 
 @HiltViewModel
 /**
- * カタログ取得・解析・整形を担う ViewModel。
- *
- * - HTMLを取得し、`#cattable` 優先で解析（なければ cgi 風フォールバック）
- * - プレビュー画像URLの検証/補正、フルサイズ画像URLの推測・補完を行う
- * - 進行状態とエラーを LiveData で公開
- * - タイトル整形: カタログの `<small>` から取得するタイトルは、先頭の `<br>` 以前（1 行目）のみを採用
- *   （Jsoup でタグ除去してプレーン化）。cgi/旧サーバの経路でも同様に 1 行化。
- *   - これにより DetailActivity 側では TopBar タイトルが常に 1 行に収まる（「スレ」などの更なる整形は詳細画面側で実施）。
+ * カタログの取得・解析・整形、および表示用状態の公開を担当。
+ * - 解析手順: `#cattable` 優先 → 準備ページ（/junbi/）は空 → cgi 風フォールバック
+ * - 画像URL処理: プレビューURLの検証/補正と、フル画像URLの推測（/src/ 置換 + 末尾 "s." 除去）→ HEAD で存在確認
+ * - 状態公開: 読込中/エラー/画像リストを LiveData で公開
+ * - 更新確認: 既存の fullImageUrl を活かしつつ不足分のみ補完し、差分があれば通知
+ * - タイトル整形: `<small>` の 1 行目のみを採用して 1 行化
  */
 class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
@@ -78,7 +85,7 @@ class MainViewModel @Inject constructor(
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
-        val limitedIO = Dispatchers.IO.limitedParallelism(4)
+        val limitedIO = Dispatchers.IO.limitedParallelism(2)
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {
@@ -264,7 +271,7 @@ class MainViewModel @Inject constructor(
     // プレビューURLをHEADで検証し、無効なら候補から有効なものに置換
     private suspend fun validatePreviewUrls(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
-        val limited = Dispatchers.IO.limitedParallelism(4)
+        val limited = Dispatchers.IO.limitedParallelism(2)
         return withContext(limited) {
             items.map { item ->
                 async {
