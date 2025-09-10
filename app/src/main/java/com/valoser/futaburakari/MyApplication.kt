@@ -17,10 +17,10 @@ import coil.memory.MemoryCache
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.decode.VideoFrameDecoder
-import coil.decode.SvgDecoder
 import coil.util.DebugLogger
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
+import javax.inject.Named
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,7 +36,11 @@ import com.valoser.futaburakari.HistoryManager
  *
  * - WorkManager の設定（HiltWorkerFactory/ログレベル/デフォルトプロセス名）
  * - OkHttp の安全なウォームアップ（初回リクエストの遅延を軽減）
+ *   - DI の共有クライアントとは独立したダミー `OkHttpClient` を生成し、
+ *     内部コンポーネント（例: PublicSuffixDatabase）を初期化するのみ（実通信なし）
  * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG のデコードを有効化）
+ *   - OkHttp クライアントは `@Named("coil")` の用途別クライアントを使用
+ *   - Dispatcher は 2 並列（per-host も 2）、2chan 系は 100ms 遅延
  */
 class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory {
 
@@ -44,7 +48,8 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var okHttpClient: OkHttpClient
+    @Named("coil")
+    lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher 2/2、2chan は 100ms 遅延）
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -122,8 +127,8 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
      */
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
-            // アプリ共有の OkHttpClient を利用（タイムアウト/UA/Cookie 設定を共有）
-            .okHttpClient(okHttpClient)
+            // Coil 専用の OkHttpClient（Dispatcher 2 並列）を利用
+            .okHttpClient(coilOkHttpClient)
             .components {
                 // アニメーションGIFのデコードを有効化
                 if (Build.VERSION.SDK_INT >= 28) {
@@ -133,9 +138,6 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
                 }
                 // 動画の代表フレームの抽出を有効化
                 add(VideoFrameDecoder.Factory())
-
-                // SVGをサポート（サーバ側で配信される場合のフォールバック）
-                add(SvgDecoder.Factory())
             }
             // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
             .memoryCache(
