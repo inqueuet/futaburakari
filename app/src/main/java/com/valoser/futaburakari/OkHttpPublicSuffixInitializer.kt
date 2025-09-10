@@ -1,4 +1,4 @@
-package com.valoser.futaburakari.init
+package com.valoser.futaburakari
 
 import android.content.Context
 import androidx.startup.Initializer
