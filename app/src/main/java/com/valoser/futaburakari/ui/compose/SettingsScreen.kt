@@ -63,7 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.ui.theme.LocalSpacing
-import coil.imageLoader
+import coil3.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
 import com.valoser.futaburakari.R

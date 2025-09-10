@@ -59,7 +59,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import coil.imageLoader
+import coil3.imageLoader
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -696,14 +696,14 @@ fun DetailScreenScaffold(
                                     for (i in startAhead..endAhead) {
                                         val url = urlFor(i) ?: continue
                                         if (prefetched.add(url)) {
-                                            val req = coil.request.ImageRequest.Builder(ctx)
+                                            val req = coil3.request.ImageRequest.Builder(ctx)
                                                 .data(url)
-                                                .size(coil.size.Size(coil.size.Dimension.Pixels(cellWidthPx), coil.size.Dimension.Pixels(cellHeightPx)))
-                                                .scale(coil.size.Scale.FILL)
-                                                .precision(coil.size.Precision.INEXACT)
-                                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                                                .networkCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
+                                                .scale(coil3.size.Scale.FILL)
+                                                .precision(coil3.size.Precision.INEXACT)
+                                                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                 .build()
                                             imageLoader.enqueue(req)
                                         }
@@ -714,14 +714,14 @@ fun DetailScreenScaffold(
                                         for (i in startBack..endBack) {
                                             val url = urlFor(i) ?: continue
                                             if (prefetched.add(url)) {
-                                                val req = coil.request.ImageRequest.Builder(ctx)
+                                                val req = coil3.request.ImageRequest.Builder(ctx)
                                                     .data(url)
-                                                    .size(coil.size.Size(coil.size.Dimension.Pixels(cellWidthPx), coil.size.Dimension.Pixels(cellHeightPx)))
-                                                    .scale(coil.size.Scale.FILL)
-                                                    .precision(coil.size.Precision.INEXACT)
-                                                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                                                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                                                    .networkCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                    .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
+                                                    .scale(coil3.size.Scale.FILL)
+                                                    .precision(coil3.size.Precision.INEXACT)
+                                                    .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                    .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                    .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                     .build()
                                                 imageLoader.enqueue(req)
                                             }
@@ -745,16 +745,16 @@ fun DetailScreenScaffold(
                             val cellWidthPx = (screenWidthPx / 3).coerceAtLeast(1)
                             val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
 
-                            val request = coil.request.ImageRequest.Builder(ctx)
+                            val request = coil3.request.ImageRequest.Builder(ctx)
                                 .data(e.url)
-                                .size(coil.size.Size(coil.size.Dimension.Pixels(cellWidthPx), coil.size.Dimension.Pixels(cellHeightPx)))
-                                .scale(coil.size.Scale.FILL)
-                                .precision(coil.size.Precision.INEXACT)
-                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
+                                .scale(coil3.size.Scale.FILL)
+                                .precision(coil3.size.Precision.INEXACT)
+                                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .build()
 
-                            coil.compose.SubcomposeAsyncImage(
+                            coil3.compose.SubcomposeAsyncImage(
                                 model = request,
                                 imageLoader = ctx.imageLoader,
                                 contentDescription = null,

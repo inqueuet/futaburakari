@@ -13,8 +13,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import coil.imageLoader
-import coil.request.ImageRequest
+import coil3.imageLoader
+import coil3.request.ImageRequest
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -283,7 +283,6 @@ class MainActivity : BaseActivity() {
                 val imageLoader = this.imageLoader
                 val request = ImageRequest.Builder(this)
                     .data(absoluteUrl)
-                    .lifecycle(lifecycle = null)
                     .build()
                 imageLoader.enqueue(request)
             } catch (e: Exception) {

@@ -6,18 +6,17 @@ package com.valoser.futaburakari
 
 import android.app.Application
 import android.content.pm.ApplicationInfo
+import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import android.os.Build
-import coil.ImageLoader
-import coil.ImageLoaderFactory
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
-import coil.decode.GifDecoder
-import coil.decode.ImageDecoderDecoder
-import coil.decode.VideoFrameDecoder
-import coil.util.DebugLogger
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.memory.MemoryCache
+import coil3.util.DebugLogger
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
 import javax.inject.Named
@@ -29,6 +28,7 @@ import javax.inject.Inject
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import com.valoser.futaburakari.HistoryManager
+import okio.Path.Companion.toPath
 
 @HiltAndroidApp
 /**
@@ -42,7 +42,7 @@ import com.valoser.futaburakari.HistoryManager
  *   - OkHttp クライアントは `@Named("coil")` の用途別クライアントを使用
  *   - Dispatcher は 2 並列（per-host も 2）、2chan 系は 100ms 遅延
  */
-class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory {
+class MyApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
@@ -125,33 +125,30 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
      * - メモリ/ディスクキャッシュを調整し、再利用性を高める
      * - デバッグロガーを有効化（失敗理由の追跡に有用）
      */
-    override fun newImageLoader(): ImageLoader {
-        return ImageLoader.Builder(this)
-            // Coil 専用の OkHttpClient（Dispatcher 2 並列）を利用
-            .okHttpClient(coilOkHttpClient)
+    override fun newImageLoader(context: Context): ImageLoader {
+        return ImageLoader.Builder(context)
             .components {
-                // アニメーションGIFのデコードを有効化
-                if (Build.VERSION.SDK_INT >= 28) {
-                    add(ImageDecoderDecoder.Factory())
-                } else {
-                    add(GifDecoder.Factory())
-                }
-                // 動画の代表フレームの抽出を有効化
-                add(VideoFrameDecoder.Factory())
+                // OkHttp を使用したネットワークフェッチャーを追加（Coil 3 では必須）
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = { coilOkHttpClient }
+                    )
+                )
+                // GIF / 動画 / SVG のデコーダは拡張モジュール（coil-gif / coil-video / coil-svg）
+                // を依存関係に追加すると自動登録されるため、手動追加は不要。
             }
             // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
             .memoryCache(
-                MemoryCache.Builder(this)
-                    .maxSizePercent(0.25) // メモリの25%まで
+                MemoryCache.Builder()
+                    .maxSizePercent(context, 0.25) // メモリの25%まで
                     .build()
             )
             .diskCache(
                 DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
+                    .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
                     .maxSizeBytes(256L * 1024L * 1024L) // 256MB
                     .build()
             )
-            .respectCacheHeaders(false) // サーバーのキャッシュヘッダが厳しい場合でも再利用
             // 開発時のデバッグログを有効化（失敗理由の特定に有用）
             .logger(DebugLogger())
             .build()

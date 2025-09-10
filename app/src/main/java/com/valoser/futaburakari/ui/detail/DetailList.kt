@@ -79,14 +79,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.R
 import android.text.Html
-import coil.compose.AsyncImage
-import coil.imageLoader
-import coil.request.CachePolicy
-import coil.request.ImageRequest
-import coil.size.Dimension
-import coil.size.Precision
-import coil.size.Scale
-import coil.size.Size
+import coil3.compose.AsyncImage
+import coil3.imageLoader
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
+import coil3.size.Dimension
+import coil3.size.Precision
+import coil3.size.Scale
+import coil3.size.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
 import android.util.Patterns
@@ -419,7 +419,7 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        coil.compose.SubcomposeAsyncImage(
+                        coil3.compose.SubcomposeAsyncImage(
                             model = item.imageUrl,
                             contentDescription = null,
                             modifier = Modifier
@@ -473,7 +473,7 @@ fun DetailListCompose(
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        coil.compose.SubcomposeAsyncImage(
+                        coil3.compose.SubcomposeAsyncImage(
                             model = item.videoUrl,
                             contentDescription = null,
                             modifier = Modifier

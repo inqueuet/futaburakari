@@ -31,8 +31,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 37
-        versionName = "4.7"
+        versionCode = 38
+        versionName = "4.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -120,6 +120,8 @@ dependencies {
     implementation(libs.coil.video)
     implementation(libs.coil.gif)
     implementation(libs.coil.svg)
+    // Coil 3 network (OkHttp)
+    implementation(libs.coil.network.okhttp)
 
     // Google Mobile Ads SDK（AdMob）
     implementation(libs.play.services.ads)

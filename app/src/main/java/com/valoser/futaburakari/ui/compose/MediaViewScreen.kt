@@ -54,7 +54,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
@@ -290,9 +290,8 @@ private fun ZoomableAsyncImage(
     }
 
     AsyncImage(
-        model = coil.request.ImageRequest.Builder(LocalContext.current)
+        model = coil3.request.ImageRequest.Builder(LocalContext.current)
             .data(model)
-            .allowHardware(false) // ズーム・変形のため SW ビットマップを使用
             .build(),
         contentDescription = null,
         contentScale = ContentScale.Fit,

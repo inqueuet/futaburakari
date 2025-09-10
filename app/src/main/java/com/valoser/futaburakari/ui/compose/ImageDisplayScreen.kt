@@ -28,8 +28,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
@@ -82,7 +84,10 @@ fun ImageDisplayScreen(
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
                 if (!imageUri.isNullOrBlank()) {
                     AsyncImage(
-                        model = ImageRequest.Builder(ctx).data(imageUri).crossfade(true).build(),
+                        model = ImageRequest.Builder(ctx)
+                            .data(imageUri)
+                            .transitionFactory(CrossfadeTransition.Factory())
+                            .build(),
                         contentDescription = stringResource(R.string.displayed_image_description),
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
