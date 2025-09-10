@@ -33,6 +33,8 @@ import okhttp3.Cache
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import java.io.File
+import kotlin.time.Duration.Companion.seconds
+
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -80,18 +82,18 @@ object NetworkModule {
                 .connectionPool(connectionPool)
                 .cookieJar(cookieJar)
                 .cache(cache)
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(30.seconds)
+                .writeTimeout(60.seconds)
+                .readTimeout(60.seconds)
                 .addInterceptor { chain ->
                     val originalRequest = chain.request()
                     val host = originalRequest.url.host
                     val builder = originalRequest.newBuilder()
                         .header("User-Agent", Ua.STRING)
 
-                    // 2chan 系はアクセス頻度をさらに抑制（100ms）
+                    // 2chan 系はアクセス頻度をさらに抑制（50ms）
                     if (host == "2chan.net" || host.endsWith(".2chan.net")) {
-                        try { Thread.sleep(100L) } catch (_: InterruptedException) {}
+                        try { Thread.sleep(50L) } catch (_: InterruptedException) {}
                     }
 
                     chain.proceed(builder.build())
@@ -105,8 +107,8 @@ object NetworkModule {
                     .connectionPool(connectionPool)
                     .cookieJar(cookieJar)
                     .cache(cache)
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(60, TimeUnit.SECONDS)
+                    .connectTimeout(30.seconds)
+                    .readTimeout(60.seconds)
                     .build()
             } catch (fallbackException: Exception) {
                 Log.e("NetworkModule", "Fallback OkHttpClient creation also failed", fallbackException)
@@ -132,9 +134,9 @@ object NetworkModule {
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .cookieJar(cookieJar)
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(30.seconds)
+                .writeTimeout(60.seconds)
+                .readTimeout(60.seconds)
                 .addInterceptor { chain ->
                     val originalRequest = chain.request()
                     val host = originalRequest.url.host
@@ -142,7 +144,7 @@ object NetworkModule {
                         .header("User-Agent", Ua.STRING)
 
                     if (host == "2chan.net" || host.endsWith(".2chan.net")) {
-                        try { Thread.sleep(100L) } catch (_: InterruptedException) {}
+                        try { Thread.sleep(50L) } catch (_: InterruptedException) {}
                     }
 
                     chain.proceed(builder.build())
@@ -154,8 +156,8 @@ object NetworkModule {
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
                     .cookieJar(cookieJar)
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(60, TimeUnit.SECONDS)
+                    .connectTimeout(30.seconds)
+                    .readTimeout(60.seconds)
                     .build()
             } catch (fallbackException: Exception) {
                 Log.e("NetworkModule", "Fallback Coil OkHttpClient creation also failed", fallbackException)

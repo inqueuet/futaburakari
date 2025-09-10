@@ -31,8 +31,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 38
-        versionName = "4.8"
+        versionCode = 39
+        versionName = "4.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -92,6 +92,13 @@ dependencies {
     // ネットワーク/JSON（Version Catalog 統一管理）
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
+    implementation("com.squareup.okhttp3:okhttp")
+    implementation("com.squareup.okhttp3:okhttp-android")
+    implementation("com.squareup.okhttp3:okhttp-tls")
+    implementation("com.squareup.okhttp3:okhttp-sse")
+    implementation("com.squareup.okhttp3:okhttp-urlconnection")
+    implementation("com.squareup.okhttp3:okhttp-coroutines")
+    
     implementation(libs.gson)
 
     // Media3（ExoPlayer）
@@ -140,6 +147,7 @@ dependencies {
 
     // テスト依存関係
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
