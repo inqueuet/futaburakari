@@ -29,12 +29,22 @@ import okhttp3.CookieJar
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import okhttp3.Cache
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import java.io.File
 
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+    @Provides
+    @Singleton
+    fun provideOkHttpCache(@ApplicationContext context: Context): Cache {
+        // アプリのキャッシュ領域配下に OkHttp の HTTP キャッシュを作成（約 50MB）
+        val dir = File(context.cacheDir, "okhttp_http_cache").apply { mkdirs() }
+        val sizeBytes = 50L * 1024L * 1024L
+        return Cache(dir, sizeBytes)
+    }
 
     @Provides
     @Singleton
@@ -53,7 +63,11 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(cookieJar: CookieJar, connectionPool: ConnectionPool): OkHttpClient {
+    fun provideOkHttpClient(
+        cookieJar: CookieJar,
+        connectionPool: ConnectionPool,
+        cache: Cache,
+    ): OkHttpClient {
         return try {
             // 同時接続数を抑制（特にホスト単位）。Coil等の並列アクセスを穏やかにする
             val dispatcher = Dispatcher().apply {
@@ -65,6 +79,7 @@ object NetworkModule {
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .cookieJar(cookieJar)
+                .cache(cache)
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
@@ -89,6 +104,7 @@ object NetworkModule {
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
                     .cookieJar(cookieJar)
+                    .cache(cache)
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
                     .build()
