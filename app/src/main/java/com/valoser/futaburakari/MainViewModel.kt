@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.coroutines.executeAsync
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
 import java.net.URL
@@ -75,7 +76,7 @@ class MainViewModel @Inject constructor(
     private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
         val req = Request.Builder().url(url).head().build()
         runCatching {
-            okHttpClient.newCall(req).execute().use { resp ->
+            okHttpClient.newCall(req).executeAsync().use { resp ->
                 resp.isSuccessful
             }
         }.getOrDefault(false)

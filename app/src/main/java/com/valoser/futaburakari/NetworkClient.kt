@@ -10,6 +10,7 @@ import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
@@ -50,7 +51,7 @@ class NetworkClient(
             .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .build()
 
-        httpClient.newCall(req).execute().use { resp ->
+        httpClient.newCall(req).executeAsync().use { resp ->
             if (!resp.isSuccessful) {
                 throw IOException("HTTPエラー: ${resp.code} ${resp.message}")
             }
@@ -67,7 +68,7 @@ class NetworkClient(
             .header("User-Agent", Ua.STRING)
             .build()
         return@withContext try {
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 resp.body?.bytes()
             }
@@ -84,7 +85,7 @@ class NetworkClient(
             .header("User-Agent", Ua.STRING)
             .build()
         return@withContext try {
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 resp.header("Content-Length")?.toLongOrNull()
             }
@@ -105,7 +106,7 @@ class NetworkClient(
             .header("User-Agent", Ua.STRING)
             .build()
         return@withContext try {
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 val code = resp.code
                 val body = resp.body ?: return@use null
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
@@ -168,7 +169,7 @@ class NetworkClient(
                 .build()
 
             // use の戻り値（件数等の応答数値）をそのまま返す
-            return httpClient.newCall(req).execute().use { resp ->
+            return httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val raw = resp.body?.bytes() ?: return@use null
                 val text = EncodingUtils.decode(raw, resp.header("Content-Type")).trim()
@@ -201,7 +202,7 @@ class NetworkClient(
                 .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                 .build()
 
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 Log.d("NetworkClient", "applySettings: HTTP ${resp.code}")
             }
         }
@@ -242,7 +243,7 @@ class NetworkClient(
                 .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                 .build()
 
-            return@withContext httpClient.newCall(req).execute().use { resp ->
+            return@withContext httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) {
                     Log.w("NetworkClient", "deletePost: HTTP ${resp.code}")
                     return@use false
@@ -304,7 +305,7 @@ class NetworkClient(
                 .apply { if (!mergedCookie.isNullOrBlank()) header("Cookie", mergedCookie) }
                 .build()
 
-            return@withContext httpClient.newCall(req).execute().use { resp ->
+            return@withContext httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use false
                 val body = resp.body?.bytes() ?: return@use false
                 val okBySize = body.size == 2

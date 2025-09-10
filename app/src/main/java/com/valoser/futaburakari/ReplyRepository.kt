@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Cookie
+import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import java.io.IOException
 import java.nio.charset.Charset
@@ -204,7 +205,7 @@ class ReplyRepository @Inject constructor(
             if (!mergedCookie.isNullOrBlank()) rb.header("Cookie", mergedCookie)
             val req = rb.build()
 
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 val raw = resp.body?.bytes() ?: ByteArray(0)
                 val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
                 //android.util.Log.d("ReplyRepo", "resp.head=${decoded.trim().take(200)}")
@@ -251,7 +252,7 @@ class ReplyRepository @Inject constructor(
         withContext(Dispatchers.IO) {
             runCatching {
                 val req = Request.Builder().url(threadUrl).get().build()
-                httpClient.newCall(req).execute().use { resp ->
+                httpClient.newCall(req).executeAsync().use { resp ->
                     if (!resp.isSuccessful) {
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }
