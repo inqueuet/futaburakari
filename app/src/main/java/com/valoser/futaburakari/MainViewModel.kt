@@ -86,7 +86,7 @@ class MainViewModel @Inject constructor(
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
-        val limitedIO = Dispatchers.IO.limitedParallelism(2)
+        val limitedIO = Dispatchers.IO.limitedParallelism(3)
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {
@@ -272,7 +272,7 @@ class MainViewModel @Inject constructor(
     // プレビューURLをHEADで検証し、無効なら候補から有効なものに置換
     private suspend fun validatePreviewUrls(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
-        val limited = Dispatchers.IO.limitedParallelism(2)
+        val limited = Dispatchers.IO.limitedParallelism(3)
         return withContext(limited) {
             items.map { item ->
                 async {

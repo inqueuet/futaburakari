@@ -93,7 +93,7 @@ class DetailViewModel @Inject constructor(
     private val sodaNeStates = mutableMapOf<String, Boolean>()
 
     // メタデータ抽出の並列数を制限
-    private val limitedIO = Dispatchers.IO.limitedParallelism(2)
+    private val limitedIO = Dispatchers.IO.limitedParallelism(3)
 
     /**
      * 詳細を取得して表示を更新。

@@ -73,8 +73,8 @@ object NetworkModule {
         return try {
             // 同時接続数を抑制（特にホスト単位）。Coil等の並列アクセスを穏やかにする
             val dispatcher = Dispatcher().apply {
-                maxRequests = 2
-                maxRequestsPerHost = 2
+                maxRequests = 3
+                maxRequestsPerHost = 3
             }
 
             OkHttpClient.Builder()
@@ -91,9 +91,9 @@ object NetworkModule {
                     val builder = originalRequest.newBuilder()
                         .header("User-Agent", Ua.STRING)
 
-                    // 2chan 系はアクセス頻度をさらに抑制（50ms）
+                    // 2chan 系はアクセス頻度をさらに抑制（10ms）
                     if (host == "2chan.net" || host.endsWith(".2chan.net")) {
-                        try { Thread.sleep(50L) } catch (_: InterruptedException) {}
+                        try { Thread.sleep(10L) } catch (_: InterruptedException) {}
                     }
 
                     chain.proceed(builder.build())
@@ -126,8 +126,8 @@ object NetworkModule {
     fun provideCoilOkHttpClient(cookieJar: CookieJar, connectionPool: ConnectionPool): OkHttpClient {
         return try {
             val dispatcher = Dispatcher().apply {
-                maxRequests = 2
-                maxRequestsPerHost = 2
+                maxRequests = 3
+                maxRequestsPerHost = 3
             }
 
             OkHttpClient.Builder()
@@ -144,7 +144,7 @@ object NetworkModule {
                         .header("User-Agent", Ua.STRING)
 
                     if (host == "2chan.net" || host.endsWith(".2chan.net")) {
-                        try { Thread.sleep(50L) } catch (_: InterruptedException) {}
+                        try { Thread.sleep(10L) } catch (_: InterruptedException) {}
                     }
 
                     chain.proceed(builder.build())
