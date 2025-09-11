@@ -43,13 +43,13 @@ object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定（ユーザー設定で可変） ======
-    // AppPreferences の並列度(1..8)を粗く 1/2 接続に写像して、
+    // AppPreferences の並列度(1..4)を粗く 1 接続に写像して、
     // HEAD/Range リクエストの同時実行を抑制する（端末/サーバ負荷のバランスを優先）。
     @Volatile
     private var currentPermits: Int = 1
     @Volatile
     private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
-    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 2 // 1..4 -> 1, 5..8 -> 2
+    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 1 // 現仕様では最大4のため常に1
     private fun ensureSemaphore(context: Context) {
         val level = AppPreferences.getConcurrencyLevel(context)
         val desired = permitsForLevel(level)

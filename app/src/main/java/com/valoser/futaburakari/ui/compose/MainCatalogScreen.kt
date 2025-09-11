@@ -226,7 +226,9 @@ fun MainCatalogScreen(
                 val start = first.coerceAtLeast(0)
 
                 val urls = items.subList(start, end + 1)
-                    .mapNotNull { it.fullImageUrl ?: it.previewUrl }
+                    .mapNotNull { item ->
+                        if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl
+                    }
 
                 // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
                 urls.chunked(2).forEach { batch ->
@@ -399,7 +401,7 @@ private fun CatalogCard(
                         // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
                         .aspectRatio(3f / 4f),
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(item.fullImageUrl ?: item.previewUrl)
+                        .data(if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl)
                         .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                         .precision(Precision.INEXACT)
                         .listener(
@@ -473,7 +475,7 @@ private fun CatalogCard(
             }
 
             // 動画の場合は中央に再生アイコンを重ねる
-            val isVideo = (item.fullImageUrl ?: item.previewUrl).let { url ->
+            val isVideo = (if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl).let { url ->
                 url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
             }
             if (isVideo) {

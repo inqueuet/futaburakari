@@ -19,5 +19,6 @@ data class ImageItem(
     val replyCount: String,      // レス数等の表示用文字列
     val detailUrl: String,       // 詳細表示へ遷移するためのURL
     val fullImageUrl: String? = null, // フルサイズ画像のURL（任意）
-    val urlFixNote: String? = null    // 個別404時の候補探索で置換された際のメモ（UI表示用）
+    val urlFixNote: String? = null,   // 個別404時の候補探索で置換された際のメモ（UI表示用）
+    val preferPreviewOnly: Boolean = false // フル画像が恒常的に404等の場合にプレビュー固定で表示するためのフラグ
 )

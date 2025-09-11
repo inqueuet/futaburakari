@@ -102,7 +102,8 @@ class MainViewModel @Inject constructor(
                         val updated = current.map {
                             if (it.detailUrl == detailUrl) it.copy(
                                 fullImageUrl = next,
-                                urlFixNote = "URL修正: /src/をHTMLから確定"
+                                urlFixNote = "URL修正: /src/をHTMLから確定",
+                                preferPreviewOnly = false
                             ) else it
                         }
                         _images.postValue(updated)
@@ -110,7 +111,8 @@ class MainViewModel @Inject constructor(
                         // 候補が見つからない場合はフル画像URLを一旦クリアしてプレビュー表示にフォールバック
                         val updated = current.map {
                             if (it.detailUrl == detailUrl) it.copy(
-                                fullImageUrl = null
+                                fullImageUrl = null,
+                                preferPreviewOnly = true
                             ) else it
                         }
                         _images.postValue(updated)
@@ -232,9 +234,20 @@ class MainViewModel @Inject constructor(
                 val document = networkClient.fetchDocument(url)
                 // まずは解析（HEADせず）
                 val baseItems = parseItemsFromDocument(document, url)
-                // 要件: 最初からフルサイズ画像の表示に合わせ、推測規則で即時に fullImageUrl を付与
-                val withFullGuess = baseItems.map { it.copy(fullImageUrl = it.fullImageUrl ?: guessFullFromPreview(it.previewUrl)) }
-                _images.value = withFullGuess
+                // 既存一覧から detailUrl 単位で状態を引き継ぐ
+                val oldMap = (_images.value ?: emptyList()).associateBy { it.detailUrl }
+                val merged = baseItems.map { fresh ->
+                    val old = oldMap[fresh.detailUrl]
+                    val preferPreview = old?.preferPreviewOnly ?: false
+                    val carriedFull = old?.fullImageUrl
+                    val guessed = if (preferPreview) null else fresh.fullImageUrl ?: guessFullFromPreview(fresh.previewUrl)
+                    fresh.copy(
+                        fullImageUrl = carriedFull ?: guessed,
+                        preferPreviewOnly = preferPreview,
+                        urlFixNote = old?.urlFixNote
+                    )
+                }
+                _images.value = merged
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
             } finally {
@@ -261,8 +274,12 @@ class MainViewModel @Inject constructor(
                 // 既存の fullImageUrl を引き継ぎつつ、新規は推測規則で即時付与
                 val carried = newItemList.map { ni ->
                     val old = currentMapByDetail[ni.detailUrl]
-                    val guessed = ni.fullImageUrl ?: guessFullFromPreview(ni.previewUrl)
-                    ni.copy(fullImageUrl = old?.fullImageUrl ?: guessed)
+                    val preferPreview = old?.preferPreviewOnly ?: false
+                    val guessed = if (preferPreview) null else ni.fullImageUrl ?: guessFullFromPreview(ni.previewUrl)
+                    ni.copy(
+                        fullImageUrl = old?.fullImageUrl ?: guessed,
+                        preferPreviewOnly = preferPreview
+                    )
                 }
                 val hasNewContent = carried.size != currentItems.size || !carried.containsAll(currentItems)
 

@@ -103,7 +103,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     // 旧「カラーモード」設定は廃止
     var autoCleanup by remember { mutableStateOf(prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0") }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
-    // 同時接続数（1..8）。AppPreferences に保存
+    // 同時接続数（1..4）。AppPreferences に保存
     var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
     // バックグラウンド監視トグルは常時有効化のため廃止
 
@@ -219,12 +219,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         "2: Dispatcher(2/2), メタデータ(1), 並列(2)",
                         "3: Dispatcher(3/3), メタデータ(1), 並列(3)",
                         "4: Dispatcher(4/4), メタデータ(1), 並列(4)",
-                        "5: Dispatcher(5/5), メタデータ(2), 並列(5)",
-                        "6: Dispatcher(6/6), メタデータ(2), 並列(6)",
-                        "7: Dispatcher(7/7), メタデータ(2), 並列(7)",
-                        "8: Dispatcher(8/8), メタデータ(2), 並列(8)",
                     ),
-                    values = (1..8).map { it.toString() },
+                    values = (1..4).map { it.toString() },
                     value = concurrencyLevel,
                     onValueChange = { v ->
                         concurrencyLevel = v

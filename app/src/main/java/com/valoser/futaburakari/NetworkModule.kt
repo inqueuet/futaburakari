@@ -9,7 +9,7 @@ package com.valoser.futaburakari
  * - `OkHttpClient`（用途別に2系統）:
  *   - API 用（デフォルト DI）
  *     - 共通 UA 付与、タイムアウト、CookieJar/ConnectionPool/HTTP キャッシュ（約50MB）を設定
- *     - Dispatcher: ユーザー設定に基づく `maxRequests = N`, `maxRequestsPerHost = N`（N は 1..8）
+ *     - Dispatcher: ユーザー設定に基づく `maxRequests = N`, `maxRequestsPerHost = N`（N は 1..4）
  *     - 2chan 系ホストへは軽い遅延（約 2ms）でレート抑制
  *     - 例外発生時は段階的にフォールバック（最小構成→完全デフォルト）
  *   - 画像取得用（`@Named("coil")`）
@@ -74,7 +74,7 @@ object NetworkModule {
         /**
          * API 用の `OkHttpClient` を生成して提供する。
          * - UA/タイムアウト/HTTPキャッシュ/共有ConnectionPool/Cookie を設定
-         * - 同時接続数はユーザー設定値（1..8）を Dispatcher に反映
+         * - 同時接続数はユーザー設定値（1..4）を Dispatcher に反映
          * - 2chan 系ホストへは軽い遅延（約 2ms）を入れてアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
          */
@@ -138,7 +138,7 @@ object NetworkModule {
         /**
          * 画像取得（Coil）用の `OkHttpClient` を生成して提供する。
          * - 設定は API 用と同等（UA/Timeout/Cookie/ConnectionPool）
-         * - Dispatcher はユーザー設定の同時接続数（1..8）
+         * - Dispatcher はユーザー設定の同時接続数（1..4）
          * - 2chan 系ホストへは軽い遅延（約 2ms）でアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
          */
