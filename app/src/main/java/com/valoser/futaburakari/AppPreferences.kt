@@ -18,6 +18,8 @@ object AppPreferences {
     private const val KEY_APPEND_GUID = "append_guid_on"
     /** Key for the global concurrency level (1..4). */
     private const val KEY_CONCURRENCY_LEVEL = "concurrency_level"
+    /** Key for the full image upgrade concurrency (1..4). */
+    private const val KEY_FULL_UPGRADE_CONCURRENCY = "full_upgrade_concurrency"
 
     /**
      * Returns the app's private SharedPreferences instance.
@@ -84,6 +86,23 @@ object AppPreferences {
     fun setConcurrencyLevel(context: Context, level: Int) {
         val v = level.coerceIn(1, 4)
         getPreferences(context).edit().putInt(KEY_CONCURRENCY_LEVEL, v).apply()
+    }
+
+    /**
+     * Gets the concurrency for full-size image upgrades (1..4).
+     * Defaults to 2 when unset; clamped to 1..4.
+     */
+    fun getFullUpgradeConcurrency(context: Context): Int {
+        val raw = getPreferences(context).getInt(KEY_FULL_UPGRADE_CONCURRENCY, 2)
+        return raw.coerceIn(1, 4)
+    }
+
+    /**
+     * Saves the full-size image upgrade concurrency (clamped to 1..4).
+     */
+    fun setFullUpgradeConcurrency(context: Context, level: Int) {
+        val v = level.coerceIn(1, 4)
+        getPreferences(context).edit().putInt(KEY_FULL_UPGRADE_CONCURRENCY, v).apply()
     }
 
     /**

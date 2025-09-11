@@ -189,8 +189,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
          */
         fun schedule(context: Context, url: String) {
             val data = workDataOf(KEY_URL to url)
+            // 基本1分 + 小さなジッターで実行時刻を分散（波状実行を軽減）
+            val delayMillis = 60_000L + kotlin.random.Random.nextLong(0L, 30_000L)
             val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
-                .setInitialDelay(1, TimeUnit.MINUTES)
+                .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setInputData(data)
                 .setConstraints(
                     androidx.work.Constraints.Builder()

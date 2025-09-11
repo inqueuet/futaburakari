@@ -105,6 +105,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
     // 同時接続数（1..4）。AppPreferences に保存
     var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
+    // フル画像アップグレード同時数（1..4）。AppPreferences に保存
+    var fullUpgradeLevel by remember { mutableStateOf(AppPreferences.getFullUpgradeConcurrency(ctx).toString()) }
     // バックグラウンド監視トグルは常時有効化のため廃止
 
     // 投稿用パスワード入力ダイアログの状態
@@ -231,6 +233,29 @@ fun SettingsScreen(onBack: () -> Unit) {
                             android.widget.Toast.LENGTH_LONG
                         ).show()
                         // Activity 再生成で ViewModel 側の並列度は反映されやすい
+                        (ctx as? Activity)?.recreate()
+                    }
+                )
+            }
+            item {
+                DropdownPreferenceRow(
+                    title = "フル画像アップグレード同時数",
+                    entries = listOf(
+                        "1件",
+                        "2件（推奨）",
+                        "3件",
+                        "4件",
+                    ),
+                    values = (1..4).map { it.toString() },
+                    value = fullUpgradeLevel,
+                    onValueChange = { v ->
+                        fullUpgradeLevel = v
+                        AppPreferences.setFullUpgradeConcurrency(ctx, v.toInt())
+                        android.widget.Toast.makeText(
+                            ctx,
+                            "フル画像アップグレード同時数を保存しました。完全反映にはアプリ再起動が必要です。",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                         (ctx as? Activity)?.recreate()
                     }
                 )

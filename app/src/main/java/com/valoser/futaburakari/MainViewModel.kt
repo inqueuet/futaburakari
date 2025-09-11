@@ -27,6 +27,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.coroutines.executeAsync
@@ -74,6 +76,11 @@ class MainViewModel @Inject constructor(
     private val http404Counts = mutableMapOf<String, Int>()
     private val MAX_404_RETRY = 3
 
+    // フル画像アップグレードの同時実行上限。初期値は設定から取得（既定: 2件）。
+    @Volatile private var fullUpgradeConfigured: Int = AppPreferences.getFullUpgradeConcurrency(appContext)
+    private val fullUpgradeSemaphore = Semaphore(fullUpgradeConfigured)
+    private val upgradingFull = mutableSetOf<String>()
+
     private fun inc404(detailUrl: String, failedUrl: String): Int = synchronized(http404Counts) {
         val key = "$detailUrl|$failedUrl"
         val next = (http404Counts[key] ?: 0) + 1
@@ -86,6 +93,87 @@ class MainViewModel @Inject constructor(
         val it = http404Counts.keys.iterator()
         while (it.hasNext()) {
             if (it.next().startsWith(prefix)) it.remove()
+        }
+    }
+
+    /**
+     * サムネイル表示後に、フルサイズ画像のURLを可能なら補完して差し替える。
+     * - 既に fullImageUrl がある場合は簡易存在確認を行い、そのまま使用。
+     * - 無い場合はプレビューURLから `/src/` 規則で推測し、存在確認が取れれば採用。
+     * - 404 等の詳細な修正フローは既存の `fixImageIf404` に委ねる。
+     */
+    fun ensureFullImage(detailUrl: String) {
+        // 多重実行ガード（同一 detailUrl の同時実行を抑止）
+        synchronized(upgradingFull) {
+            if (!upgradingFull.add(detailUrl)) return
+        }
+        viewModelScope.launch {
+            try {
+                val attemptDelays = listOf(0L, 10L, 20L) // 合計3回トライ（軽量確認→HTML抽出も試行）
+                for ((i, delayMs) in attemptDelays.withIndex()) {
+                    if (delayMs > 0) delay(delayMs)
+
+                    val current = _images.value ?: break
+                    val idx = current.indexOfFirst { it.detailUrl == detailUrl }
+                    if (idx < 0) break
+                    val item = current[idx]
+
+                    // 途中で状態が変化していたら中断
+                    if (item.preferPreviewOnly || item.previewUnavailable) break
+
+                    // 同時実行上限内で: 推測URLの軽量確認 → 失敗時はHTMLから/src/抽出も試す
+                    // 設定の増加分だけは動的に反映（減少は次回起動で反映）。
+                    runCatching {
+                        val desired = AppPreferences.getFullUpgradeConcurrency(appContext)
+                        if (desired > fullUpgradeConfigured) {
+                            repeat(desired - fullUpgradeConfigured) { fullUpgradeSemaphore.release() }
+                            fullUpgradeConfigured = desired
+                        }
+                    }
+                    val applied = fullUpgradeSemaphore.withPermit {
+                        // 1) 既存フルがあればそれを優先検証。無ければ推測（/src/ 置換）で検証
+                        val guessed = guessFullFromPreview(item.previewUrl)
+                        val candidate = item.fullImageUrl ?: guessed
+                        val okCandidate = if (!candidate.isNullOrBlank())
+                            runCatching { urlExistsTwoStage(candidate, referer = item.detailUrl) }.getOrDefault(false)
+                        else false
+                        if (okCandidate) {
+                            val updated = current.toMutableList()
+                            updated[idx] = item.copy(
+                                fullImageUrl = candidate,
+                                preferPreviewOnly = false,
+                                // UI側で404記録をクリアさせるため注記を更新（同一URLでもOK明示）
+                                urlFixNote = "URL修正: /src/存在確認OK"
+                            )
+                            _images.postValue(updated)
+                            true
+                        } else {
+                            // 2) 詳細HTMLを取得して /src/ を抽出（HEAD検証はスキップ。以前の方針と揃える）
+                            val resolved = runCatching {
+                                val doc = networkClient.fetchDocument(item.detailUrl)
+                                doc.selectFirst("""div.thre a[href*=\"/src/\"]""")?.absUrl("href")
+                                    ?: doc.selectFirst("a[href*='/src/']")?.absUrl("href")
+                            }.getOrNull()
+                            if (!resolved.isNullOrBlank()) {
+                                val updated = current.toMutableList()
+                                updated[idx] = item.copy(
+                                    fullImageUrl = resolved,
+                                    preferPreviewOnly = false,
+                                    // UI側で404記録をクリアさせるため注記を更新
+                                    urlFixNote = "URL修正: /src/存在確認OK"
+                                )
+                                _images.postValue(updated)
+                                true
+                            } else false
+                        }
+                    }
+                    if (applied) break else if (i == attemptDelays.lastIndex) break
+                }
+            } catch (_: Exception) {
+                // 失敗時は黙殺（UI は既存ロジックでプレビュー継続）
+            } finally {
+                synchronized(upgradingFull) { upgradingFull.remove(detailUrl) }
+            }
         }
     }
 

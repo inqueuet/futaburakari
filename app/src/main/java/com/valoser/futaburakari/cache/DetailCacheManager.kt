@@ -85,8 +85,22 @@ class DetailCacheManager(private val context: Context) {
     fun saveDetails(url: String, details: List<DetailContent>) {
         val cacheFile = getCacheFile(url)
         val legacyFile = getLegacyCacheFile(url)
-        Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
+
         try {
+            // 既存内容と差分がなければスキップ（タイムスタンプの差だけで書き換えない）
+            if (cacheFile.exists()) {
+                runCatching {
+                    val existing = gson.fromJson(cacheFile.readText(), object : TypeToken<CachedDetails>() {}.type) as CachedDetails
+                    if (existing.details == details) {
+                        Log.d("DetailCacheManager", "Cache unchanged for $url; skipping write.")
+                        // レガシー名の掃除だけは行う
+                        runCatching { if (legacyFile.exists()) legacyFile.delete() }
+                        return
+                    }
+                }
+            }
+
+            Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
             val cachedData = CachedDetails(System.currentTimeMillis(), details)
             val jsonString = gson.toJson(cachedData)
             Log.d("DetailCacheManager", "JSON string length: ${jsonString.length}")
@@ -212,6 +226,18 @@ class DetailCacheManager(private val context: Context) {
     fun saveArchiveSnapshot(url: String, details: List<DetailContent>) {
         runCatching {
             val f = getArchiveSnapshotFile(url)
+
+            // 既存スナップショットと内容が同一なら書き換えをスキップ
+            if (f.exists()) {
+                runCatching {
+                    val existing: CachedDetails = gson.fromJson(f.readText(), object : TypeToken<CachedDetails>() {}.type)
+                    if (existing.details == details) {
+                        Log.d("DetailCacheManager", "Archive snapshot unchanged for $url; skipping write.")
+                        return
+                    }
+                }
+            }
+
             val json = gson.toJson(CachedDetails(System.currentTimeMillis(), details))
             f.writeText(json)
             Log.d("DetailCacheManager", "Saved archive snapshot: ${f.absolutePath}")

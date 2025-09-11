@@ -198,6 +198,9 @@ class MainActivity : BaseActivity() {
                     onImageLoadHttp404 = { item, failedUrl ->
                         viewModel.fixImageIf404(item.detailUrl, failedUrl)
                     },
+                    onRequestFullImage = { item ->
+                        viewModel.ensureFullImage(item.detailUrl)
+                    },
                     )
 
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))

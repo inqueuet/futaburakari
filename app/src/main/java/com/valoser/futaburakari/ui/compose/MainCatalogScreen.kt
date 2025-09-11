@@ -49,6 +49,7 @@ import coil3.size.Dimension
 import coil3.size.Precision
 import coil3.network.HttpException
 import coil3.request.ErrorResult
+import coil3.request.SuccessResult
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import kotlinx.coroutines.delay
@@ -114,6 +115,7 @@ fun MainCatalogScreen(
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
+    onRequestFullImage: (item: ImageItem) -> Unit,
 ) {
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
@@ -266,6 +268,27 @@ fun MainCatalogScreen(
             }
     }
 
+    // 再読み込み完了直後（isLoading -> false）に、可視範囲でまだプレビュー表示のものをフル化要求
+    val requestedOnReload = remember { mutableStateSetOf<String>() } // detailUrl 単位
+    LaunchedEffect(isLoading, filtered) {
+        if (isLoading) {
+            requestedOnReload.clear()
+            return@LaunchedEffect
+        }
+        // 少し待ってレイアウト確定後に可視アイテムを取得
+        delay(150L)
+        val visibleKeys = gridState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String }
+        if (visibleKeys.isEmpty()) return@LaunchedEffect
+        val byDetail = filtered.associateBy { it.detailUrl }
+        // 上限をかけて一気に投げすぎない（例: 12件）
+        visibleKeys.take(12).forEach { k ->
+            val item = byDetail[k] ?: return@forEach
+            if (!requestedOnReload.add(k)) return@forEach
+            // プレビュー固定指定/プレビュー不可以外は、可視範囲でフル化を促す（既にfullがあっても再確認を促進）
+            if (!item.preferPreviewOnly && !item.previewUnavailable) onRequestFullImage(item)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -353,6 +376,7 @@ fun MainCatalogScreen(
                         item = item,
                         onClick = { onItemClick(item) },
                         onImageLoadHttp404 = onImageLoadHttp404,
+                        onRequestFullImage = onRequestFullImage,
                         known404Urls = known404Urls,
                     )
                 }
@@ -404,6 +428,7 @@ private fun CatalogCard(
     item: ImageItem,
     onClick: () -> Unit,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
+    onRequestFullImage: (item: ImageItem) -> Unit,
     known404Urls: MutableMap<String, Boolean>,
 ) {
     Card(
@@ -478,6 +503,25 @@ private fun CatalogCard(
                         )
                     }
                 } else {
+                // サムネイル成功表示を検知し、UI側でも約0.5秒間隔で最大5回までフル化を促す
+                var previewDisplayed by remember(item.detailUrl) { mutableStateOf(false) }
+                var requestTries by remember(item.detailUrl) { mutableStateOf(0) }
+                LaunchedEffect(previewDisplayed, item.fullImageUrl, item.preferPreviewOnly, displayUrl) {
+                    if (!previewDisplayed) return@LaunchedEffect
+                    if (item.preferPreviewOnly) return@LaunchedEffect
+                    // 既にフルURLが入った/フルを表示しているなら不要
+                    if (!item.fullImageUrl.isNullOrBlank() && displayUrl != item.previewUrl) return@LaunchedEffect
+
+                    // 最大5回、約0.5秒間隔でUIがまだサムネを表示していないか確認しつつ促す
+                    while (requestTries < 5 && (displayUrl == item.previewUrl) && item.fullImageUrl.isNullOrBlank() && !item.preferPreviewOnly) {
+                        delay(500L)
+                        // 直前でフルに切り替わっていれば打ち切り
+                        if (displayUrl != item.previewUrl || !item.fullImageUrl.isNullOrBlank()) break
+                        requestTries += 1
+                        onRequestFullImage(item)
+                    }
+                }
+
                 SubcomposeAsyncImage(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -494,6 +538,18 @@ private fun CatalogCard(
                         )
                         .listener(
                             object : ImageRequest.Listener {
+                                override fun onSuccess(request: ImageRequest, result: coil3.request.SuccessResult) {
+                                    // 実表示がプレビューURLだった場合に検知
+                                    val loaded = request.data?.toString()
+                                    if (loaded == item.previewUrl) {
+                                        previewDisplayed = true
+                                    } else {
+                                        // フルURLの表示成功を検知したら、局所404記録を解除して以降のプレビュー固定を防ぐ
+                                        if (lastFailedFullUrl != null && (loaded == item.fullImageUrl || (loaded?.contains("/src/") == true))) {
+                                            lastFailedFullUrl = null
+                                        }
+                                    }
+                                }
                                 override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
                                     val ex = result.throwable
                                     val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
@@ -567,6 +623,9 @@ private fun CatalogCard(
                                 )
                                 .listener(
                                     object : ImageRequest.Listener {
+                                        override fun onSuccess(request: ImageRequest, result: coil3.request.SuccessResult) {
+                                            previewDisplayed = true
+                                        }
                                         override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
                                             // サムネイル側のHTTP 4xx（404/403等）も通知対象に広げる
                                             val ex = result.throwable
