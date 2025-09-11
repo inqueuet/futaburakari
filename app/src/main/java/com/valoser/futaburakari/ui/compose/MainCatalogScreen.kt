@@ -1,7 +1,12 @@
 /**
  * 画像カタログ（メイン一覧）画面のCompose実装。
- * - プル更新や端の強めオーバースクロール更新、軽量プリフェッチなどの体験最適化を含みます。
- * - 本変更ではコメントを補足するのみで、実装の変更は行いません。
+ *
+ * 特徴:
+ * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
+ * - 体験: 可視範囲＋先読みの軽量プリフェッチでスクロールを滑らかに。
+ * - 表示: カード下部にグラデーション＋タイトル、右下に返信数バッジ。
+ * - エラー: フル画像の取得が 404 等で失敗した場合はサムネイルにフォールバック。サムネイルも失敗した場合は簡易プレースホルダを表示。
+ *          404 検知時は `onImageLoadHttp404` を介して ViewModel に通知し、URL 補正を試みる。
  */
 package com.valoser.futaburakari.ui.compose
 
@@ -37,6 +42,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import coil3.compose.AsyncImage
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.size.Dimension
@@ -65,6 +71,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
  * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
+ * - エラー: 画像ロード失敗時は自動でサムネイルにフォールバックし、それも不可なら簡易プレースホルダを表示。
  *
  * パラメータ:
  * - `modifier`: ルートレイアウト用の修飾子。
@@ -81,6 +88,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
+ * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。ViewModel 側で URL 補正（代替URLの探索・差し替え）を行うために使用。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -364,6 +372,9 @@ private fun MoreMenu(
  * カタログアイテムのカード表示。
  * 下部グラデーション上にタイトルを配置し、返信数は右下バッジとして上位レイヤーに重ねる。
  * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
+ * エラー時の挙動: フル画像のロードに失敗（例: HTTP 404）した場合はサムネイルにフォールバックし、
+ * サムネイルも失敗した場合は簡易プレースホルダを表示。404 は `onImageLoadHttp404` に通知され、
+ * ViewModel 側で代替URLの探索・補正が試行される。
  */
 @Composable
 private fun CatalogCard(
@@ -416,6 +427,47 @@ private fun CatalogCard(
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }
+                    },
+                    error = {
+                        // フル画像の取得に失敗（例: 404）の場合は、サムネイルをフォールバック表示
+                        SubcomposeAsyncImage(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(3f / 4f),
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(item.previewUrl)
+                                .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
+                                .precision(Precision.INEXACT)
+                                .listener(
+                                    object : ImageRequest.Listener {
+                                        override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
+                                            // サムネイル側も失敗した場合（404 など）は修正ハンドラに伝播しておく
+                                            val ex = result.throwable
+                                            if (ex is HttpException && ex.response.code == 404) {
+                                                val failed = request.data?.toString() ?: item.previewUrl
+                                                onImageLoadHttp404(item, failed)
+                                            }
+                                        }
+                                    }
+                                )
+                                .build(),
+                            imageLoader = LocalContext.current.imageLoader,
+                            contentDescription = item.title,
+                            // サムネイルも失敗した場合は簡易プレースホルダ
+                            error = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(3f / 4f)
+                                ) {
+                                    Text(
+                                        text = "画像を表示できません",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.align(Alignment.Center)
+                                    )
+                                }
+                            }
+                        )
                     }
                 )
             }
