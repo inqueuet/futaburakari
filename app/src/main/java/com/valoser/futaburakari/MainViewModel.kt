@@ -120,23 +120,59 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 指定URLからカタログを取得し、解析・補完したリストを公開する。
-     * 失敗時はエラーメッセージを公開し、進行状態は isLoading に反映する。
+     * 指定URLからカタログを取得してすぐに表示し、その後に段階的な補正/補完をバックグラウンドで行う。
+     * 段階化:
+     *  1) まずプレビューのみで一覧を表示（HEADブロックなし）
+     *  2) バックグラウンドでプレビューURLのHEAD検証・補正（必要時のみ差分更新）
+     *  3) さらにバックグラウンドでフル画像URLの推測/HEAD検証（差分更新）
      */
     fun fetchImagesFromUrl(url: String) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 val document = networkClient.fetchDocument(url)
-                // URLに応じて解析手段を切り替え（#cattable 優先 → 準備ページは空 → cgi フォールバック）
+                // まずは解析のみ（HEADせず）で即表示
                 val baseItems = parseItemsFromDocument(document, url)
-                val previewSafe = validatePreviewUrls(baseItems)
-                val enriched = enrichWithFullImages(previewSafe)
-                _images.value = enriched
+                _images.value = baseItems
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
             } finally {
                 _isLoading.value = false
+            }
+
+            // 以降はバックグラウンドで段階的に改善
+            // 1) プレビューURLの検証・補正
+            val currentStage1 = _images.value ?: emptyList()
+            if (currentStage1.isNotEmpty()) {
+                runCatching {
+                    val validated = validatePreviewUrls(currentStage1)
+                    // 差分がある場合のみ更新（previewUrl のみ反映）
+                    val vMap = validated.associateBy { it.detailUrl }
+                    val merged = currentStage1.map { cur ->
+                        val v = vMap[cur.detailUrl]
+                        if (v != null && v.previewUrl != cur.previewUrl) cur.copy(previewUrl = v.previewUrl) else cur
+                    }
+                    if (merged !== currentStage1 && merged != currentStage1) {
+                        _images.postValue(merged)
+                    }
+                }
+            }
+
+            // 2) フル画像URLの推測/検証（不足分のみ）
+            val currentStage2 = _images.value ?: emptyList()
+            val needFull = currentStage2.filter { it.fullImageUrl.isNullOrBlank() }
+            if (needFull.isNotEmpty()) {
+                runCatching {
+                    val filled = enrichWithFullImages(needFull)
+                    val fMap = filled.associateBy { it.detailUrl }
+                    val merged = currentStage2.map { cur ->
+                        val f = fMap[cur.detailUrl]
+                        if (f != null && f.fullImageUrl != cur.fullImageUrl) cur.copy(fullImageUrl = f.fullImageUrl) else cur
+                    }
+                    if (merged !== currentStage2 && merged != currentStage2) {
+                        _images.postValue(merged)
+                    }
+                }
             }
         }
     }
@@ -149,29 +185,50 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val document = networkClient.fetchDocument(url)
-                // 解析手段の切り替えは同様。既存のfullImageUrlを引き継ぎ、不足分のみ補完する。
                 val newItemList = parseItemsFromDocument(document, url)
+
                 val currentItems = _images.value ?: emptyList()
                 val currentMapByDetail = currentItems.associateBy { it.detailUrl }
+                // まずは既存の fullImageUrl を引き継ぐだけで軽量に比較
                 val carried = newItemList.map { ni ->
                     val old = currentMapByDetail[ni.detailUrl]
                     ni.copy(fullImageUrl = old?.fullImageUrl)
                 }
-                val need = carried.filter { it.fullImageUrl.isNullOrBlank() }
-                val previewSafe = validatePreviewUrls(carried)
-                val needFull = previewSafe.filter { it.fullImageUrl.isNullOrBlank() }
-                val filled = if (needFull.isNotEmpty()) enrichWithFullImages(needFull) else emptyList()
-                val filledMap = filled.associateBy { it.detailUrl }
-                val merged = previewSafe.map { filledMap[it.detailUrl] ?: it }
-                val hasNewContent =
-                    merged.size != currentItems.size || !merged.containsAll(currentItems)
+                val hasNewContent = carried.size != currentItems.size || !carried.containsAll(currentItems)
 
                 if (hasNewContent) {
-                    _images.postValue(merged)
-                    Log.d("MainViewModel", "Updated catalog: ${currentItems.size} -> ${merged.size} items")
+                    _images.postValue(carried)
+                    Log.d("MainViewModel", "Updated catalog (light): ${currentItems.size} -> ${carried.size} items")
                     callback(true)
                 } else {
                     callback(false)
+                }
+
+                // バックグラウンドで段階的に品質向上（プレビュー検証→フル補完）
+                // プレビュー検証
+                runCatching {
+                    val validated = validatePreviewUrls(carried)
+                    val vMap = validated.associateBy { it.detailUrl }
+                    val merged = ( _images.value ?: carried ).map { cur ->
+                        val v = vMap[cur.detailUrl]
+                        if (v != null && v.previewUrl != cur.previewUrl) cur.copy(previewUrl = v.previewUrl) else cur
+                    }
+                    if (merged != _images.value) _images.postValue(merged)
+                }
+
+                // フル補完
+                val cur2 = _images.value ?: carried
+                val needFull = cur2.filter { it.fullImageUrl.isNullOrBlank() }
+                if (needFull.isNotEmpty()) {
+                    runCatching {
+                        val filled = enrichWithFullImages(needFull)
+                        val fMap = filled.associateBy { it.detailUrl }
+                        val merged = cur2.map { cur ->
+                            val f = fMap[cur.detailUrl]
+                            if (f != null && f.fullImageUrl != cur.fullImageUrl) cur.copy(fullImageUrl = f.fullImageUrl) else cur
+                        }
+                        if (merged != _images.value) _images.postValue(merged)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error checking for catalog updates", e)
