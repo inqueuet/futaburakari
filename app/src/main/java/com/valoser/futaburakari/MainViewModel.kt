@@ -461,7 +461,7 @@ class MainViewModel @Inject constructor(
     }
 
     // 短い遅延を挟んで再確認（伝播遅延などの瞬間的不一致に対応）
-    private suspend fun urlExistsWithRetry(url: String, retryDelayMs: Long = 50L, referer: String? = null): Boolean {
+    private suspend fun urlExistsWithRetry(url: String, retryDelayMs: Long = 1000L, referer: String? = null): Boolean {
         if (urlExists(url, referer)) return true
         delay(retryDelayMs)
         return urlExists(url, referer)
