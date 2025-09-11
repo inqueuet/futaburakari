@@ -153,6 +153,15 @@ class MainViewModel @Inject constructor(
                         }
                         _images.postValue(updated)
                         clear404ForDetail(detailUrl)
+                    } else if (!next.isNullOrBlank() && next == target.fullImageUrl) {
+                        // 同一URLでも存在確認が取れた場合はプレビュー固定を解除して復帰させる
+                        val updated = current.map {
+                            if (it.detailUrl == detailUrl) it.copy(
+                                preferPreviewOnly = false
+                            ) else it
+                        }
+                        _images.postValue(updated)
+                        clear404ForDetail(detailUrl)
                     } else if (target.fullImageUrl != null && next.isNullOrBlank()) {
                         // 候補が見つからない場合はフル画像URLを一旦クリアしてプレビュー表示にフォールバック
                         val updated = current.map {

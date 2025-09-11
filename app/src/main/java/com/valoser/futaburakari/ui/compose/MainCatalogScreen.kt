@@ -429,6 +429,12 @@ private fun CatalogCard(
                     lastFailedPreviewUrl = null
                 }
             }
+            // VM 側で復帰（preferPreviewOnly=false）した場合、同一URLでもプレビュー固定を解除できるように404記録をクリア
+            LaunchedEffect(item.preferPreviewOnly) {
+                if (!item.preferPreviewOnly && lastFailedFullUrl != null) {
+                    lastFailedFullUrl = null
+                }
+            }
 
             // 表示に使うURLを一本化（VMのpreferPreviewOnly + UIの局所404回避）
             val preferPreviewNow = item.preferPreviewOnly || (item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl)
