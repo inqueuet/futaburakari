@@ -1,7 +1,11 @@
 # Version Catalog
-# - バージョンや依存関係はビルド設定と連動するため変更しないこと。
-# - コメントのみ修正・追記可。整理・命名は現状維持。
+# - バージョンや依存関係はビルド設定と連動するため原則変更しないこと。
+# - このファイルではドキュメント性向上のためのコメント追加・整備のみを行います（記述の並びや命名は現状維持）。
+# - 新規ライブラリを追加する場合は [libraries] セクションに追記し、必要に応じて [versions] に参照を追加してください。
 [versions]
+# 各バージョンの由来や互換性
+# - Kotlin/AGP はプロジェクトの最小/ターゲットSDKやCompose BOMと整合する範囲で固定
+# - OkHttp/Media3/Material3 などはAPI互換性を優先し、段階的に更新
 agp = "8.12.2"
 ksp = "2.2.10-2.0.2"
 startup = "1.2.0"
@@ -36,6 +40,7 @@ firebaseBom = "34.2.0"
 [libraries]
 # Compose/AndroidX の BOM/各種モジュールはバージョン参照に依存
 # 個別ライブラリの追加はこのセクションへ（重複登録に注意）
+# 注意: BOMを利用するもの（Compose/OkHttpなど）は必要に応じて `version.ref` を省略し、BOMに解決を委ねます
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
@@ -81,10 +86,11 @@ firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics
 androidx-startup-runtime = { group = "androidx.startup", name = "startup-runtime", version.ref = "startup" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
- 
+
 
 [plugins]
 # 使用プラグイン（AGP/Kotlin/KSP など）
+# - Kotlin/Composeプラグインのバージョンは [versions] の `kotlin` を参照します
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

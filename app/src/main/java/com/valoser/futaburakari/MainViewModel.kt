@@ -9,7 +9,7 @@
  *
  * 実装メモ
  * - フル画像推測は /thumb/ や /cat/ を /src/ に置換し、末尾 "s." を通常拡張子へ置換
- * - HEAD 検証と補完は IO ディスパッチャで並列度を抑制（limitedParallelism(2)）
+ * - HEAD 検証と補完は IO ディスパッチャで実行し、並列度は AppPreferences の設定値で制御
  * - タイトルは <small> の先頭行（<br> より前）を取得して 1 行化
  */
 package com.valoser.futaburakari

@@ -144,7 +144,7 @@ class NetworkClient(
         val origin = "${refUrl.scheme}://${refUrl.host}"
         val sdUrl = "$origin/sd.php?$board.$resNum"
 
-        // ★ ここを“必ず戻り値を返す式”に修正
+            // use ブロックの評価値（件数等の応答数値）をそのまま返す設計に統一
         suspend fun once(): Int? {
             val jarCookies: List<Cookie> = runCatching { httpClient.cookieJar.loadForRequest(sdUrl.toHttpUrl()) }
                 .getOrElse { emptyList() }

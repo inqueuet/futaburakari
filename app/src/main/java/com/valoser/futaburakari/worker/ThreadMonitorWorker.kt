@@ -1,3 +1,8 @@
+/**
+ * スレURLの監視・アーカイブを行うWorkManager Workerの実装ファイル。
+ * - 監視スケジュール、スナップショット取得、キャッシュ・履歴反映などを扱います。
+ * - 本変更は説明コメントの補足のみで、既存ロジックは一切変更しません。
+ */
 package com.valoser.futaburakari.worker
 
 import android.content.Context

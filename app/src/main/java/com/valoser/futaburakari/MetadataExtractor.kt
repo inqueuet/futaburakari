@@ -24,7 +24,7 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
-// 動画プロンプト解析に関連する外部パーサーは削除
+// 動画プロンプト解析に関連する外部パーサーは削除（画像のみ対象）
 
 /**
  * 画像からプロンプト/説明テキストを抽出するユーティリティ。
@@ -43,11 +43,13 @@ object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定（ユーザー設定で可変） ======
+    // AppPreferences の並列度(1..8)を粗く 1/2 接続に写像して、
+    // HEAD/Range リクエストの同時実行を抑制する（端末/サーバ負荷のバランスを優先）。
     @Volatile
     private var currentPermits: Int = 1
     @Volatile
     private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
-    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 2
+    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 2 // 1..4 -> 1, 5..8 -> 2
     private fun ensureSemaphore(context: Context) {
         val level = AppPreferences.getConcurrencyLevel(context)
         val desired = permitsForLevel(level)

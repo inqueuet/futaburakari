@@ -8,12 +8,12 @@ package com.valoser.futaburakari
  * - `CookieJar`: 永続化されたアプリ共通の Cookie を提供（`PersistentCookieJar`）
  * - `OkHttpClient`（用途別に2系統）:
  *   - API 用（デフォルト DI）
- *     - 共通 UA 付与、タイムアウト、CookieJar/ConnectionPool 設定
+ *     - 共通 UA 付与、タイムアウト、CookieJar/ConnectionPool/HTTP キャッシュ（約50MB）を設定
  *     - Dispatcher: ユーザー設定に基づく `maxRequests = N`, `maxRequestsPerHost = N`（N は 1..8）
- *     - 2chan 系ホストへは軽い遅延（100ms）でレート抑制
+ *     - 2chan 系ホストへは軽い遅延（約 10ms）でレート抑制
  *     - 例外発生時は段階的にフォールバック（最小構成→完全デフォルト）
  *   - 画像取得用（`@Named("coil")`）
- *     - 設定は API 用と同等（Dispatcher はユーザー設定値、100ms 遅延、UA/Timeout/CookieJar/ConnectionPool）
+ *     - 設定は API 用と同等（Dispatcher はユーザー設定値、2chan は ~10ms 遅延、UA/Timeout/CookieJar/ConnectionPool）
  * - `NetworkClient`: API 用 OkHttpClient を用いるシングルトンの HTML/Bytes フェッチラッパー
  */
 

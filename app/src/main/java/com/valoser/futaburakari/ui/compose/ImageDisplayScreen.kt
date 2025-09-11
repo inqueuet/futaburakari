@@ -1,3 +1,8 @@
+/**
+ * 画像とプロンプト（説明文）を表示する画面のCompose実装。
+ * - 正方形領域に画像を表示し、下部にスクロール可能なテキストとコピー操作を提供します。
+ * - ここではコメントのみを整備し、ロジックやUIの挙動は変更しません。
+ */
 package com.valoser.futaburakari.ui.compose
 
 import android.content.ClipData

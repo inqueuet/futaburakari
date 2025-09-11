@@ -1,3 +1,8 @@
+/**
+ * 画像/動画/テキストを共通UIで表示するメディアビューのCompose実装。
+ * - 画像のズーム、動画再生、テキストのコピー/保存などを提供します。
+ * - コメントの追記のみを行い、コードの挙動は変更しません。
+ */
 package com.valoser.futaburakari.ui.compose
 
 import android.content.ClipData

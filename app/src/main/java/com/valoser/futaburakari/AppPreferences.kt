@@ -71,7 +71,7 @@ object AppPreferences {
 
     /**
      * Gets the user-selected global concurrency level (1..8).
-     * Defaults to 3 when unset or out of range.
+     * Defaults to 2 when unset; clamped to 1..8.
      */
     fun getConcurrencyLevel(context: Context): Int {
         val raw = getPreferences(context).getInt(KEY_CONCURRENCY_LEVEL, 2)

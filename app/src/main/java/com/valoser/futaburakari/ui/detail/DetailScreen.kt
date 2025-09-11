@@ -1,3 +1,8 @@
+/**
+ * スレ詳細画面（Scaffold構成）のCompose実装。
+ * - リスト、検索、ダイアログ/シート、広告などのUIを統合します。
+ * - ここではコメントの修正/追記のみを行い、コードは変更しません。
+ */
 package com.valoser.futaburakari.ui.detail
 
 import androidx.compose.foundation.clickable

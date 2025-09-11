@@ -1,3 +1,8 @@
+/**
+ * 画像カタログ（メイン一覧）画面のCompose実装。
+ * - プル更新や端の強めオーバースクロール更新、軽量プリフェッチなどの体験最適化を含みます。
+ * - 本変更ではコメントを補足するのみで、実装の変更は行いません。
+ */
 package com.valoser.futaburakari.ui.compose
 
 import androidx.compose.foundation.background

@@ -40,7 +40,7 @@ import okio.Path.Companion.toPath
  *     内部コンポーネント（例: PublicSuffixDatabase）を初期化するのみ（実通信なし）
  * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG のデコードを有効化）
  *   - OkHttp クライアントは `@Named("coil")` の用途別クライアントを使用
- *   - Dispatcher は 2 並列（per-host も 2）、2chan 系は 100ms 遅延
+ *   - Dispatcher はユーザー設定値（AppPreferences）で制御、2chan 系は軽い遅延（約 10ms）
  */
 class MyApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
@@ -49,7 +49,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
 
     @Inject
     @Named("coil")
-    lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher 2/2、2chan は 100ms 遅延）
+    lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は ~10ms 遅延）
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
