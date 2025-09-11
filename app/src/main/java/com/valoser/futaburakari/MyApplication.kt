@@ -49,7 +49,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
 
     @Inject
     @Named("coil")
-    lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は ~10ms 遅延）
+    lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は ~5ms 遅延）
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
