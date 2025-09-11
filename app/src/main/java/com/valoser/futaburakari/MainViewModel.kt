@@ -468,10 +468,10 @@ class MainViewModel @Inject constructor(
     }
 
     // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさむ確認
-    // 実質チェックタイミング: 約 50ms → +100ms → +150ms（合計 ~300ms）
-    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(100L, 150L)): Boolean {
-        // まず50ms待ってから1回目の確認
-        delay(50L)
+    // 実質チェックタイミング:
+    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(1000L, 1500L)): Boolean {
+        // まず2000ms待ってから1回目の確認
+        delay(2000L)
         if (urlExists(url, referer)) return true
         for (d in delaysMs) {
             delay(d)
