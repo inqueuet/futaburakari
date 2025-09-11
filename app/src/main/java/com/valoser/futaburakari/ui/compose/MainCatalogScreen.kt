@@ -483,21 +483,29 @@ private fun CatalogCard(
                             object : ImageRequest.Listener {
                                 override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
                                     val ex = result.throwable
-                                    // OkHttp ネットワークモジュール利用時は response.code から HTTP ステータスを取得できる
-                                    if (ex is HttpException && ex.response.code == 404) {
-                                        val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
-                                        // フル画像系の404を検知したら、当該URLでの再試行を一時停止しプレビュー固定
-                                if (failed.contains("/src/")) {
-                                    if (lastFailedFullUrl != failed) {
-                                        lastFailedFullUrl = failed
-                                        addKnown404AndNotify(item, failed)
-                                    }
-                                } else {
-                                    if (lastFailedPreviewUrl != failed) {
-                                        lastFailedPreviewUrl = failed
-                                        addKnown404AndNotify(item, failed)
-                                    }
-                                }
+                                    val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
+                                    // HTTPエラーは 4xx を幅広く修正フローに載せる（403/410 等も対象）
+                                    if (ex is HttpException) {
+                                        val code = ex.response.code
+                                        if (code in 400..499) {
+                                            if (failed.contains("/src/")) {
+                                                if (lastFailedFullUrl != failed) {
+                                                    lastFailedFullUrl = failed
+                                                    addKnown404AndNotify(item, failed)
+                                                }
+                                            } else {
+                                                if (lastFailedPreviewUrl != failed) {
+                                                    lastFailedPreviewUrl = failed
+                                                    addKnown404AndNotify(item, failed)
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // 非HTTP系（デコード失敗/IOなど）でも、フル画像試行時はHTML解析での補正を促す
+                                        if (failed.contains("/src/") && lastFailedFullUrl != failed) {
+                                            lastFailedFullUrl = failed
+                                            addKnown404AndNotify(item, failed)
+                                        }
                                     }
                                 }
                             }
@@ -542,13 +550,16 @@ private fun CatalogCard(
                                 .listener(
                                     object : ImageRequest.Listener {
                                         override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
-                                            // サムネイル側も失敗した場合（404 など）は修正ハンドラに伝播しておく
+                                            // サムネイル側のHTTP 4xx（404/403等）も通知対象に広げる
                                             val ex = result.throwable
-                                            if (ex is HttpException && ex.response.code == 404) {
-                                                val failed = request.data?.toString() ?: item.previewUrl
-                                                if (lastFailedPreviewUrl != failed) {
-                                                    lastFailedPreviewUrl = failed
-                                                    addKnown404AndNotify(item, failed)
+                                            if (ex is HttpException) {
+                                                val code = ex.response.code
+                                                if (code in 400..499) {
+                                                    val failed = request.data?.toString() ?: item.previewUrl
+                                                    if (lastFailedPreviewUrl != failed) {
+                                                        lastFailedPreviewUrl = failed
+                                                        addKnown404AndNotify(item, failed)
+                                                    }
                                                 }
                                             }
                                         }

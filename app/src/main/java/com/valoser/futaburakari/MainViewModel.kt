@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -65,10 +66,13 @@ class MainViewModel @Inject constructor(
     val isLoading: LiveData<Boolean> = _isLoading
 
     // 個別404に対する同時多発を抑制するためのガード
+    // 404修正の同時多発を抑制するためのガード
+    // detailUrl 単位だとプレビュー404対応中にフル画像404の修正が潰れることがあるため、
+    // 失敗URL単位（detailUrl|failedUrl）で抑制する。
     private val fixing404 = mutableSetOf<String>()
     // 404回数制限（detailUrl + failedUrl 単位でカウント）
     private val http404Counts = mutableMapOf<String, Int>()
-    private val MAX_404_RETRY = 2
+    private val MAX_404_RETRY = 3
 
     private fun inc404(detailUrl: String, failedUrl: String): Int = synchronized(http404Counts) {
         val key = "$detailUrl|$failedUrl"
@@ -91,9 +95,10 @@ class MainViewModel @Inject constructor(
      * - サムネイル（/cat/ や /thumb/）の404は候補（拡張子違い等）を逐次 HEAD で検証して置換。
      */
     fun fixImageIf404(detailUrl: String, failedUrl: String) {
-        // detailUrl 単位で多重実行を抑制
+        // detailUrl|failedUrl 単位で多重実行を抑制（プレビューとフルの並行修正を許可）
+        val guardKey = "$detailUrl|$failedUrl"
         synchronized(fixing404) {
-            if (!fixing404.add(detailUrl)) return
+            if (!fixing404.add(guardKey)) return
         }
         viewModelScope.launch {
             try {
@@ -133,21 +138,26 @@ class MainViewModel @Inject constructor(
                             ?: doc.selectFirst("a[href*='/src/']")?.absUrl("href")
                     }.getOrNull()
 
-                    val candidateFulls: List<String> = buildList {
-                        if (!resolved.isNullOrBlank()) add(resolved)
-                        // 2) 最後の手段として拡張子バリエーションを試す
+                    // HTMLから得た /src/ があれば無検証で採用（HEADが恒常的に403になる環境のための緩和）
+                    val usedHtmlDirect = !resolved.isNullOrBlank()
+                    val next: String? = if (usedHtmlDirect) {
+                        resolved
+                    } else {
+                        // 最後の手段として拡張子バリエーションを検証しながら試す
                         val base = failedUrl.substringBeforeLast('.')
-                        listOf("jpg", "jpeg", "png", "webp", "gif", "webm", "mp4").forEach { ext ->
-                            add("$base.$ext")
-                        }
-                    }.distinct()
-
-                    val next = candidateFulls.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
+                        val extCandidates = listOf("jpg", "jpeg", "png", "webp", "gif", "webm", "mp4")
+                            .map { "$base.$it" }
+                        extCandidates.firstOrNull { runCatching { urlExistsTwoStage(it, referer = detailUrl) }.getOrDefault(false) }
+                    }
                     if (!next.isNullOrBlank() && next != target.fullImageUrl) {
                         val updated = current.map {
                             if (it.detailUrl == detailUrl) it.copy(
                                 fullImageUrl = next,
-                                urlFixNote = "URL修正: /src/をHTMLから確定",
+                                urlFixNote = if (usedHtmlDirect) {
+                                    "URL修正: /src/をHTMLから採用（無検証）"
+                                } else {
+                                    "URL修正: /src/候補を検証して確定"
+                                },
                                 preferPreviewOnly = false
                             ) else it
                         }
@@ -178,7 +188,7 @@ class MainViewModel @Inject constructor(
                     // サムネイルの404: 候補からHEADで置換。見つからなければ previewUnavailable=true で停止。
                     val candidates = buildCatalogThumbCandidates(detailUrl)
                         .filter { it != target.previewUrl }
-                    val next = candidates.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
+                    val next = candidates.firstOrNull { runCatching { urlExistsTwoStage(it, referer = detailUrl) }.getOrDefault(false) }
                     val updated = current.map {
                         if (it.detailUrl == detailUrl) {
                             if (!next.isNullOrBlank() && next != it.previewUrl) {
@@ -200,7 +210,7 @@ class MainViewModel @Inject constructor(
             } catch (_: Exception) {
                 // 失敗時は無視（UIは既存のエラープレースホルダを表示）
             } finally {
-                synchronized(fixing404) { fixing404.remove(detailUrl) }
+                synchronized(fixing404) { fixing404.remove(guardKey) }
             }
         }
     }
@@ -227,13 +237,14 @@ class MainViewModel @Inject constructor(
      * URL の存在確認を行う。
      * - まず UA 付き HEAD で確認し、失敗した場合は GET Range(0-0) でフォールバック。
      */
-    private suspend fun urlExists(url: String): Boolean {
+    private suspend fun urlExists(url: String, referer: String? = null): Boolean {
         // 1) HEAD with UA
         val okHead = withContext(Dispatchers.IO) {
             val req = Request.Builder()
                 .url(url)
                 .head()
                 .header("User-Agent", Ua.STRING)
+                .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
                 .build()
             runCatching {
                 okHttpClient.newCall(req).executeAsync().use { resp ->
@@ -243,7 +254,7 @@ class MainViewModel @Inject constructor(
         }
         if (okHead) return true
         // 2) Fallback: GET Range 0-0（NetworkClientはUA等を付与）
-        val bytes = runCatching { networkClient.fetchRange(url, 0, 1) }.getOrNull()
+        val bytes = runCatching { networkClient.fetchRange(url, 0, 1, referer = referer) }.getOrNull()
         return bytes != null
     }
 
@@ -259,7 +270,7 @@ class MainViewModel @Inject constructor(
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {
-                    if (guessedUrl != null && urlExists(guessedUrl)) {
+                    if (guessedUrl != null && urlExists(guessedUrl, referer = item.detailUrl)) {
                         item.copy(fullImageUrl = guessedUrl)
                     } else {
                         item
@@ -449,6 +460,26 @@ class MainViewModel @Inject constructor(
         )
     }
 
+    // 短い遅延を挟んで再確認（伝播遅延などの瞬間的不一致に対応）
+    private suspend fun urlExistsWithRetry(url: String, retryDelayMs: Long = 50L, referer: String? = null): Boolean {
+        if (urlExists(url, referer)) return true
+        delay(retryDelayMs)
+        return urlExists(url, referer)
+    }
+
+    // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさむ確認
+    // 実質チェックタイミング: 約 50ms → +100ms → +150ms（合計 ~300ms）
+    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(100L, 150L)): Boolean {
+        // まず50ms待ってから1回目の確認
+        delay(50L)
+        if (urlExists(url, referer)) return true
+        for (d in delaysMs) {
+            delay(d)
+            if (urlExists(url, referer)) return true
+        }
+        return false
+    }
+
     // small 要素から <br> より前の一行目を抽出してプレーンテキスト化
     // - 例: "タイトル<br>サブタイトル" → "タイトル"
     // - `<br>` が無い場合は全体をプレーン化して trim のみ
@@ -472,10 +503,10 @@ class MainViewModel @Inject constructor(
                 async {
                     val current = item.previewUrl
                     // まず現行URLが有効ならそのまま
-                    if (current.isNotBlank() && urlExists(current)) return@async item
+                    if (current.isNotBlank() && urlExists(current, referer = item.detailUrl)) return@async item
                     // 候補を順番にHEAD確認
                     val candidates = buildCatalogThumbCandidates(item.detailUrl)
-                    val chosen = candidates.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
+                    val chosen = candidates.firstOrNull { runCatching { urlExists(it, referer = item.detailUrl) }.getOrDefault(false) }
                     if (chosen != null && chosen != current) item.copy(previewUrl = chosen) else item
                 }
             }.awaitAll()

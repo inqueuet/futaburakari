@@ -96,7 +96,7 @@ class NetworkClient(
 
     // Range GET で部分取得（サーバが200を返した場合は手動でスライス）。
     // 最大2MBまで読み取り、必要十分な先頭範囲の取得に利用。
-    suspend fun fetchRange(url: String, start: Long, length: Long): ByteArray? = withContext(Dispatchers.IO) {
+    suspend fun fetchRange(url: String, start: Long, length: Long, referer: String? = null): ByteArray? = withContext(Dispatchers.IO) {
         val end = if (length > 0) start + length - 1 else null
         val rangeValue = if (end != null) "bytes=$start-$end" else "bytes=$start-"
         val req = Request.Builder()
@@ -104,6 +104,7 @@ class NetworkClient(
             .get()
             .header("Range", rangeValue)
             .header("User-Agent", Ua.STRING)
+            .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
             httpClient.newCall(req).executeAsync().use { resp ->
