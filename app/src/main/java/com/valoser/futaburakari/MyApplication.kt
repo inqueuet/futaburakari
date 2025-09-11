@@ -40,7 +40,7 @@ import okio.Path.Companion.toPath
  *     内部コンポーネント（例: PublicSuffixDatabase）を初期化するのみ（実通信なし）
  * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG のデコードを有効化）
  *   - OkHttp クライアントは `@Named("coil")` の用途別クライアントを使用
- *   - Dispatcher はユーザー設定値（AppPreferences）で制御、2chan 系は軽い遅延（約 10ms）
+ *   - Dispatcher はユーザー設定値（AppPreferences）で制御、2chan 系は軽い遅延（約 2ms）
  */
 class MyApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 

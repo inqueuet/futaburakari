@@ -138,7 +138,12 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // プレビューURLからフル画像URLを推測（thumb/cat -> src、末尾の s. を通常拡張に）
+    /**
+     * プレビューURLからフル画像URLを推測する。
+     * - `/thumb/` または `/cat/` を `/src/` に置換
+     * - 末尾の `s.` を通常拡張子（.jpg/.png 等）に置換
+     * 失敗時は `null` を返す。
+     */
     private fun guessFullFromPreview(previewUrl: String): String? {
         return try {
             var s = previewUrl
@@ -151,7 +156,10 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // URLの存在確認：HEAD(UA付) → 失敗時はGET Range(1byte)でフォールバック
+    /**
+     * URL の存在確認を行う。
+     * - まず UA 付き HEAD で確認し、失敗した場合は GET Range(0-0) でフォールバック。
+     */
     private suspend fun urlExists(url: String): Boolean {
         // 1) HEAD with UA
         val okHead = withContext(Dispatchers.IO) {
@@ -172,7 +180,10 @@ class MainViewModel @Inject constructor(
         return bytes != null
     }
 
-    // フル画像URLを補完：推測→HEAD検証→不足分は詳細HTMLから /src/ を抽出
+    /**
+     * フル画像URLを段階的に補完する。
+     * - 推測規則で候補を生成 → HEAD 検証 → 不足分は詳細HTMLから `/src/` を抽出
+     */
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
@@ -332,7 +343,9 @@ class MainViewModel @Inject constructor(
         return parsedItems
     }
 
-    // サムネイル候補（cat/thumb の拡張子違い）を列挙
+    /**
+     * サムネイル候補URL（cat/thumb の拡張子違い）を列挙する。
+     */
     private fun buildCatalogThumbCandidates(detailUrl: String): List<String> {
         val m = Regex("""/res/(\d+)\.htm""").find(detailUrl) ?: return emptyList()
         val id = m.groupValues[1]

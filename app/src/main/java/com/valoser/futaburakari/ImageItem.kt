@@ -5,6 +5,13 @@ package com.valoser.futaburakari
  *
  * - サムネイルURL、タイトル、レス数表示用文字列、詳細画面遷移用URLを保持
  * - 必要に応じてフルサイズ画像のURLも保持（任意）
+ *
+ * @property previewUrl サムネイル画像のURL（旧 imageUrl）
+ * @property title 表示タイトル
+ * @property replyCount レス数等の表示用文字列
+ * @property detailUrl 詳細表示へ遷移するためのURL
+ * @property fullImageUrl フルサイズ画像のURL（任意）
+ * @property urlFixNote 個別404時の候補探索で置換された際のメモ（UI表示用）
  */
 data class ImageItem(
     val previewUrl: String,      // サムネイル画像のURL（旧 imageUrl）

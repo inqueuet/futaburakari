@@ -395,7 +395,7 @@ private fun CatalogCard(
                             object : ImageRequest.Listener {
                                 override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
                                     val ex = result.throwable
-                                    // With OkHttp network module, the status can be read from response.code.
+                                    // OkHttp ネットワークモジュール利用時は response.code から HTTP ステータスを取得できる
                                     if (ex is HttpException && ex.response.code == 404) {
                                         val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
                                         onImageLoadHttp404(item, failed)

@@ -87,7 +87,7 @@ class MainActivity : BaseActivity() {
             "ng_rules_json" -> {
                 ngRulesState.value = ngStore.getRules()
             }
-            // removed: color mode preference (always dynamic/default now)
+            // 旧カラー設定は廃止（現在はテーマ側で動的/既定に統合）
         }
     }
 
@@ -256,7 +256,7 @@ class MainActivity : BaseActivity() {
         ngRulesState.value = ngStore.getRules()
     }
 
-    // no-op: 旧実装との互換のために残置（Compose移行で不要）
+    // 何もしない: 旧実装との互換のために残置（Compose 移行で不要）
     private fun configureSwipeRefreshIndicatorPosition() { }
     // RecyclerView時代の処理はComposeへ移行済み
     private fun cancelAutoUpdate() {
