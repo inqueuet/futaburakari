@@ -98,6 +98,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     // 旧「カラーモード」設定は廃止
     var autoCleanup by remember { mutableStateOf(prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0") }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
+    // 同時接続数（1..8）。AppPreferences に保存
+    var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
     // バックグラウンド監視トグルは常時有効化のため廃止
 
     // 投稿用パスワード入力ダイアログの状態
@@ -200,6 +202,37 @@ fun SettingsScreen(onBack: () -> Unit) {
                         putExtra(NgManagerActivity.EXTRA_LIMIT_RULE_TYPE, RuleType.TITLE.name)
                     })
                 }
+            }
+
+            // ネットワーク（同時接続数）
+            item { SectionHeader(text = "ネットワーク") }
+            item {
+                DropdownPreferenceRow(
+                    title = "同時接続数",
+                    entries = listOf(
+                        "1: Dispatcher(1/1), メタデータ(1), 並列(1)",
+                        "2: Dispatcher(2/2), メタデータ(1), 並列(2)",
+                        "3: Dispatcher(3/3), メタデータ(1), 並列(3)",
+                        "4: Dispatcher(4/4), メタデータ(1), 並列(4)",
+                        "5: Dispatcher(5/5), メタデータ(2), 並列(5)",
+                        "6: Dispatcher(6/6), メタデータ(2), 並列(6)",
+                        "7: Dispatcher(7/7), メタデータ(2), 並列(7)",
+                        "8: Dispatcher(8/8), メタデータ(2), 並列(8)",
+                    ),
+                    values = (1..8).map { it.toString() },
+                    value = concurrencyLevel,
+                    onValueChange = { v ->
+                        concurrencyLevel = v
+                        AppPreferences.setConcurrencyLevel(ctx, v.toInt())
+                        android.widget.Toast.makeText(
+                            ctx,
+                            "同時接続数を保存しました。完全反映にはアプリ再起動が必要です。",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        // Activity 再生成で ViewModel 側の並列度は反映されやすい
+                        (ctx as? Activity)?.recreate()
+                    }
+                )
             }
 
             item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }

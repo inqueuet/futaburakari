@@ -92,8 +92,7 @@ class DetailViewModel @Inject constructor(
     // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
     private val sodaNeStates = mutableMapOf<String, Boolean>()
 
-    // メタデータ抽出の並列数を制限
-    private val limitedIO = Dispatchers.IO.limitedParallelism(3)
+    // メタデータ抽出の並列数は実行時にユーザー設定を参照
 
     /**
      * 詳細を取得して表示を更新。
@@ -427,6 +426,7 @@ class DetailViewModel @Inject constructor(
         contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
+                    val limitedIO = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
                             /*  画像プロンプトの取得タイムアウト時間はここを変更  */

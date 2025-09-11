@@ -9,11 +9,11 @@ package com.valoser.futaburakari
  * - `OkHttpClient`（用途別に2系統）:
  *   - API 用（デフォルト DI）
  *     - 共通 UA 付与、タイムアウト、CookieJar/ConnectionPool 設定
- *     - Dispatcher: `maxRequests=2`, `maxRequestsPerHost=2`
+ *     - Dispatcher: ユーザー設定に基づく `maxRequests = N`, `maxRequestsPerHost = N`（N は 1..8）
  *     - 2chan 系ホストへは軽い遅延（100ms）でレート抑制
  *     - 例外発生時は段階的にフォールバック（最小構成→完全デフォルト）
  *   - 画像取得用（`@Named("coil")`）
- *     - 設定は API 用と同等（Dispatcher 2/2、100ms 遅延、UA/Timeout/CookieJar/ConnectionPool）
+ *     - 設定は API 用と同等（Dispatcher はユーザー設定値、100ms 遅延、UA/Timeout/CookieJar/ConnectionPool）
  * - `NetworkClient`: API 用 OkHttpClient を用いるシングルトンの HTML/Bytes フェッチラッパー
  */
 
@@ -66,15 +66,17 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(
+        @ApplicationContext context: Context,
         cookieJar: CookieJar,
         connectionPool: ConnectionPool,
         cache: Cache,
     ): OkHttpClient {
         return try {
-            // 同時接続数を抑制（特にホスト単位）。Coil等の並列アクセスを穏やかにする
+            // 同時接続数はユーザー設定値を使用
+            val level = AppPreferences.getConcurrencyLevel(context)
             val dispatcher = Dispatcher().apply {
-                maxRequests = 3
-                maxRequestsPerHost = 3
+                maxRequests = level
+                maxRequestsPerHost = level
             }
 
             OkHttpClient.Builder()
@@ -123,11 +125,14 @@ object NetworkModule {
     @Provides
     @Singleton
     @Named("coil")
-    fun provideCoilOkHttpClient(cookieJar: CookieJar, connectionPool: ConnectionPool): OkHttpClient {
+    fun provideCoilOkHttpClient(
+        @ApplicationContext context: Context,
+        cookieJar: CookieJar, connectionPool: ConnectionPool): OkHttpClient {
         return try {
+            val level = AppPreferences.getConcurrencyLevel(context)
             val dispatcher = Dispatcher().apply {
-                maxRequests = 3
-                maxRequestsPerHost = 3
+                maxRequests = level
+                maxRequestsPerHost = level
             }
 
             OkHttpClient.Builder()

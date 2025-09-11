@@ -42,9 +42,21 @@ import kotlin.math.min
 object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
-    // ====== 同時接続数制限設定 ======
-    private const val MAX_CONCURRENT_CONNECTIONS = 1 // 同時接続数を1に制限
-    private val connectionSemaphore = Semaphore(MAX_CONCURRENT_CONNECTIONS)
+    // ====== 同時接続数制限設定（ユーザー設定で可変） ======
+    @Volatile
+    private var currentPermits: Int = 1
+    @Volatile
+    private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
+    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 2
+    private fun ensureSemaphore(context: Context) {
+        val level = AppPreferences.getConcurrencyLevel(context)
+        val desired = permitsForLevel(level)
+        if (desired != currentPermits) {
+            // 再生成して差し替え（進行中の待機には影響しない）
+            currentPermits = desired
+            connectionSemaphore = Semaphore(desired)
+        }
+    }
     private val activeConnectionCount = AtomicInteger(0)
 
     // ====== 既存の設定値 ======
@@ -65,6 +77,8 @@ object MetadataExtractor {
      */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
+            // セマフォを最新設定に同期
+            ensureSemaphore(context)
             if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
                 context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
                     // ローカルは全体（または上限）を読んでタイプ別に抽出
@@ -78,7 +92,7 @@ object MetadataExtractor {
             val ext = uriOrUrl.substringAfterLast('.', "").lowercase()
             return@withContext when (ext) {
                 "jpg", "jpeg", "webp" -> {
-                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
+                    val head = httpGetRangeWithLimit(context, uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
                     if (head != null) {
                         // EXIF優先 → JPEGのAPP1(XMP)/APP13(IPTC) → テキスト走査
                         extractFromExif(head)
@@ -87,13 +101,13 @@ object MetadataExtractor {
                     } else null
                 }
                 "png" -> {
-                    extractPngPromptStreamingWithLimit(uriOrUrl, networkClient)
+                    extractPngPromptStreamingWithLimit(context, uriOrUrl, networkClient)
                 }
                 // 動画のプロンプト取得は廃止
                 "mp4", "mov", "m4v" -> null
                 "webm" -> null
                 else -> {
-                    val head = httpGetRangeWithLimit(uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient) ?: return@withContext null
+                    val head = httpGetRangeWithLimit(context, uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient) ?: return@withContext null
                     extractBySniff(head, uriOrUrl)
                 }
             }
@@ -107,7 +121,8 @@ object MetadataExtractor {
     /**
      * 同時接続数を制限してRange GETを実行
      */
-    private suspend fun httpGetRangeWithLimit(urlStr: String, start: Long, length: Long, networkClient: NetworkClient): ByteArray? {
+    private suspend fun httpGetRangeWithLimit(context: Context, urlStr: String, start: Long, length: Long, networkClient: NetworkClient): ByteArray? {
+        ensureSemaphore(context)
         return connectionSemaphore.withPermit {
             val connectionCount = activeConnectionCount.incrementAndGet()
             try {
@@ -122,7 +137,8 @@ object MetadataExtractor {
     /**
      * 同時接続数を制限してHEADリクエストを実行
      */
-    private suspend fun httpHeadWithLimit(urlStr: String, networkClient: NetworkClient): HeadInfo? {
+    private suspend fun httpHeadWithLimit(context: Context, urlStr: String, networkClient: NetworkClient): HeadInfo? {
+        ensureSemaphore(context)
         return connectionSemaphore.withPermit {
             val connectionCount = activeConnectionCount.incrementAndGet()
             try {
@@ -134,19 +150,19 @@ object MetadataExtractor {
         }
     }
 
-    private suspend fun httpHeadContentLengthWithLimit(urlStr: String, networkClient: NetworkClient): Long? {
-        val info = httpHeadWithLimit(urlStr, networkClient)
+    private suspend fun httpHeadContentLengthWithLimit(context: Context, urlStr: String, networkClient: NetworkClient): Long? {
+        val info = httpHeadWithLimit(context, urlStr, networkClient)
         return info?.contentLength
     }
 
     // ====== PNG: 同時接続数制限付きストリーミング処理 ======
     // 初回は固定サイズを取得し、必要に応じて窓を広げて tEXt/zTXt/iTXt や XMP を検出する。
-    private suspend fun extractPngPromptStreamingWithLimit(fileUrl: String, networkClient: NetworkClient): String? {
+    private suspend fun extractPngPromptStreamingWithLimit(context: Context, fileUrl: String, networkClient: NetworkClient): String? {
         var windowSize = PNG_WINDOW_BYTES
         var totalFetched = 0
         val buf = ByteArrayOutputStream()
 
-        val first = httpGetRangeWithLimit(fileUrl, 0, windowSize.toLong(), networkClient) ?: return null
+        val first = httpGetRangeWithLimit(context, fileUrl, 0, windowSize.toLong(), networkClient) ?: return null
         buf.write(first)
         totalFetched += first.size
 
@@ -159,7 +175,7 @@ object MetadataExtractor {
             windowSize = min(PNG_WINDOW_BYTES, GLOBAL_MAX_BYTES - totalFetched)
             if (windowSize <= 0) break
 
-            val more = httpGetRangeWithLimit(fileUrl, offset, windowSize.toLong(), networkClient) ?: break
+            val more = httpGetRangeWithLimit(context, fileUrl, offset, windowSize.toLong(), networkClient) ?: break
             buf.write(more)
             totalFetched += more.size
             bytes = buf.toByteArray()
@@ -182,7 +198,7 @@ object MetadataExtractor {
     /**
      * 最大同時接続数を取得
      */
-    fun getMaxConcurrentConnections(): Int = MAX_CONCURRENT_CONNECTIONS
+    fun getMaxConcurrentConnections(): Int = currentPermits
 
     // ====== 既存のHTTPヘルパー関数（変更なし） ======
 

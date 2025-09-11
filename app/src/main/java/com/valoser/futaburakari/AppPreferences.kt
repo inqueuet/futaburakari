@@ -16,6 +16,8 @@ object AppPreferences {
     private const val KEY_PWD = "pwd"
     /** Key for the flag that appends a GUID. */
     private const val KEY_APPEND_GUID = "append_guid_on"
+    /** Key for the global concurrency level (1..8). */
+    private const val KEY_CONCURRENCY_LEVEL = "concurrency_level"
 
     /**
      * Returns the app's private SharedPreferences instance.
@@ -65,6 +67,23 @@ object AppPreferences {
      */
     fun setAppendGuidOn(context: Context, enabled: Boolean) {
         getPreferences(context).edit().putBoolean(KEY_APPEND_GUID, enabled).apply()
+    }
+
+    /**
+     * Gets the user-selected global concurrency level (1..8).
+     * Defaults to 3 when unset or out of range.
+     */
+    fun getConcurrencyLevel(context: Context): Int {
+        val raw = getPreferences(context).getInt(KEY_CONCURRENCY_LEVEL, 2)
+        return raw.coerceIn(1, 8)
+    }
+
+    /**
+     * Saves the global concurrency level (clamped to 1..8).
+     */
+    fun setConcurrencyLevel(context: Context, level: Int) {
+        val v = level.coerceIn(1, 8)
+        getPreferences(context).edit().putInt(KEY_CONCURRENCY_LEVEL, v).apply()
     }
 
     /**

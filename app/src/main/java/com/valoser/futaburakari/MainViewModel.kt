@@ -15,6 +15,7 @@
 package com.valoser.futaburakari
 
 import android.util.Log
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -43,6 +44,7 @@ import javax.inject.Inject
  * - タイトル整形: `<small>` の 1 行目のみを採用して 1 行化
  */
 class MainViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context,
     private val okHttpClient: OkHttpClient,
     private val networkClient: NetworkClient,
 ) : ViewModel() {
@@ -86,7 +88,8 @@ class MainViewModel @Inject constructor(
     private suspend fun enrichWithFullImages(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
         val guessedPairs = items.map { it to guessFullFromPreview(it.previewUrl) }
-        val limitedIO = Dispatchers.IO.limitedParallelism(3)
+        val concurrency = AppPreferences.getConcurrencyLevel(appContext)
+        val limitedIO = Dispatchers.IO.limitedParallelism(concurrency)
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {
@@ -272,7 +275,7 @@ class MainViewModel @Inject constructor(
     // プレビューURLをHEADで検証し、無効なら候補から有効なものに置換
     private suspend fun validatePreviewUrls(items: List<ImageItem>): List<ImageItem> {
         if (items.isEmpty()) return items
-        val limited = Dispatchers.IO.limitedParallelism(3)
+        val limited = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
         return withContext(limited) {
             items.map { item ->
                 async {
