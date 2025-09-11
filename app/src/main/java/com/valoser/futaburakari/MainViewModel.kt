@@ -155,9 +155,11 @@ class MainViewModel @Inject constructor(
                         clear404ForDetail(detailUrl)
                     } else if (!next.isNullOrBlank() && next == target.fullImageUrl) {
                         // 同一URLでも存在確認が取れた場合はプレビュー固定を解除して復帰させる
+                        // UI 側の 404 ガード解除のため、注記を更新して再合成のきっかけにする
                         val updated = current.map {
                             if (it.detailUrl == detailUrl) it.copy(
-                                preferPreviewOnly = false
+                                preferPreviewOnly = false,
+                                urlFixNote = "URL修正: /src/存在確認OK"
                             ) else it
                         }
                         _images.postValue(updated)

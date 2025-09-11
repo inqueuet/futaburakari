@@ -436,6 +436,16 @@ private fun CatalogCard(
                 }
             }
 
+            // VM 側で URL 修正注記が付与された場合（/src/ 確定/存在確認OK など）、
+            // ローカルの 404 記録をクリアしてフル画像への切り替えを許可する。
+            LaunchedEffect(item.urlFixNote) {
+                if (!item.urlFixNote.isNullOrBlank()) {
+                    lastFailedFullUrl = null
+                    // サムネイル側の 404 記録も念のため解除
+                    lastFailedPreviewUrl = null
+                }
+            }
+
             // 表示に使うURLを一本化（VMのpreferPreviewOnly + UIの局所404回避）
             val preferPreviewNow = item.preferPreviewOnly || (item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl)
             val displayUrl = if (preferPreviewNow) item.previewUrl else item.fullImageUrl ?: item.previewUrl
