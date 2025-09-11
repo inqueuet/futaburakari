@@ -390,18 +390,52 @@ private fun CatalogCard(
         onClick = onClick
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
+            // 局所状態: 直近に404になったURL（full/preview）
+            var lastFailedFullUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
+            var lastFailedPreviewUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
+
+            // URL 更新で解除（新しいURLに変わったら再試行を許可）
+            LaunchedEffect(item.fullImageUrl) {
+                if (lastFailedFullUrl != null && item.fullImageUrl != lastFailedFullUrl) {
+                    lastFailedFullUrl = null
+                }
+            }
+            LaunchedEffect(item.previewUrl) {
+                if (lastFailedPreviewUrl != null && item.previewUrl != lastFailedPreviewUrl) {
+                    lastFailedPreviewUrl = null
+                }
+            }
+
+            // 表示に使うURLを一本化（VMのpreferPreviewOnly + UIの局所404回避）
+            val preferPreviewNow = item.preferPreviewOnly || (item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl)
+            val displayUrl = if (preferPreviewNow) item.previewUrl else item.fullImageUrl ?: item.previewUrl
+            val skipPreviewLoading = (displayUrl == item.previewUrl) && (lastFailedPreviewUrl == item.previewUrl)
+
             // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
             // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
                 val heightPx = (widthPx * 4f / 3f)
+                if (skipPreviewLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(3f / 4f)
+                    ) {
+                        Text(
+                            text = "画像を表示できません",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                } else {
                 SubcomposeAsyncImage(
                     modifier = Modifier
                         .fillMaxWidth()
                         // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
                         .aspectRatio(3f / 4f),
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl)
+                        .data(displayUrl)
                         .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                         .precision(Precision.INEXACT)
                         .listener(
@@ -411,7 +445,18 @@ private fun CatalogCard(
                                     // OkHttp ネットワークモジュール利用時は response.code から HTTP ステータスを取得できる
                                     if (ex is HttpException && ex.response.code == 404) {
                                         val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
-                                        onImageLoadHttp404(item, failed)
+                                        // フル画像系の404を検知したら、当該URLでの再試行を一時停止しプレビュー固定
+                                        if (failed.contains("/src/")) {
+                                            if (lastFailedFullUrl != failed) {
+                                                lastFailedFullUrl = failed
+                                                onImageLoadHttp404(item, failed)
+                                            }
+                                        } else {
+                                            if (lastFailedPreviewUrl != failed) {
+                                                lastFailedPreviewUrl = failed
+                                                onImageLoadHttp404(item, failed)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -432,6 +477,19 @@ private fun CatalogCard(
                     },
                     error = {
                         // フル画像の取得に失敗（例: 404）の場合は、サムネイルをフォールバック表示
+                        if (displayUrl == item.previewUrl) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(3f / 4f)
+                            ) {
+                                Text(
+                                    text = "画像を表示できません",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.align(Alignment.Center)
+                                )
+                            }
+                        } else {
                         SubcomposeAsyncImage(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -447,7 +505,10 @@ private fun CatalogCard(
                                             val ex = result.throwable
                                             if (ex is HttpException && ex.response.code == 404) {
                                                 val failed = request.data?.toString() ?: item.previewUrl
-                                                onImageLoadHttp404(item, failed)
+                                                if (lastFailedPreviewUrl != failed) {
+                                                    lastFailedPreviewUrl = failed
+                                                    onImageLoadHttp404(item, failed)
+                                                }
                                             }
                                         }
                                     }
@@ -470,12 +531,14 @@ private fun CatalogCard(
                                 }
                             }
                         )
+                        }
                     }
                 )
+                }
             }
 
-            // 動画の場合は中央に再生アイコンを重ねる
-            val isVideo = (if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl).let { url ->
+            // 動画の場合は中央に再生アイコンを重ねる（表示URL基準）
+            val isVideo = displayUrl.let { url ->
                 url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
             }
             if (isVideo) {

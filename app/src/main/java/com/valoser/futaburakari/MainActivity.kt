@@ -275,7 +275,7 @@ class MainActivity : BaseActivity() {
      */
     private fun handleItemClick(item: ImageItem) {
         val baseUrlString = currentSelectedUrl
-        val imageUrlString: String = item.fullImageUrl ?: item.previewUrl
+        val imageUrlString: String = if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl
 
         if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
             try {

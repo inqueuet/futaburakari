@@ -81,6 +81,15 @@ class MainViewModel @Inject constructor(
 
                 val isFull = "/src/" in failedUrl
                 if (isFull) {
+                    // UIの再試行ループを止めるため、即座にプレビュー固定へ切替
+                    runCatching {
+                        val primed = current.map {
+                            if (it.detailUrl == detailUrl) it.copy(
+                                preferPreviewOnly = true
+                            ) else it
+                        }
+                        _images.postValue(primed)
+                    }
                     // 1) 詳細HTMLから /src/ を抽出（最優先）
                     val resolved: String? = runCatching {
                         val doc = networkClient.fetchDocument(detailUrl)
