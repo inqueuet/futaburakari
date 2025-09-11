@@ -65,6 +65,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import coil3.imageLoader
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -318,6 +320,7 @@ fun DetailScreenScaffold(
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
+                        threadUrl = threadUrl,
                         modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
                         onQuoteClick = { token ->
@@ -578,6 +581,7 @@ fun DetailScreenScaffold(
                         DetailListCompose(
                             items = idItems,
                             searchQuery = null,
+                            threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
@@ -615,6 +619,7 @@ fun DetailScreenScaffold(
                         DetailListCompose(
                             items = refItems,
                             searchQuery = null,
+                            threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
@@ -703,6 +708,16 @@ fun DetailScreenScaffold(
                                         if (prefetched.add(url)) {
                                             val req = coil3.request.ImageRequest.Builder(ctx)
                                                 .data(url)
+                                                .apply {
+                                                    val ref = threadUrl
+                                                    if (!ref.isNullOrBlank()) {
+                                                        httpHeaders(
+                                                            NetworkHeaders.Builder()
+                                                                .add("Referer", ref)
+                                                                .build()
+                                                        )
+                                                    }
+                                                }
                                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                                 .scale(coil3.size.Scale.FILL)
                                                 .precision(coil3.size.Precision.INEXACT)
@@ -721,6 +736,16 @@ fun DetailScreenScaffold(
                                             if (prefetched.add(url)) {
                                                 val req = coil3.request.ImageRequest.Builder(ctx)
                                                     .data(url)
+                                                    .apply {
+                                                        val ref = threadUrl
+                                                        if (!ref.isNullOrBlank()) {
+                                                            httpHeaders(
+                                                                NetworkHeaders.Builder()
+                                                                    .add("Referer", ref)
+                                                                    .build()
+                                                            )
+                                                        }
+                                                    }
                                                     .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                                     .scale(coil3.size.Scale.FILL)
                                                     .precision(coil3.size.Precision.INEXACT)
@@ -752,6 +777,16 @@ fun DetailScreenScaffold(
 
                             val request = coil3.request.ImageRequest.Builder(ctx)
                                 .data(e.url)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .build()
+                                        )
+                                    }
+                                }
                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                 .scale(coil3.size.Scale.FILL)
                                 .precision(coil3.size.Precision.INEXACT)

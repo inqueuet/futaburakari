@@ -49,6 +49,8 @@ import coil3.size.Dimension
 import coil3.size.Precision
 import coil3.network.HttpException
 import coil3.request.ErrorResult
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -229,26 +231,32 @@ fun MainCatalogScreen(
                 val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
                 val start = first.coerceAtLeast(0)
 
-                val urls = items.subList(start, end + 1)
+                val urlPairs = items.subList(start, end + 1)
                     .mapNotNull { item ->
                         // プレビュー不可かつフル未確定ならプリフェッチしない
                         val full = item.fullImageUrl
                         val preferPreview = item.preferPreviewOnly
-                        when {
+                        val chosen = when {
                             !full.isNullOrBlank() && !preferPreview -> full
                             item.previewUnavailable -> null
                             else -> item.previewUrl
                         }
+                        chosen?.let { item.detailUrl to it }
                     }
-                    .filter { url -> !known404Urls.containsKey(url) }
+                    .filter { (ref, url) -> !known404Urls.containsKey(url) }
 
                 // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
-                urls.chunked(2).forEach { batch ->
-                    batch.forEach { url ->
+                urlPairs.chunked(2).forEach { batch ->
+                    batch.forEach { (referer, url) ->
                         val req = ImageRequest.Builder(context)
                             .data(url)
                             .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
                             .precision(Precision.INEXACT)
+                            .httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", referer)
+                                    .build()
+                            )
                             .build()
                         context.imageLoader.enqueue(req)
                     }
@@ -479,6 +487,11 @@ private fun CatalogCard(
                         .data(displayUrl)
                         .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                         .precision(Precision.INEXACT)
+                        .httpHeaders(
+                            NetworkHeaders.Builder()
+                                .add("Referer", item.detailUrl)
+                                .build()
+                        )
                         .listener(
                             object : ImageRequest.Listener {
                                 override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
@@ -547,6 +560,11 @@ private fun CatalogCard(
                                 .data(item.previewUrl)
                                 .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                                 .precision(Precision.INEXACT)
+                                .httpHeaders(
+                                    NetworkHeaders.Builder()
+                                        .add("Referer", item.detailUrl)
+                                        .build()
+                                )
                                 .listener(
                                     object : ImageRequest.Listener {
                                         override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {

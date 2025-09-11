@@ -88,6 +88,8 @@ import coil3.compose.AsyncImage
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import coil3.size.Dimension
 import coil3.size.Precision
 import coil3.size.Scale
@@ -121,6 +123,8 @@ import androidx.compose.foundation.layout.Column
 fun DetailListCompose(
     items: List<DetailContent>,
     searchQuery: String?,
+    // 画像/動画取得時の Referer（通常はスレの res/*.htm）
+    threadUrl: String? = null,
     modifier: Modifier = Modifier,
     // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
@@ -218,6 +222,16 @@ fun DetailListCompose(
                         if (prefetched.add(url)) {
                             val req = ImageRequest.Builder(ctx)
                                 .data(url)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .build()
+                                        )
+                                    }
+                                }
                                 .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
                                 .scale(Scale.FIT)
                                 .precision(Precision.INEXACT)
@@ -236,6 +250,16 @@ fun DetailListCompose(
                             if (prefetched.add(url)) {
                                 val req = ImageRequest.Builder(ctx)
                                     .data(url)
+                                    .apply {
+                                        val ref = threadUrl
+                                        if (!ref.isNullOrBlank()) {
+                                            httpHeaders(
+                                                NetworkHeaders.Builder()
+                                                    .add("Referer", ref)
+                                                    .build()
+                                            )
+                                        }
+                                    }
                                     .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
                                     .scale(Scale.FIT)
                                     .precision(Precision.INEXACT)
@@ -425,7 +449,19 @@ fun DetailListCompose(
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
                         coil3.compose.SubcomposeAsyncImage(
-                            model = item.imageUrl,
+                            model = ImageRequest.Builder(ctx)
+                                .data(item.imageUrl)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .build()
+                                        )
+                                    }
+                                }
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -434,6 +470,7 @@ fun DetailListCompose(
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
+                                        threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
                                     }
                                     ctx.startActivity(i)
                                 },
@@ -479,7 +516,19 @@ fun DetailListCompose(
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
                         coil3.compose.SubcomposeAsyncImage(
-                            model = item.videoUrl,
+                            model = ImageRequest.Builder(ctx)
+                                .data(item.videoUrl)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .build()
+                                        )
+                                    }
+                                }
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -487,6 +536,7 @@ fun DetailListCompose(
                                     val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_VIDEO)
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.videoUrl)
+                                        threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
                                     }
                                     ctx.startActivity(i)
                                 },

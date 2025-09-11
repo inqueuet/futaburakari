@@ -218,7 +218,7 @@ class MainViewModel @Inject constructor(
     /**
      * プレビューURLからフル画像URLを推測する。
      * - `/thumb/` または `/cat/` を `/src/` に置換
-     * - 末尾の `s.` を通常拡張子（.jpg/.png 等）に置換
+     * - 末尾の `s.` を通常拡張子（.jpg/.png 等）に置換（webm/mp4 も対象）
      * 失敗時は `null` を返す。
      */
     private fun guessFullFromPreview(previewUrl: String): String? {
@@ -226,7 +226,7 @@ class MainViewModel @Inject constructor(
             var s = previewUrl
                 .replace("/thumb/", "/src/")
                 .replace("/cat/", "/src/")
-            s = s.replace(Regex("s\\.(jpg|jpeg|png|gif|webp)$", RegexOption.IGNORE_CASE), ".$1")
+            s = s.replace(Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE), ".$1")
             URL(s).toString()
         } catch (_: Exception) {
             null

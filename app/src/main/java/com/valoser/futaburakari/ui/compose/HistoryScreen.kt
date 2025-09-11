@@ -55,6 +55,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.HistoryEntry
 import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedContent
@@ -302,7 +305,19 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             Box(thumbModifier)
         } else {
             AsyncImage(
-                model = entry.thumbnailUrl,
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(entry.thumbnailUrl)
+                    .apply {
+                        val ref = entry.url
+                        if (!ref.isNullOrBlank()) {
+                            httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", ref)
+                                    .build()
+                            )
+                        }
+                    }
+                    .build(),
                 contentDescription = null,
                 modifier = thumbModifier
             )

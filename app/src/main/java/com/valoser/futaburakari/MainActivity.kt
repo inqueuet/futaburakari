@@ -15,6 +15,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -294,6 +296,11 @@ class MainActivity : BaseActivity() {
                 val imageLoader = this.imageLoader
                 val request = ImageRequest.Builder(this)
                     .data(absoluteUrl)
+                    .httpHeaders(
+                        NetworkHeaders.Builder()
+                            .add("Referer", item.detailUrl)
+                            .build()
+                    )
                     .build()
                 imageLoader.enqueue(request)
             } catch (e: Exception) {

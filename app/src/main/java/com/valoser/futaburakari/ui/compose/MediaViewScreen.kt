@@ -60,6 +60,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
@@ -93,6 +95,7 @@ fun MediaViewScreen(
     url: String?,
     initialText: String?,
     networkClient: NetworkClient,
+    referer: String? = null,
     onBack: () -> Unit,
     onSaveImage: (() -> Unit)? = null,
     onSaveVideo: (() -> Unit)? = null
@@ -182,7 +185,7 @@ fun MediaViewScreen(
         }
     ) { inner ->
         when (type) {
-            "image" -> ImageContent(url = url, modifier = Modifier.fillMaxSize().padding(inner))
+            "image" -> ImageContent(url = url, referer = referer, modifier = Modifier.fillMaxSize().padding(inner))
             "video" -> VideoContent(url = url, modifier = Modifier.fillMaxSize().padding(inner))
             else -> TextContent(text = text ?: "", modifier = Modifier.fillMaxSize().padding(inner))
         }
@@ -193,11 +196,27 @@ fun MediaViewScreen(
  * ズーム可能な画像表示。1:1 のエリアに収め、ピンチやダブルタップで拡大縮小可。
  */
 @Composable
-private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
+private fun ImageContent(url: String?, referer: String? = null, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(LocalSpacing.current.m)) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
+            val ctx = LocalContext.current
+            val model = if (!url.isNullOrBlank()) {
+                coil3.request.ImageRequest.Builder(ctx)
+                    .data(url)
+                    .apply {
+                        val ref = referer
+                        if (!ref.isNullOrBlank()) {
+                            httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", ref)
+                                    .build()
+                            )
+                        }
+                    }
+                    .build()
+            } else null
             ZoomableAsyncImage(
-                model = url,
+                model = model,
                 modifier = Modifier.fillMaxSize(),
                 minScale = 1f,
                 maxScale = 5f,
@@ -295,9 +314,7 @@ private fun ZoomableAsyncImage(
     }
 
     AsyncImage(
-        model = coil3.request.ImageRequest.Builder(LocalContext.current)
-            .data(model)
-            .build(),
+        model = model,
         contentDescription = null,
         contentScale = ContentScale.Fit,
         modifier = modifier
