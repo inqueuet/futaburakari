@@ -42,6 +42,9 @@ import javax.inject.Inject
  * - 状態公開: 読込中/エラー/画像リストを LiveData で公開
  * - 更新確認: 既存の fullImageUrl を活かしつつ不足分のみ補完し、差分があれば通知
  * - タイトル整形: `<small>` の 1 行目のみを採用して 1 行化
+ *
+ * 実装詳細:
+ * - HEAD/GET Range 検証や並列度は `AppPreferences` の設定値に基づいて IO で制御。
  */
 class MainViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context,
@@ -63,6 +66,24 @@ class MainViewModel @Inject constructor(
 
     // 個別404に対する同時多発を抑制するためのガード
     private val fixing404 = mutableSetOf<String>()
+    // 404回数制限（detailUrl + failedUrl 単位でカウント）
+    private val http404Counts = mutableMapOf<String, Int>()
+    private val MAX_404_RETRY = 2
+
+    private fun inc404(detailUrl: String, failedUrl: String): Int = synchronized(http404Counts) {
+        val key = "$detailUrl|$failedUrl"
+        val next = (http404Counts[key] ?: 0) + 1
+        http404Counts[key] = next
+        next
+    }
+
+    private fun clear404ForDetail(detailUrl: String) = synchronized(http404Counts) {
+        val prefix = "$detailUrl|"
+        val it = http404Counts.keys.iterator()
+        while (it.hasNext()) {
+            if (it.next().startsWith(prefix)) it.remove()
+        }
+    }
 
     /**
      * 画像ロードがHTTP 404で失敗した個別アイテムに対して、代替URLを探索して差し替える。
@@ -80,6 +101,21 @@ class MainViewModel @Inject constructor(
                 val target = current.find { it.detailUrl == detailUrl } ?: return@launch
 
                 val isFull = "/src/" in failedUrl
+                // 回数制限: 一定回数を超えたら以降は自動修正を停止
+                val count = inc404(detailUrl, failedUrl)
+                if (count > MAX_404_RETRY) {
+                    val limited = current.map {
+                        if (it.detailUrl == detailUrl) {
+                            if (isFull) {
+                                it.copy(preferPreviewOnly = true, fullImageUrl = null)
+                            } else {
+                                it.copy(previewUnavailable = true)
+                            }
+                        } else it
+                    }
+                    _images.postValue(limited)
+                    return@launch
+                }
                 if (isFull) {
                     // UIの再試行ループを止めるため、即座にプレビュー固定へ切替
                     runCatching {
@@ -116,6 +152,7 @@ class MainViewModel @Inject constructor(
                             ) else it
                         }
                         _images.postValue(updated)
+                        clear404ForDetail(detailUrl)
                     } else if (target.fullImageUrl != null && next.isNullOrBlank()) {
                         // 候補が見つからない場合はフル画像URLを一旦クリアしてプレビュー表示にフォールバック
                         val updated = current.map {
@@ -127,19 +164,27 @@ class MainViewModel @Inject constructor(
                         _images.postValue(updated)
                     }
                 } else {
-                    // サムネイルの404: 候補からHEADで置換
+                    // サムネイルの404: 候補からHEADで置換。見つからなければ previewUnavailable=true で停止。
                     val candidates = buildCatalogThumbCandidates(detailUrl)
                         .filter { it != target.previewUrl }
                     val next = candidates.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
-                    if (!next.isNullOrBlank() && next != target.previewUrl) {
-                        val updated = current.map {
-                            if (it.detailUrl == detailUrl) it.copy(
-                                previewUrl = next,
-                                urlFixNote = "URL修正: サムネイル候補に置換"
-                            ) else it
-                        }
-                        _images.postValue(updated)
+                    val updated = current.map {
+                        if (it.detailUrl == detailUrl) {
+                            if (!next.isNullOrBlank() && next != it.previewUrl) {
+                                it.copy(
+                                    previewUrl = next,
+                                    urlFixNote = "URL修正: サムネイル候補に置換",
+                                    previewUnavailable = false
+                                )
+                            } else {
+                                it.copy(
+                                    previewUnavailable = true
+                                )
+                            }
+                        } else it
                     }
+                    _images.postValue(updated)
+                    if (!next.isNullOrBlank()) clear404ForDetail(detailUrl)
                 }
             } catch (_: Exception) {
                 // 失敗時は無視（UIは既存のエラープレースホルダを表示）
@@ -253,7 +298,8 @@ class MainViewModel @Inject constructor(
                     fresh.copy(
                         fullImageUrl = carriedFull ?: guessed,
                         preferPreviewOnly = preferPreview,
-                        urlFixNote = old?.urlFixNote
+                        urlFixNote = old?.urlFixNote,
+                        previewUnavailable = old?.previewUnavailable ?: false
                     )
                 }
                 _images.value = merged
@@ -287,7 +333,8 @@ class MainViewModel @Inject constructor(
                     val guessed = if (preferPreview) null else ni.fullImageUrl ?: guessFullFromPreview(ni.previewUrl)
                     ni.copy(
                         fullImageUrl = old?.fullImageUrl ?: guessed,
-                        preferPreviewOnly = preferPreview
+                        preferPreviewOnly = preferPreview,
+                        previewUnavailable = old?.previewUnavailable ?: false
                     )
                 }
                 val hasNewContent = carried.size != currentItems.size || !carried.containsAll(currentItems)
@@ -344,8 +391,9 @@ class MainViewModel @Inject constructor(
                     val id = m.groupValues[1]
                     // 例: https://zip.2chan.net/32/res/... -> https://zip.2chan.net/32
                     val boardBase = detailUrl.substringBeforeLast("/res/")
-                    // 一旦 jpg を既定とする（後段で HEAD により検証して適正化）
-                    imageUrl = "$boardBase/cat/$id.jpg"
+                    // 2chan のカタログは "cat/{id}s.{ext}" 形式が基本（小サムネ）。
+                    // まずもっとも一般的な jpg を既定にし、後段の HEAD 検証と 404 修正で適正化する。
+                    imageUrl = "$boardBase/cat/${id}s.jpg"
                 }
             }
 
@@ -376,7 +424,11 @@ class MainViewModel @Inject constructor(
         val m = Regex("""/res/(\d+)\.htm""").find(detailUrl) ?: return emptyList()
         val id = m.groupValues[1]
         val boardBase = detailUrl.substringBeforeLast("/res/")
+        // 優先度順: cat/{id}s.* → cat/{id}.* → thumb/{id}s.*
         return listOf(
+            "$boardBase/cat/${id}s.jpg",
+            "$boardBase/cat/${id}s.png",
+            "$boardBase/cat/${id}s.webp",
             "$boardBase/cat/$id.jpg",
             "$boardBase/cat/$id.png",
             "$boardBase/cat/$id.webp",

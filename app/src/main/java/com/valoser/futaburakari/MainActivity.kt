@@ -53,7 +53,7 @@ import java.net.URL
 
 @AndroidEntryPoint
 /**
- * メイン画面（カタログ一覧）。
+ * メイン画面（カタログ一覧）アクティビティ。
  *
  * - ブックマーク選択・管理、設定/履歴/画像編集への遷移を提供。
  * - カタログ（画像リスト）を取得・表示し、アイテムタップで詳細画面へ遷移。
@@ -61,6 +61,10 @@ import java.net.URL
  * - Futaba の catset（カタログ表示設定）を板単位で適用し、3日間の TTL で再適用を抑制。
  * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応。
  * - TopBar: タイトルは表示せず、サブタイトル（選択中ブックマーク名）のみを大きめに表示する。
+ *
+ * 関連:
+ * - UI: `ui.compose.MainCatalogScreen`
+ * - データ取得/整形: `MainViewModel`
  */
 class MainActivity : BaseActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -275,7 +279,11 @@ class MainActivity : BaseActivity() {
      */
     private fun handleItemClick(item: ImageItem) {
         val baseUrlString = currentSelectedUrl
-        val imageUrlString: String = if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl
+        val imageUrlString: String = when {
+            !item.fullImageUrl.isNullOrBlank() && !item.preferPreviewOnly -> item.fullImageUrl
+            !item.previewUnavailable -> item.previewUrl
+            else -> item.fullImageUrl ?: item.previewUrl
+        }
 
         if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
             try {

@@ -1,5 +1,5 @@
 /**
- * 画像カタログ（メイン一覧）画面のCompose実装。
+ * 画像カタログ（メイン一覧）画面の Compose 実装。
  *
  * 特徴:
  * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
@@ -88,7 +88,8 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
- * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。ViewModel 側で URL 補正（代替URLの探索・差し替え）を行うために使用。
+ * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
+ *                         ViewModel 側で URL 補正（代替URLの探索・差し替え）を行うために使用。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -192,6 +193,9 @@ fun MainCatalogScreen(
             }
     }
 
+    // 既知の404 URL（この画面の存続中に限って再プリフェッチを抑止）
+    val known404Urls = remember { mutableStateMapOf<String, Boolean>() }
+
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
     val context = LocalContext.current
@@ -227,8 +231,16 @@ fun MainCatalogScreen(
 
                 val urls = items.subList(start, end + 1)
                     .mapNotNull { item ->
-                        if (item.preferPreviewOnly) item.previewUrl else item.fullImageUrl ?: item.previewUrl
+                        // プレビュー不可かつフル未確定ならプリフェッチしない
+                        val full = item.fullImageUrl
+                        val preferPreview = item.preferPreviewOnly
+                        when {
+                            !full.isNullOrBlank() && !preferPreview -> full
+                            item.previewUnavailable -> null
+                            else -> item.previewUrl
+                        }
                     }
+                    .filter { url -> !known404Urls.containsKey(url) }
 
                 // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
                 urls.chunked(2).forEach { batch ->
@@ -333,6 +345,7 @@ fun MainCatalogScreen(
                         item = item,
                         onClick = { onItemClick(item) },
                         onImageLoadHttp404 = onImageLoadHttp404,
+                        known404Urls = known404Urls,
                     )
                 }
             }
@@ -383,6 +396,7 @@ private fun CatalogCard(
     item: ImageItem,
     onClick: () -> Unit,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
+    known404Urls: MutableMap<String, Boolean>,
 ) {
     Card(
         modifier = Modifier
@@ -393,6 +407,16 @@ private fun CatalogCard(
             // 局所状態: 直近に404になったURL（full/preview）
             var lastFailedFullUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
             var lastFailedPreviewUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
+
+            // 404通知ヘルパー（重複通知と再プリフェッチを抑止）
+            val addKnown404AndNotify = remember(onImageLoadHttp404) {
+                { it: ImageItem, failed: String ->
+                    if (!known404Urls.containsKey(failed)) {
+                        known404Urls[failed] = true
+                        onImageLoadHttp404(it, failed)
+                    }
+                }
+            }
 
             // URL 更新で解除（新しいURLに変わったら再試行を許可）
             LaunchedEffect(item.fullImageUrl) {
@@ -409,7 +433,8 @@ private fun CatalogCard(
             // 表示に使うURLを一本化（VMのpreferPreviewOnly + UIの局所404回避）
             val preferPreviewNow = item.preferPreviewOnly || (item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl)
             val displayUrl = if (preferPreviewNow) item.previewUrl else item.fullImageUrl ?: item.previewUrl
-            val skipPreviewLoading = (displayUrl == item.previewUrl) && (lastFailedPreviewUrl == item.previewUrl)
+            val skipPreviewLoading = (displayUrl == item.previewUrl) &&
+                (item.previewUnavailable || lastFailedPreviewUrl == item.previewUrl || known404Urls.containsKey(item.previewUrl))
 
             // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
             // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
@@ -446,17 +471,17 @@ private fun CatalogCard(
                                     if (ex is HttpException && ex.response.code == 404) {
                                         val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
                                         // フル画像系の404を検知したら、当該URLでの再試行を一時停止しプレビュー固定
-                                        if (failed.contains("/src/")) {
-                                            if (lastFailedFullUrl != failed) {
-                                                lastFailedFullUrl = failed
-                                                onImageLoadHttp404(item, failed)
-                                            }
-                                        } else {
-                                            if (lastFailedPreviewUrl != failed) {
-                                                lastFailedPreviewUrl = failed
-                                                onImageLoadHttp404(item, failed)
-                                            }
-                                        }
+                                if (failed.contains("/src/")) {
+                                    if (lastFailedFullUrl != failed) {
+                                        lastFailedFullUrl = failed
+                                        addKnown404AndNotify(item, failed)
+                                    }
+                                } else {
+                                    if (lastFailedPreviewUrl != failed) {
+                                        lastFailedPreviewUrl = failed
+                                        addKnown404AndNotify(item, failed)
+                                    }
+                                }
                                     }
                                 }
                             }
@@ -477,7 +502,7 @@ private fun CatalogCard(
                     },
                     error = {
                         // フル画像の取得に失敗（例: 404）の場合は、サムネイルをフォールバック表示
-                        if (displayUrl == item.previewUrl) {
+                        if (displayUrl == item.previewUrl || lastFailedPreviewUrl == item.previewUrl || item.previewUnavailable) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -507,7 +532,7 @@ private fun CatalogCard(
                                                 val failed = request.data?.toString() ?: item.previewUrl
                                                 if (lastFailedPreviewUrl != failed) {
                                                     lastFailedPreviewUrl = failed
-                                                    onImageLoadHttp404(item, failed)
+                                                    addKnown404AndNotify(item, failed)
                                                 }
                                             }
                                         }
