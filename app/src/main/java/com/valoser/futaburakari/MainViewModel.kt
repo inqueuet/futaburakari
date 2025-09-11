@@ -461,7 +461,7 @@ class MainViewModel @Inject constructor(
     }
 
     // 短い遅延を挟んで再確認（伝播遅延などの瞬間的不一致に対応）
-    private suspend fun urlExistsWithRetry(url: String, retryDelayMs: Long = 1100L, referer: String? = null): Boolean {
+    private suspend fun urlExistsWithRetry(url: String, retryDelayMs: Long = 10L, referer: String? = null): Boolean {
         if (urlExists(url, referer)) return true
         delay(retryDelayMs)
         return urlExists(url, referer)
@@ -469,9 +469,9 @@ class MainViewModel @Inject constructor(
 
     // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさむ確認
     // 実質チェックタイミング:
-    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(1000L, 2000L)): Boolean {
-        // まず2000ms待ってから1回目の確認
-        delay(1500L)
+    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(10L, 20L)): Boolean {
+        // まず10ms待ってから1回目の確認
+        delay(10L)
         if (urlExists(url, referer)) return true
         for (d in delaysMs) {
             delay(d)
