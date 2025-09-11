@@ -93,9 +93,9 @@ object NetworkModule {
                     val builder = originalRequest.newBuilder()
                         .header("User-Agent", Ua.STRING)
 
-                    // 2chan 系はアクセス頻度をさらに抑制（5ms）
+                    // 2chan 系はアクセス頻度をさらに抑制（2ms）
                     if (host == "2chan.net" || host.endsWith(".2chan.net")) {
-                        try { Thread.sleep(5L) } catch (_: InterruptedException) {}
+                        try { Thread.sleep(2L) } catch (_: InterruptedException) {}
                     }
 
                     chain.proceed(builder.build())
@@ -149,7 +149,7 @@ object NetworkModule {
                         .header("User-Agent", Ua.STRING)
 
                     if (host == "2chan.net" || host.endsWith(".2chan.net")) {
-                        try { Thread.sleep(5L) } catch (_: InterruptedException) {}
+                        try { Thread.sleep(2L) } catch (_: InterruptedException) {}
                     }
 
                     chain.proceed(builder.build())
