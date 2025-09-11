@@ -13,6 +13,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.ui.compose.HistoryScreen
 import com.valoser.futaburakari.ui.compose.HistorySortMode
@@ -51,6 +54,7 @@ class HistoryActivity : BaseActivity() {
                 var showUnreadOnly by remember { mutableStateOf(initialUnreadOnly) }
                 var sortMode by remember { mutableStateOf(initialSort) }
                 var entries by remember { mutableStateOf(listOf<HistoryEntry>()) }
+                val lifecycleOwner = LocalLifecycleOwner.current
 
                 // 履歴を取得し、必要に応じてクリーンアップ/フィルタ/ソートして `entries` を更新する
                 fun computeAndSet() {
@@ -120,6 +124,18 @@ class HistoryActivity : BaseActivity() {
                         registerReceiver(receiver, filter)
                     }
                     onDispose { runCatching { unregisterReceiver(receiver) } }
+                }
+
+                // 画面へ戻ってきたタイミング（ON_RESUME）でも最新状態へ再計算する。
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            computeAndSet()
+                        }
+                    }
+                    val lifecycle = lifecycleOwner.lifecycle
+                    lifecycle.addObserver(observer)
+                    onDispose { lifecycle.removeObserver(observer) }
                 }
 
                 var showConfirm by remember { mutableStateOf(false) }
