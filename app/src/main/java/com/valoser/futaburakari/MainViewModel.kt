@@ -61,6 +61,83 @@ class MainViewModel @Inject constructor(
     // 通信/解析中フラグ
     val isLoading: LiveData<Boolean> = _isLoading
 
+    // 個別404に対する同時多発を抑制するためのガード
+    private val fixing404 = mutableSetOf<String>()
+
+    /**
+     * 画像ロードがHTTP 404で失敗した個別アイテムに対して、代替URLを探索して差し替える。
+     * - `/src/` を含むURLの404は「詳細HTMLからの /src/ 抽出」を優先（拡張子総当たりは最後の手段）。
+     * - サムネイル（/cat/ や /thumb/）の404は候補（拡張子違い等）を逐次 HEAD で検証して置換。
+     */
+    fun fixImageIf404(detailUrl: String, failedUrl: String) {
+        // detailUrl 単位で多重実行を抑制
+        synchronized(fixing404) {
+            if (!fixing404.add(detailUrl)) return
+        }
+        viewModelScope.launch {
+            try {
+                val current = _images.value ?: return@launch
+                val target = current.find { it.detailUrl == detailUrl } ?: return@launch
+
+                val isFull = "/src/" in failedUrl
+                if (isFull) {
+                    // 1) 詳細HTMLから /src/ を抽出（最優先）
+                    val resolved: String? = runCatching {
+                        val doc = networkClient.fetchDocument(detailUrl)
+                        doc.selectFirst("""div.thre a[href*="/src/"]""")?.absUrl("href")
+                            ?: doc.selectFirst("a[href*='/src/']")?.absUrl("href")
+                    }.getOrNull()
+
+                    val candidateFulls: List<String> = buildList {
+                        if (!resolved.isNullOrBlank()) add(resolved)
+                        // 2) 最後の手段として拡張子バリエーションを試す
+                        val base = failedUrl.substringBeforeLast('.')
+                        listOf("jpg", "jpeg", "png", "webp", "gif", "webm", "mp4").forEach { ext ->
+                            add("$base.$ext")
+                        }
+                    }.distinct()
+
+                    val next = candidateFulls.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
+                    if (!next.isNullOrBlank() && next != target.fullImageUrl) {
+                        val updated = current.map {
+                            if (it.detailUrl == detailUrl) it.copy(
+                                fullImageUrl = next,
+                                urlFixNote = "URL修正: /src/をHTMLから確定"
+                            ) else it
+                        }
+                        _images.postValue(updated)
+                    } else if (target.fullImageUrl != null && next.isNullOrBlank()) {
+                        // 候補が見つからない場合はフル画像URLを一旦クリアしてプレビュー表示にフォールバック
+                        val updated = current.map {
+                            if (it.detailUrl == detailUrl) it.copy(
+                                fullImageUrl = null
+                            ) else it
+                        }
+                        _images.postValue(updated)
+                    }
+                } else {
+                    // サムネイルの404: 候補からHEADで置換
+                    val candidates = buildCatalogThumbCandidates(detailUrl)
+                        .filter { it != target.previewUrl }
+                    val next = candidates.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
+                    if (!next.isNullOrBlank() && next != target.previewUrl) {
+                        val updated = current.map {
+                            if (it.detailUrl == detailUrl) it.copy(
+                                previewUrl = next,
+                                urlFixNote = "URL修正: サムネイル候補に置換"
+                            ) else it
+                        }
+                        _images.postValue(updated)
+                    }
+                }
+            } catch (_: Exception) {
+                // 失敗時は無視（UIは既存のエラープレースホルダを表示）
+            } finally {
+                synchronized(fixing404) { fixing404.remove(detailUrl) }
+            }
+        }
+    }
+
     // プレビューURLからフル画像URLを推測（thumb/cat -> src、末尾の s. を通常拡張に）
     private fun guessFullFromPreview(previewUrl: String): String? {
         return try {
@@ -74,14 +151,25 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // HEADでURLの存在確認（IOディスパッチャ実行）
-    private suspend fun headExists(url: String): Boolean = withContext(Dispatchers.IO) {
-        val req = Request.Builder().url(url).head().build()
-        runCatching {
-            okHttpClient.newCall(req).executeAsync().use { resp ->
-                resp.isSuccessful
-            }
-        }.getOrDefault(false)
+    // URLの存在確認：HEAD(UA付) → 失敗時はGET Range(1byte)でフォールバック
+    private suspend fun urlExists(url: String): Boolean {
+        // 1) HEAD with UA
+        val okHead = withContext(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url(url)
+                .head()
+                .header("User-Agent", Ua.STRING)
+                .build()
+            runCatching {
+                okHttpClient.newCall(req).executeAsync().use { resp ->
+                    resp.isSuccessful
+                }
+            }.getOrDefault(false)
+        }
+        if (okHead) return true
+        // 2) Fallback: GET Range 0-0（NetworkClientはUA等を付与）
+        val bytes = runCatching { networkClient.fetchRange(url, 0, 1) }.getOrNull()
+        return bytes != null
     }
 
     // フル画像URLを補完：推測→HEAD検証→不足分は詳細HTMLから /src/ を抽出
@@ -93,7 +181,7 @@ class MainViewModel @Inject constructor(
         val headChecked = withContext(limitedIO) {
             guessedPairs.map { (item, guessedUrl) ->
                 async {
-                    if (guessedUrl != null && headExists(guessedUrl)) {
+                    if (guessedUrl != null && urlExists(guessedUrl)) {
                         item.copy(fullImageUrl = guessedUrl)
                     } else {
                         item
@@ -131,49 +219,19 @@ class MainViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val document = networkClient.fetchDocument(url)
-                // まずは解析のみ（HEADせず）で即表示
+                // まずは解析（HEADせず）
                 val baseItems = parseItemsFromDocument(document, url)
-                _images.value = baseItems
+                // 要件: 最初からフルサイズ画像の表示に合わせ、推測規則で即時に fullImageUrl を付与
+                val withFullGuess = baseItems.map { it.copy(fullImageUrl = it.fullImageUrl ?: guessFullFromPreview(it.previewUrl)) }
+                _images.value = withFullGuess
             } catch (e: Exception) {
                 _error.value = "データの取得に失敗しました: ${e.message}"
             } finally {
                 _isLoading.value = false
             }
 
-            // 以降はバックグラウンドで段階的に改善
-            // 1) プレビューURLの検証・補正
-            val currentStage1 = _images.value ?: emptyList()
-            if (currentStage1.isNotEmpty()) {
-                runCatching {
-                    val validated = validatePreviewUrls(currentStage1)
-                    // 差分がある場合のみ更新（previewUrl のみ反映）
-                    val vMap = validated.associateBy { it.detailUrl }
-                    val merged = currentStage1.map { cur ->
-                        val v = vMap[cur.detailUrl]
-                        if (v != null && v.previewUrl != cur.previewUrl) cur.copy(previewUrl = v.previewUrl) else cur
-                    }
-                    if (merged !== currentStage1 && merged != currentStage1) {
-                        _images.postValue(merged)
-                    }
-                }
-            }
-
-            // 2) フル画像URLの推測/検証（不足分のみ）
-            val currentStage2 = _images.value ?: emptyList()
-            val needFull = currentStage2.filter { it.fullImageUrl.isNullOrBlank() }
-            if (needFull.isNotEmpty()) {
-                runCatching {
-                    val filled = enrichWithFullImages(needFull)
-                    val fMap = filled.associateBy { it.detailUrl }
-                    val merged = currentStage2.map { cur ->
-                        val f = fMap[cur.detailUrl]
-                        if (f != null && f.fullImageUrl != cur.fullImageUrl) cur.copy(fullImageUrl = f.fullImageUrl) else cur
-                    }
-                    if (merged !== currentStage2 && merged != currentStage2) {
-                        _images.postValue(merged)
-                    }
-                }
-            }
+            // 以降はバックグラウンドで必要最小限の改善のみ（404等の個別対応を優先するため全件HEADは行わない）
+            // 必要であればプレビューURLのみ軽量検証を段階的に適用可能だが、既定ではスキップ
         }
     }
 
@@ -189,10 +247,11 @@ class MainViewModel @Inject constructor(
 
                 val currentItems = _images.value ?: emptyList()
                 val currentMapByDetail = currentItems.associateBy { it.detailUrl }
-                // まずは既存の fullImageUrl を引き継ぐだけで軽量に比較
+                // 既存の fullImageUrl を引き継ぎつつ、新規は推測規則で即時付与
                 val carried = newItemList.map { ni ->
                     val old = currentMapByDetail[ni.detailUrl]
-                    ni.copy(fullImageUrl = old?.fullImageUrl)
+                    val guessed = ni.fullImageUrl ?: guessFullFromPreview(ni.previewUrl)
+                    ni.copy(fullImageUrl = old?.fullImageUrl ?: guessed)
                 }
                 val hasNewContent = carried.size != currentItems.size || !carried.containsAll(currentItems)
 
@@ -202,33 +261,6 @@ class MainViewModel @Inject constructor(
                     callback(true)
                 } else {
                     callback(false)
-                }
-
-                // バックグラウンドで段階的に品質向上（プレビュー検証→フル補完）
-                // プレビュー検証
-                runCatching {
-                    val validated = validatePreviewUrls(carried)
-                    val vMap = validated.associateBy { it.detailUrl }
-                    val merged = ( _images.value ?: carried ).map { cur ->
-                        val v = vMap[cur.detailUrl]
-                        if (v != null && v.previewUrl != cur.previewUrl) cur.copy(previewUrl = v.previewUrl) else cur
-                    }
-                    if (merged != _images.value) _images.postValue(merged)
-                }
-
-                // フル補完
-                val cur2 = _images.value ?: carried
-                val needFull = cur2.filter { it.fullImageUrl.isNullOrBlank() }
-                if (needFull.isNotEmpty()) {
-                    runCatching {
-                        val filled = enrichWithFullImages(needFull)
-                        val fMap = filled.associateBy { it.detailUrl }
-                        val merged = cur2.map { cur ->
-                            val f = fMap[cur.detailUrl]
-                            if (f != null && f.fullImageUrl != cur.fullImageUrl) cur.copy(fullImageUrl = f.fullImageUrl) else cur
-                        }
-                        if (merged != _images.value) _images.postValue(merged)
-                    }
                 }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error checking for catalog updates", e)
@@ -338,10 +370,10 @@ class MainViewModel @Inject constructor(
                 async {
                     val current = item.previewUrl
                     // まず現行URLが有効ならそのまま
-                    if (current.isNotBlank() && headExists(current)) return@async item
+                    if (current.isNotBlank() && urlExists(current)) return@async item
                     // 候補を順番にHEAD確認
                     val candidates = buildCatalogThumbCandidates(item.detailUrl)
-                    val chosen = candidates.firstOrNull { runCatching { headExists(it) }.getOrDefault(false) }
+                    val chosen = candidates.firstOrNull { runCatching { urlExists(it) }.getOrDefault(false) }
                     if (chosen != null && chosen != current) item.copy(previewUrl = chosen) else item
                 }
             }.awaitAll()

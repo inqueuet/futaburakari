@@ -41,6 +41,8 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.size.Dimension
 import coil3.size.Precision
+import coil3.network.HttpException
+import coil3.request.ErrorResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -100,6 +102,7 @@ fun MainCatalogScreen(
     onBrowseLocalImages: () -> Unit,
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
+    onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
 ) {
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
@@ -316,7 +319,11 @@ fun MainCatalogScreen(
             ) {
                 // 安定キーに `detailUrl` を使用
                 items(filtered, key = { it.detailUrl }) { item ->
-                    CatalogCard(item = item, onClick = { onItemClick(item) })
+                    CatalogCard(
+                        item = item,
+                        onClick = { onItemClick(item) },
+                        onImageLoadHttp404 = onImageLoadHttp404,
+                    )
                 }
             }
 
@@ -359,7 +366,11 @@ private fun MoreMenu(
  * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
  */
 @Composable
-private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
+private fun CatalogCard(
+    item: ImageItem,
+    onClick: () -> Unit,
+    onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
+) {
     Card(
         modifier = Modifier
             .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs),
@@ -380,6 +391,18 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                         .data(item.fullImageUrl ?: item.previewUrl)
                         .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                         .precision(Precision.INEXACT)
+                        .listener(
+                            object : ImageRequest.Listener {
+                                override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
+                                    val ex = result.throwable
+                                    // With OkHttp network module, the status can be read from response.code.
+                                    if (ex is HttpException && ex.response.code == 404) {
+                                        val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
+                                        onImageLoadHttp404(item, failed)
+                                    }
+                                }
+                            }
+                        )
                         .build(),
                     imageLoader = LocalContext.current.imageLoader,
                     contentDescription = item.title,
@@ -416,6 +439,8 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
+
+            // 注記は不要（画像が表示されればOKのためUI反映しない）
 
             // タイトル用のオーバーレイ（固定高さでレイアウトを安定化）
             Box(

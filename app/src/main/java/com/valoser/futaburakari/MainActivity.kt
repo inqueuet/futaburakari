@@ -189,6 +189,9 @@ class MainActivity : BaseActivity() {
                     onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
                     onItemClick = { item -> handleItemClick(item) },
                     ngRules = ngRulesState.value,
+                    onImageLoadHttp404 = { item, failedUrl ->
+                        viewModel.fixImageIf404(item.detailUrl, failedUrl)
+                    },
                     )
 
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
