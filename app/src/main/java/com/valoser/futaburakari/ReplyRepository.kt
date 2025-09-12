@@ -251,7 +251,13 @@ class ReplyRepository @Inject constructor(
     private suspend fun fetchHashFromThreadPage(threadUrl: String): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val req = Request.Builder().url(threadUrl).get().build()
+            val req = Request.Builder()
+                .url(threadUrl)
+                .get()
+                .header("User-Agent", Ua.STRING)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                .build()
                 httpClient.newCall(req).executeAsync().use { resp ->
                     if (!resp.isSuccessful) {
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")

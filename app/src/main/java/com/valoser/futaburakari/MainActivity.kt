@@ -196,7 +196,7 @@ class MainActivity : BaseActivity() {
                     onItemClick = { item -> handleItemClick(item) },
                     ngRules = ngRulesState.value,
                     onImageLoadHttp404 = { item, failedUrl ->
-                        viewModel.fixImageIf404(item.detailUrl, failedUrl)
+                        viewModel.fixImageIf404NoHtml(item.detailUrl, failedUrl)
                     },
                     onImageLoadSuccess = { item, loadedUrl ->
                         viewModel.notifyFullImageSuccess(item.detailUrl, loadedUrl)
@@ -285,7 +285,8 @@ class MainActivity : BaseActivity() {
     private fun handleItemClick(item: ImageItem) {
         val baseUrlString = currentSelectedUrl
         val imageUrlString: String = when {
-            !item.fullImageUrl.isNullOrBlank() && !item.preferPreviewOnly -> item.fullImageUrl
+            // カタログと同じ方針: フルは実描画成功が確認できた場合に優先
+            !item.fullImageUrl.isNullOrBlank() && item.hadFullSuccess -> item.fullImageUrl
             !item.previewUnavailable -> item.previewUrl
             else -> item.fullImageUrl ?: item.previewUrl
         }
@@ -302,8 +303,6 @@ class MainActivity : BaseActivity() {
                     .httpHeaders(
                         NetworkHeaders.Builder()
                             .add("Referer", item.detailUrl)
-                            .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                             .build()
                     )
                     .build()

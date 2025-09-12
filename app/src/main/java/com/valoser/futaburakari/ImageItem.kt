@@ -24,5 +24,17 @@ data class ImageItem(
     val urlFixNote: String? = null,   // 個別404時の候補探索で置換された際のメモ（UI表示用）
     val preferPreviewOnly: Boolean = false, // フル画像が恒常的に404等の場合にプレビュー固定で表示するためのフラグ
     val previewUnavailable: Boolean = false, // プレビュー自体が404等で存在しない（未添付/削除）場合の停止フラグ
-    val hadFullSuccess: Boolean = false // 一度でもフル画像の実描画に成功したかどうか
-)
+    val hadFullSuccess: Boolean = false, // 一度でもフル画像の実描画に成功したかどうか
+    // 新規追加: フル画像の確定状態をより安定化するためのメタ情報
+    val lastVerifiedFullUrl: String? = null, // 直近で実描画に成功したフル画像URL
+    val failedUrls: Set<String> = emptySet(), // 試行済みで失敗したURLの集合（候補生成から除外）
+) {
+    // 表示URLの決定: 成功実績のあるフルURLを最優先、次に未失敗のフルURL、最後にプレビュー
+    fun getEffectiveUrl(): String {
+        return when {
+            !lastVerifiedFullUrl.isNullOrBlank() -> lastVerifiedFullUrl
+            !fullImageUrl.isNullOrBlank() && !failedUrls.contains(fullImageUrl) && !preferPreviewOnly -> fullImageUrl
+            else -> previewUrl
+        }
+    }
+}

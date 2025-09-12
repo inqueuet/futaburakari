@@ -66,6 +66,8 @@ class NetworkClient(
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .build()
         return@withContext try {
             httpClient.newCall(req).executeAsync().use { resp ->
@@ -83,6 +85,8 @@ class NetworkClient(
             .url(url)
             .head()
             .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .build()
         return@withContext try {
             httpClient.newCall(req).executeAsync().use { resp ->
@@ -104,10 +108,15 @@ class NetworkClient(
             .get()
             .header("Range", rangeValue)
             .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
             httpClient.newCall(req).executeAsync().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@use null
+                }
                 val code = resp.code
                 val body = resp.body ?: return@use null
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L

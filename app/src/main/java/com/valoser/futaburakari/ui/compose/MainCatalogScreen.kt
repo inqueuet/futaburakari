@@ -199,10 +199,7 @@ fun MainCatalogScreen(
             }
     }
 
-    // 既知の404 URL（この画面の存続中に限って再プリフェッチを抑止）
-    val known404Urls = remember { mutableStateMapOf<String, Boolean>() }
-    // フル画像404の通知回数をURL単位で制限（VM側の回数上限に到達させるため、同一URLでも最大3回までは通知する）
-    val known404Counts = remember { mutableStateMapOf<String, Int>() }
+    // 404のローカル抑止は廃止（VM側の回数管理と候補探索に委任）
 
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
@@ -249,7 +246,6 @@ fun MainCatalogScreen(
                         }
                         chosen?.let { item.detailUrl to it }
                     }
-                    .filter { (ref, url) -> !known404Urls.containsKey(url) }
 
                 // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
                 urlPairs.chunked(2).forEach { batch ->
@@ -261,8 +257,9 @@ fun MainCatalogScreen(
                             .httpHeaders(
                                 NetworkHeaders.Builder()
                                     .add("Referer", referer)
-                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                    .add("Accept", "*/*")
                                     .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
                                     .build()
                             )
                             .build()
@@ -364,8 +361,6 @@ fun MainCatalogScreen(
                         onClick = { onItemClick(item) },
                         onImageLoadHttp404 = onImageLoadHttp404,
                         onImageLoadSuccess = onImageLoadSuccess,
-                        known404Urls = known404Urls,
-                        known404Counts = known404Counts,
                     )
                 }
             }
@@ -417,8 +412,6 @@ private fun CatalogCard(
     onClick: () -> Unit,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
     onImageLoadSuccess: (item: ImageItem, loadedUrl: String) -> Unit,
-    known404Urls: MutableMap<String, Boolean>,
-    known404Counts: MutableMap<String, Int>,
 ) {
     Card(
         modifier = Modifier
@@ -426,81 +419,13 @@ private fun CatalogCard(
         onClick = onClick
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            // 局所状態: 直近に404になったフルURL
-            var lastFailedFullUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
-
-            // 404通知ヘルパー（重複通知と再プリフェッチを抑止）
-            val addKnown404AndNotify = remember(onImageLoadHttp404) {
-                { it: ImageItem, failed: String ->
-                    // プリフェッチ抑止フラグは一度立てる
-                    if (!known404Urls.containsKey(failed)) known404Urls[failed] = true
-                    // 同一URLでも最大3回までVMに通知して回数上限ロジックを動かす
-                    val next = (known404Counts[failed] ?: 0) + 1
-                    known404Counts[failed] = next
-                    if (next <= 3) onImageLoadHttp404(it, failed)
-                }
-            }
-
-            // URL 更新で解除（新しいURLに変わったら再試行を許可）
-            LaunchedEffect(item.fullImageUrl) {
-                if (lastFailedFullUrl != null && item.fullImageUrl != lastFailedFullUrl) {
-                    lastFailedFullUrl = null
-                }
-            }
-            // VM 側で復帰（preferPreviewOnly=false）した場合、ローカル404記録をクリア
-            LaunchedEffect(item.preferPreviewOnly) {
-                if (!item.preferPreviewOnly && lastFailedFullUrl != null) lastFailedFullUrl = null
-            }
-
-            // VM 側で URL 修正注記が付与された場合（/src/ 確定/存在確認OK など）、
-            // ローカルの 404 記録をクリアしてフル画像への切り替えを許可する。
-            LaunchedEffect(item.urlFixNote) {
-                if (!item.urlFixNote.isNullOrBlank()) {
-                    // VM 側でURL修正やOK注記が入ったら、同一URLのローカル記録をクリア
-                    val currentFull = item.fullImageUrl
-                    if (!currentFull.isNullOrBlank()) {
-                        known404Urls.remove(currentFull)
-                        known404Counts.remove(currentFull)
-                    }
-                    lastFailedFullUrl = null
-                }
-            }
-
-            // preferPreviewOnly 中でも、フルURLが更新されたらバックグラウンドでだけ検証する。
-            // 実描画が成功した時点でのみ onImageLoadSuccess で解除（画面は当面プレビューのまま）。
-            val backgroundContext = LocalContext.current
-            LaunchedEffect(item.fullImageUrl, item.preferPreviewOnly) {
-                val full = item.fullImageUrl
-                if (item.preferPreviewOnly && !full.isNullOrBlank() && full.contains("/src/")) {
-                    val req = ImageRequest.Builder(backgroundContext)
-                        .data(full)
-                        .httpHeaders(
-                            NetworkHeaders.Builder()
-                                .add("Referer", item.detailUrl)
-                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                .build()
-                        )
-                        .listener(
-                            onSuccess = { request, _ ->
-                                val loaded = request.data?.toString() ?: full
-                                // 実描画成功。成功ベースで解除通知。
-                                onImageLoadSuccess(item, loaded)
-                            },
-                            onError = { request, _ ->
-                                val failed = request.data?.toString() ?: full
-                                addKnown404AndNotify(item, failed)
-                            }
-                        )
-                        .build()
-                    backgroundContext.imageLoader.enqueue(req)
-                }
-            }
-
-            // フルが使えない/使わない場合は、サムネイルを表示にフォールバック
-            val blockedFull = item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl
+            // ViewModel の判定を信頼し、表示URLはモデルから決定
             val displayUrl = when {
-                !item.preferPreviewOnly && !blockedFull && !item.fullImageUrl.isNullOrBlank() -> item.fullImageUrl
+                // 検証済みURLがあれば最優先
+                !item.lastVerifiedFullUrl.isNullOrBlank() -> item.lastVerifiedFullUrl
+                // 次にfullImageUrlを試す（ただしpreferPreviewOnlyでない場合）
+                !item.preferPreviewOnly && !item.fullImageUrl.isNullOrBlank() -> item.fullImageUrl
+                // プレビューにフォールバック
                 !item.previewUnavailable -> item.previewUrl
                 else -> null
             }
@@ -526,50 +451,27 @@ private fun CatalogCard(
                             .httpHeaders(
                                 NetworkHeaders.Builder()
                                     .add("Referer", item.detailUrl)
-                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                    .add("Accept", "*/*")
                                     .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
                                     .build()
                             )
                             .listener(
-                                object : ImageRequest.Listener {
-                                    override fun onSuccess(request: ImageRequest, result: coil3.request.SuccessResult) {
-                                        val loaded = request.data?.toString()
-                                        if (lastFailedFullUrl != null && (loaded == item.fullImageUrl || (loaded?.contains("/src/") == true))) {
-                                            lastFailedFullUrl = null
-                                        }
-                                        // 成功したURLは404既知扱いを解除（将来のプリフェッチ/通知を許可）
-                                        if (!loaded.isNullOrBlank()) {
-                                            known404Urls.remove(loaded)
-                                            known404Counts.remove(loaded)
-                                            // フル画像の実描画に成功した場合のみ、VMへ成功通知して previewOnly を解除
-                                            if (loaded.contains("/src/")) {
-                                                onImageLoadSuccess(item, loaded)
-                                            }
-                                        }
+                                onSuccess = { request, _ ->
+                                    val loaded = request.data?.toString()
+                                    if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                        onImageLoadSuccess(item, loaded)
                                     }
-                                    override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
-                                        val ex = result.throwable
-                                        val failed = request.data?.toString() ?: item.fullImageUrl
-                                        if (ex is HttpException) {
-                                            val code = ex.response.code
-                                            if (code in 400..499) {
-                                                val f = failed ?: return
-                                                if (f.contains("/src/") && lastFailedFullUrl != f) {
-                                                    lastFailedFullUrl = f
-                                                    addKnown404AndNotify(item, f)
-                                                }
-                                            }
-                                        } else {
-                                            val f = failed ?: return
-                                            if (f.contains("/src/") && lastFailedFullUrl != f) {
-                                                lastFailedFullUrl = f
-                                                addKnown404AndNotify(item, f)
-                                            }
-                                        }
+                                },
+                                onError = { request, result ->
+                                    val ex = result.throwable
+                                    if (ex is HttpException && ex.response.code == 404) {
+                                        val failed = request.data?.toString() ?: ""
+                                        if (failed.isNotEmpty()) onImageLoadHttp404(item, failed)
                                     }
                                 }
                             )
-                            .build(),
+                        .build(),
                         imageLoader = LocalContext.current.imageLoader,
                         contentDescription = item.title,
                         loading = {
@@ -599,6 +501,9 @@ private fun CatalogCard(
                                         .httpHeaders(
                                             NetworkHeaders.Builder()
                                                 .add("Referer", item.detailUrl)
+                                                .add("Accept", "*/*")
+                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
                                                 .build()
                                         )
                                         .build(),
@@ -665,9 +570,9 @@ private fun CatalogCard(
             }
 
             // 動画の場合は中央に再生アイコンを重ねる（表示URL基準）
-            val isVideo = (displayUrl ?: "").let { url ->
+            val isVideo = displayUrl?.let { url ->
                 url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
-            }
+            } ?: false
             if (isVideo) {
                 Surface(
                     modifier = Modifier
