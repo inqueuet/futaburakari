@@ -60,6 +60,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.MetadataExtractor
@@ -211,6 +213,8 @@ private fun ImageContent(url: String?, referer: String? = null, modifier: Modifi
                         if (!ref.isNullOrBlank()) builder.add("Referer", ref)
                         httpHeaders(builder.build())
                     }
+                    // フル画像の初回表示や再読み込み時の表示切替をなめらかに
+                    .transitionFactory(CrossfadeTransition.Factory())
                     .build()
             } else null
             ZoomableAsyncImage(

@@ -56,6 +56,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import coil3.compose.SubcomposeAsyncImage
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
 import com.valoser.futaburakari.ImageItem
 import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
@@ -519,6 +521,8 @@ private fun CatalogCard(
                             .data(displayUrl)
                             .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                             .precision(Precision.EXACT)
+                            // 画像（プレビュー⇄フル）切替時のフラッシュ感を抑える
+                            .transitionFactory(CrossfadeTransition.Factory())
                             .httpHeaders(
                                 NetworkHeaders.Builder()
                                     .add("Referer", item.detailUrl)
@@ -590,6 +594,8 @@ private fun CatalogCard(
                                         .data(item.previewUrl)
                                         .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
                                         .precision(Precision.EXACT)
+                                        // フォールバック時もクロスフェードで切替を穏やかに
+                                        .transitionFactory(CrossfadeTransition.Factory())
                                         .httpHeaders(
                                             NetworkHeaders.Builder()
                                                 .add("Referer", item.detailUrl)
