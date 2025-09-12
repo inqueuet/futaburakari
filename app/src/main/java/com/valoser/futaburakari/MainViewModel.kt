@@ -75,6 +75,8 @@ class MainViewModel @Inject constructor(
     // 404回数制限（detailUrl + failedUrl 単位でカウント）
     private val http404Counts = mutableMapOf<String, Int>()
     private val MAX_404_RETRY = 3
+    // 再確認ディレイ（ミリ秒）のジッター範囲（スパイク緩和用）
+    private val RECHECK_DELAY_RANGE_MS: LongRange = 800L..1200L
 
     // フル画像アップグレードの同時実行上限。初期値は設定から取得（既定: 2件）。
     @Volatile private var fullUpgradeConfigured: Int = AppPreferences.getFullUpgradeConcurrency(appContext)
@@ -588,10 +590,12 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさみ1回だけ確認する
+    // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延＋微小ジッターをはさみ1回だけ確認する
     private suspend fun urlExistsTwoStage(url: String, referer: String? = null): Boolean {
-        // 1000ms の猶予後に1回だけ確認
-        delay(1000L)
+        // 800〜1200ms の猶予後に1回だけ確認（delay は非ブロッキング）
+        val waitMs = kotlin.random.Random.nextLong(RECHECK_DELAY_RANGE_MS.first, RECHECK_DELAY_RANGE_MS.last + 1)
+        delay(waitMs)
+        // urlExists 内で必要に応じて IO 切替を行っているため、ここでは包まない
         return urlExists(url, referer)
     }
 
