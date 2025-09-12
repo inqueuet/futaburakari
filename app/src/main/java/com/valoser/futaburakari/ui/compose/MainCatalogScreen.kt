@@ -5,7 +5,7 @@
  * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
  * - 体験: 可視範囲＋先読みの軽量プリフェッチでスクロールを滑らかに。
  * - 表示: カード下部にグラデーション＋タイトル、右下に返信数バッジ。
- * - エラー: フル画像の取得が 404 等で失敗した場合はサムネイルにフォールバック。サムネイルも失敗した場合は簡易プレースホルダを表示。
+ * - エラー: プレビューは使用せず、フル画像の取得が失敗した場合は簡易プレースホルダを表示。
  *          404 検知時は `onImageLoadHttp404` を介して ViewModel に通知し、URL 補正を試みる。
  */
 package com.valoser.futaburakari.ui.compose
@@ -74,7 +74,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
  * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
- * - エラー: 画像ロード失敗時は自動でサムネイルにフォールバックし、それも不可なら簡易プレースホルダを表示。
+ * - エラー: プレビューにフォールバックせず、失敗時は簡易プレースホルダを表示。
  *
  * パラメータ:
  * - `modifier`: ルートレイアウト用の修飾子。
@@ -115,7 +115,7 @@ fun MainCatalogScreen(
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
-    onRequestFullImage: (item: ImageItem) -> Unit,
+    onImageLoadSuccess: (item: ImageItem, loadedUrl: String) -> Unit,
 ) {
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
@@ -199,6 +199,8 @@ fun MainCatalogScreen(
 
     // 既知の404 URL（この画面の存続中に限って再プリフェッチを抑止）
     val known404Urls = remember { mutableStateMapOf<String, Boolean>() }
+    // フル画像404の通知回数をURL単位で制限（VM側の回数上限に到達させるため、同一URLでも最大3回までは通知する）
+    val known404Counts = remember { mutableStateMapOf<String, Int>() }
 
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
@@ -238,10 +240,10 @@ fun MainCatalogScreen(
                         // プレビュー不可かつフル未確定ならプリフェッチしない
                         val full = item.fullImageUrl
                         val preferPreview = item.preferPreviewOnly
+                        val hadFull = item.hadFullSuccess
                         val chosen = when {
-                            !full.isNullOrBlank() && !preferPreview -> full
-                            item.previewUnavailable -> null
-                            else -> item.previewUrl
+                            !full.isNullOrBlank() && !preferPreview && !hadFull -> full // 既に実描画成功した項目は再プリフェッチしない
+                            else -> null // プレビューはプリフェッチしない
                         }
                         chosen?.let { item.detailUrl to it }
                     }
@@ -253,7 +255,7 @@ fun MainCatalogScreen(
                         val req = ImageRequest.Builder(context)
                             .data(url)
                             .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
-                            .precision(Precision.INEXACT)
+                            .precision(Precision.EXACT)
                             .httpHeaders(
                                 NetworkHeaders.Builder()
                                     .add("Referer", referer)
@@ -268,26 +270,7 @@ fun MainCatalogScreen(
             }
     }
 
-    // 再読み込み完了直後（isLoading -> false）に、可視範囲でまだプレビュー表示のものをフル化要求
-    val requestedOnReload = remember { mutableStateSetOf<String>() } // detailUrl 単位
-    LaunchedEffect(isLoading, filtered) {
-        if (isLoading) {
-            requestedOnReload.clear()
-            return@LaunchedEffect
-        }
-        // 少し待ってレイアウト確定後に可視アイテムを取得
-        delay(150L)
-        val visibleKeys = gridState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String }
-        if (visibleKeys.isEmpty()) return@LaunchedEffect
-        val byDetail = filtered.associateBy { it.detailUrl }
-        // 上限をかけて一気に投げすぎない（例: 12件）
-        visibleKeys.take(12).forEach { k ->
-            val item = byDetail[k] ?: return@forEach
-            if (!requestedOnReload.add(k)) return@forEach
-            // プレビュー固定指定/プレビュー不可以外は、可視範囲でフル化を促す（既にfullがあっても再確認を促進）
-            if (!item.preferPreviewOnly && !item.previewUnavailable) onRequestFullImage(item)
-        }
-    }
+    // 再読み込み直後の能動的なフル化は行わない（経路を404修正に一本化）
 
     Scaffold(
         topBar = {
@@ -376,8 +359,9 @@ fun MainCatalogScreen(
                         item = item,
                         onClick = { onItemClick(item) },
                         onImageLoadHttp404 = onImageLoadHttp404,
-                        onRequestFullImage = onRequestFullImage,
+                        onImageLoadSuccess = onImageLoadSuccess,
                         known404Urls = known404Urls,
+                        known404Counts = known404Counts,
                     )
                 }
             }
@@ -419,17 +403,18 @@ private fun MoreMenu(
  * カタログアイテムのカード表示。
  * 下部グラデーション上にタイトルを配置し、返信数は右下バッジとして上位レイヤーに重ねる。
  * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
- * エラー時の挙動: フル画像のロードに失敗（例: HTTP 404）した場合はサムネイルにフォールバックし、
- * サムネイルも失敗した場合は簡易プレースホルダを表示。404 は `onImageLoadHttp404` に通知され、
- * ViewModel 側で代替URLの探索・補正が試行される。
+ * エラー時の挙動: プレビューは使用せず、フル画像の取得を試行。
+ * 取得に失敗（例: HTTP 4xx）した場合は簡易プレースホルダを表示し、404 は `onImageLoadHttp404` に通知して
+ * ViewModel 側で代替URLの探索・補正を試みる。
  */
 @Composable
 private fun CatalogCard(
     item: ImageItem,
     onClick: () -> Unit,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
-    onRequestFullImage: (item: ImageItem) -> Unit,
+    onImageLoadSuccess: (item: ImageItem, loadedUrl: String) -> Unit,
     known404Urls: MutableMap<String, Boolean>,
+    known404Counts: MutableMap<String, Int>,
 ) {
     Card(
         modifier = Modifier
@@ -437,17 +422,18 @@ private fun CatalogCard(
         onClick = onClick
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            // 局所状態: 直近に404になったURL（full/preview）
+            // 局所状態: 直近に404になったフルURL
             var lastFailedFullUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
-            var lastFailedPreviewUrl by remember(item.detailUrl) { mutableStateOf<String?>(null) }
 
             // 404通知ヘルパー（重複通知と再プリフェッチを抑止）
             val addKnown404AndNotify = remember(onImageLoadHttp404) {
                 { it: ImageItem, failed: String ->
-                    if (!known404Urls.containsKey(failed)) {
-                        known404Urls[failed] = true
-                        onImageLoadHttp404(it, failed)
-                    }
+                    // プリフェッチ抑止フラグは一度立てる
+                    if (!known404Urls.containsKey(failed)) known404Urls[failed] = true
+                    // 同一URLでも最大3回までVMに通知して回数上限ロジックを動かす
+                    val next = (known404Counts[failed] ?: 0) + 1
+                    known404Counts[failed] = next
+                    if (next <= 3) onImageLoadHttp404(it, failed)
                 }
             }
 
@@ -457,196 +443,181 @@ private fun CatalogCard(
                     lastFailedFullUrl = null
                 }
             }
-            LaunchedEffect(item.previewUrl) {
-                if (lastFailedPreviewUrl != null && item.previewUrl != lastFailedPreviewUrl) {
-                    lastFailedPreviewUrl = null
-                }
-            }
-            // VM 側で復帰（preferPreviewOnly=false）した場合、同一URLでもプレビュー固定を解除できるように404記録をクリア
+            // VM 側で復帰（preferPreviewOnly=false）した場合、ローカル404記録をクリア
             LaunchedEffect(item.preferPreviewOnly) {
-                if (!item.preferPreviewOnly && lastFailedFullUrl != null) {
-                    lastFailedFullUrl = null
-                }
+                if (!item.preferPreviewOnly && lastFailedFullUrl != null) lastFailedFullUrl = null
             }
 
             // VM 側で URL 修正注記が付与された場合（/src/ 確定/存在確認OK など）、
             // ローカルの 404 記録をクリアしてフル画像への切り替えを許可する。
             LaunchedEffect(item.urlFixNote) {
                 if (!item.urlFixNote.isNullOrBlank()) {
+                    // VM 側でURL修正やOK注記が入ったら、同一URLのローカル記録をクリア
+                    val currentFull = item.fullImageUrl
+                    if (!currentFull.isNullOrBlank()) {
+                        known404Urls.remove(currentFull)
+                        known404Counts.remove(currentFull)
+                    }
                     lastFailedFullUrl = null
-                    // サムネイル側の 404 記録も念のため解除
-                    lastFailedPreviewUrl = null
                 }
             }
 
-            // 表示に使うURLを一本化（VMのpreferPreviewOnly + UIの局所404回避）
-            val preferPreviewNow = item.preferPreviewOnly || (item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl)
-            val displayUrl = if (preferPreviewNow) item.previewUrl else item.fullImageUrl ?: item.previewUrl
-            val skipPreviewLoading = (displayUrl == item.previewUrl) &&
-                (item.previewUnavailable || lastFailedPreviewUrl == item.previewUrl || known404Urls.containsKey(item.previewUrl))
-
-            // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
-            // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
-                val heightPx = (widthPx * 4f / 3f)
-                if (skipPreviewLoading) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(3f / 4f)
-                    ) {
-                        Text(
-                            text = "画像を表示できません",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
-                } else {
-                // サムネイル成功表示を検知し、UI側でも約0.5秒間隔で最大5回までフル化を促す
-                var previewDisplayed by remember(item.detailUrl) { mutableStateOf(false) }
-                var requestTries by remember(item.detailUrl) { mutableStateOf(0) }
-                LaunchedEffect(previewDisplayed, item.fullImageUrl, item.preferPreviewOnly, displayUrl) {
-                    if (!previewDisplayed) return@LaunchedEffect
-                    if (item.preferPreviewOnly) return@LaunchedEffect
-                    // 既にフルURLが入った/フルを表示しているなら不要
-                    if (!item.fullImageUrl.isNullOrBlank() && displayUrl != item.previewUrl) return@LaunchedEffect
-
-                    // 最大5回、約0.5秒間隔でUIがまだサムネを表示していないか確認しつつ促す
-                    while (requestTries < 5 && (displayUrl == item.previewUrl) && item.fullImageUrl.isNullOrBlank() && !item.preferPreviewOnly) {
-                        delay(500L)
-                        // 直前でフルに切り替わっていれば打ち切り
-                        if (displayUrl != item.previewUrl || !item.fullImageUrl.isNullOrBlank()) break
-                        requestTries += 1
-                        onRequestFullImage(item)
-                    }
-                }
-
-                SubcomposeAsyncImage(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
-                        .aspectRatio(3f / 4f),
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(displayUrl)
-                        .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
-                        .precision(Precision.INEXACT)
+            // preferPreviewOnly 中でも、フルURLが更新されたらバックグラウンドでだけ検証する。
+            // 実描画が成功した時点でのみ onImageLoadSuccess で解除（画面は当面プレビューのまま）。
+            val backgroundContext = LocalContext.current
+            LaunchedEffect(item.fullImageUrl, item.preferPreviewOnly) {
+                val full = item.fullImageUrl
+                if (item.preferPreviewOnly && !full.isNullOrBlank() && full.contains("/src/")) {
+                    val req = ImageRequest.Builder(backgroundContext)
+                        .data(full)
                         .httpHeaders(
                             NetworkHeaders.Builder()
                                 .add("Referer", item.detailUrl)
                                 .build()
                         )
                         .listener(
-                            object : ImageRequest.Listener {
-                                override fun onSuccess(request: ImageRequest, result: coil3.request.SuccessResult) {
-                                    // 実表示がプレビューURLだった場合に検知
-                                    val loaded = request.data?.toString()
-                                    if (loaded == item.previewUrl) {
-                                        previewDisplayed = true
-                                    } else {
-                                        // フルURLの表示成功を検知したら、局所404記録を解除して以降のプレビュー固定を防ぐ
+                            onSuccess = { request, _ ->
+                                val loaded = request.data?.toString() ?: full
+                                // 実描画成功。成功ベースで解除通知。
+                                onImageLoadSuccess(item, loaded)
+                            },
+                            onError = { request, _ ->
+                                val failed = request.data?.toString() ?: full
+                                addKnown404AndNotify(item, failed)
+                            }
+                        )
+                        .build()
+                    backgroundContext.imageLoader.enqueue(req)
+                }
+            }
+
+            // フルが使えない/使わない場合は、サムネイルを表示にフォールバック
+            val blockedFull = item.fullImageUrl != null && item.fullImageUrl == lastFailedFullUrl
+            val displayUrl = when {
+                !item.preferPreviewOnly && !blockedFull && !item.fullImageUrl.isNullOrBlank() -> item.fullImageUrl
+                !item.previewUnavailable -> item.previewUrl
+                else -> null
+            }
+
+            // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
+            // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
+                val heightPx = (widthPx * 4f / 3f)
+                // 再挑戦経路はVMの404修正に一本化。UIからの能動的フル化要求は行わない。
+
+                if (!displayUrl.isNullOrBlank()) {
+                    SubcomposeAsyncImage(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(3f / 4f),
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(displayUrl)
+                            .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
+                            .precision(Precision.EXACT)
+                            .httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", item.detailUrl)
+                                    .build()
+                            )
+                            .listener(
+                                object : ImageRequest.Listener {
+                                    override fun onSuccess(request: ImageRequest, result: coil3.request.SuccessResult) {
+                                        val loaded = request.data?.toString()
                                         if (lastFailedFullUrl != null && (loaded == item.fullImageUrl || (loaded?.contains("/src/") == true))) {
                                             lastFailedFullUrl = null
                                         }
-                                    }
-                                }
-                                override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
-                                    val ex = result.throwable
-                                    val failed = request.data?.toString() ?: (item.fullImageUrl ?: item.previewUrl)
-                                    // HTTPエラーは 4xx を幅広く修正フローに載せる（403/410 等も対象）
-                                    if (ex is HttpException) {
-                                        val code = ex.response.code
-                                        if (code in 400..499) {
-                                            if (failed.contains("/src/")) {
-                                                if (lastFailedFullUrl != failed) {
-                                                    lastFailedFullUrl = failed
-                                                    addKnown404AndNotify(item, failed)
-                                                }
-                                            } else {
-                                                if (lastFailedPreviewUrl != failed) {
-                                                    lastFailedPreviewUrl = failed
-                                                    addKnown404AndNotify(item, failed)
-                                                }
+                                        // 成功したURLは404既知扱いを解除（将来のプリフェッチ/通知を許可）
+                                        if (!loaded.isNullOrBlank()) {
+                                            known404Urls.remove(loaded)
+                                            known404Counts.remove(loaded)
+                                            // フル画像の実描画に成功した場合のみ、VMへ成功通知して previewOnly を解除
+                                            if (loaded.contains("/src/")) {
+                                                onImageLoadSuccess(item, loaded)
                                             }
                                         }
-                                    } else {
-                                        // 非HTTP系（デコード失敗/IOなど）でも、フル画像試行時はHTML解析での補正を促す
-                                        if (failed.contains("/src/") && lastFailedFullUrl != failed) {
-                                            lastFailedFullUrl = failed
-                                            addKnown404AndNotify(item, failed)
+                                    }
+                                    override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
+                                        val ex = result.throwable
+                                        val failed = request.data?.toString() ?: item.fullImageUrl
+                                        if (ex is HttpException) {
+                                            val code = ex.response.code
+                                            if (code in 400..499) {
+                                                val f = failed ?: return
+                                                if (f.contains("/src/") && lastFailedFullUrl != f) {
+                                                    lastFailedFullUrl = f
+                                                    addKnown404AndNotify(item, f)
+                                                }
+                                            }
+                                        } else {
+                                            val f = failed ?: return
+                                            if (f.contains("/src/") && lastFailedFullUrl != f) {
+                                                lastFailedFullUrl = f
+                                                addKnown404AndNotify(item, f)
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        )
-                        .build(),
-                    imageLoader = LocalContext.current.imageLoader,
-                    contentDescription = item.title,
-                    loading = {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(3f / 4f)
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.align(Alignment.Center)
                             )
-                        }
-                    },
-                    error = {
-                        // フル画像の取得に失敗（例: 404）の場合は、サムネイルをフォールバック表示
-                        if (displayUrl == item.previewUrl || lastFailedPreviewUrl == item.previewUrl || item.previewUnavailable) {
+                            .build(),
+                        imageLoader = LocalContext.current.imageLoader,
+                        contentDescription = item.title,
+                        loading = {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(3f / 4f)
                             ) {
-                                Text(
-                                    text = "画像を表示できません",
-                                    style = MaterialTheme.typography.bodySmall,
+                                CircularProgressIndicator(
                                     modifier = Modifier.align(Alignment.Center)
                                 )
                             }
-                        } else {
-                        SubcomposeAsyncImage(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(3f / 4f),
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(item.previewUrl)
-                                .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
-                                .precision(Precision.INEXACT)
-                                .httpHeaders(
-                                    NetworkHeaders.Builder()
-                                        .add("Referer", item.detailUrl)
-                                        .build()
-                                )
-                                .listener(
-                                    object : ImageRequest.Listener {
-                                        override fun onSuccess(request: ImageRequest, result: coil3.request.SuccessResult) {
-                                            previewDisplayed = true
+                        },
+                        error = {
+                            // フル画像の読み込みエラー時は、可能ならプレビュー画像を表示する
+                            if (displayUrl == item.fullImageUrl && !item.previewUnavailable) {
+                                SubcomposeAsyncImage(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(3f / 4f),
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(item.previewUrl)
+                                        .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
+                                        .precision(Precision.EXACT)
+                                        .httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", item.detailUrl)
+                                                .build()
+                                        )
+                                        .build(),
+                                    imageLoader = LocalContext.current.imageLoader,
+                                    contentDescription = item.title,
+                                    loading = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(3f / 4f)
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.align(Alignment.Center)
+                                            )
                                         }
-                                        override fun onError(request: ImageRequest, result: coil3.request.ErrorResult) {
-                                            // サムネイル側のHTTP 4xx（404/403等）も通知対象に広げる
-                                            val ex = result.throwable
-                                            if (ex is HttpException) {
-                                                val code = ex.response.code
-                                                if (code in 400..499) {
-                                                    val failed = request.data?.toString() ?: item.previewUrl
-                                                    if (lastFailedPreviewUrl != failed) {
-                                                        lastFailedPreviewUrl = failed
-                                                        addKnown404AndNotify(item, failed)
-                                                    }
-                                                }
-                                            }
+                                    },
+                                    error = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(3f / 4f)
+                                        ) {
+                                            Text(
+                                                text = "画像を表示できません",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.align(Alignment.Center)
+                                            )
                                         }
                                     }
                                 )
-                                .build(),
-                            imageLoader = LocalContext.current.imageLoader,
-                            contentDescription = item.title,
-                            // サムネイルも失敗した場合は簡易プレースホルダ
-                            error = {
+                            } else {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -659,15 +630,30 @@ private fun CatalogCard(
                                     )
                                 }
                             }
-                        )
+                        }
+                    )
+                } else {
+                    val giveUp = item.preferPreviewOnly || item.previewUnavailable
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(3f / 4f)
+                    ) {
+                        if (!giveUp) {
+                            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                        } else {
+                            Text(
+                                text = "画像を表示できません",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
                         }
                     }
-                )
                 }
             }
 
             // 動画の場合は中央に再生アイコンを重ねる（表示URL基準）
-            val isVideo = displayUrl.let { url ->
+            val isVideo = (displayUrl ?: "").let { url ->
                 url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
             }
             if (isVideo) {

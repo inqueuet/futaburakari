@@ -23,5 +23,6 @@ data class ImageItem(
     val fullImageUrl: String? = null, // フルサイズ画像のURL（任意）
     val urlFixNote: String? = null,   // 個別404時の候補探索で置換された際のメモ（UI表示用）
     val preferPreviewOnly: Boolean = false, // フル画像が恒常的に404等の場合にプレビュー固定で表示するためのフラグ
-    val previewUnavailable: Boolean = false // プレビュー自体が404等で存在しない（未添付/削除）場合の停止フラグ
+    val previewUnavailable: Boolean = false, // プレビュー自体が404等で存在しない（未添付/削除）場合の停止フラグ
+    val hadFullSuccess: Boolean = false // 一度でもフル画像の実描画に成功したかどうか
 )

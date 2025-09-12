@@ -720,7 +720,7 @@ fun DetailScreenScaffold(
                                                 }
                                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                                 .scale(coil3.size.Scale.FILL)
-                                                .precision(coil3.size.Precision.INEXACT)
+                                                .precision(coil3.size.Precision.EXACT)
                                                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                 .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                 .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
@@ -748,7 +748,7 @@ fun DetailScreenScaffold(
                                                     }
                                                     .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                                     .scale(coil3.size.Scale.FILL)
-                                                    .precision(coil3.size.Precision.INEXACT)
+                                                    .precision(coil3.size.Precision.EXACT)
                                                     .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                     .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                     .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
@@ -789,7 +789,7 @@ fun DetailScreenScaffold(
                                 }
                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                 .scale(coil3.size.Scale.FILL)
-                                .precision(coil3.size.Precision.INEXACT)
+                                .precision(coil3.size.Precision.EXACT)
                                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .build()

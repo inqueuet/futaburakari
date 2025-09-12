@@ -198,8 +198,8 @@ class MainActivity : BaseActivity() {
                     onImageLoadHttp404 = { item, failedUrl ->
                         viewModel.fixImageIf404(item.detailUrl, failedUrl)
                     },
-                    onRequestFullImage = { item ->
-                        viewModel.ensureFullImage(item.detailUrl)
+                    onImageLoadSuccess = { item, loadedUrl ->
+                        viewModel.notifyFullImageSuccess(item.detailUrl, loadedUrl)
                     },
                     )
 

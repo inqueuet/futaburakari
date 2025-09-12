@@ -234,7 +234,7 @@ fun DetailListCompose(
                                 }
                                 .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
                                 .scale(Scale.FIT)
-                                .precision(Precision.INEXACT)
+                                .precision(Precision.EXACT)
                                 .diskCachePolicy(CachePolicy.ENABLED)
                                 .memoryCachePolicy(CachePolicy.ENABLED)
                                 .networkCachePolicy(CachePolicy.ENABLED)
@@ -262,7 +262,7 @@ fun DetailListCompose(
                                     }
                                     .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
                                     .scale(Scale.FIT)
-                                    .precision(Precision.INEXACT)
+                                    .precision(Precision.EXACT)
                                     .diskCachePolicy(CachePolicy.ENABLED)
                                     .memoryCachePolicy(CachePolicy.ENABLED)
                                     .networkCachePolicy(CachePolicy.ENABLED)

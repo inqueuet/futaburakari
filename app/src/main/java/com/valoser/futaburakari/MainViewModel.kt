@@ -81,6 +81,9 @@ class MainViewModel @Inject constructor(
     private val fullUpgradeSemaphore = Semaphore(fullUpgradeConfigured)
     private val upgradingFull = mutableSetOf<String>()
 
+    // UI のローカル404ガード解除用に、同一メッセージでも値変化を起こせる短いノンス付き注記を生成
+    private fun okNote(): String = "URL修正: /src/存在確認OK#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
+
     private fun inc404(detailUrl: String, failedUrl: String): Int = synchronized(http404Counts) {
         val key = "$detailUrl|$failedUrl"
         val next = (http404Counts[key] ?: 0) + 1
@@ -107,7 +110,8 @@ class MainViewModel @Inject constructor(
         synchronized(upgradingFull) {
             if (!upgradingFull.add(detailUrl)) return
         }
-        viewModelScope.launch {
+        // メインスレッド負荷を避けるため Default で実行
+        viewModelScope.launch(Dispatchers.Default) {
             try {
                 val attemptDelays = listOf(0L, 10L, 20L) // 合計3回トライ（軽量確認→HTML抽出も試行）
                 for ((i, delayMs) in attemptDelays.withIndex()) {
@@ -138,12 +142,14 @@ class MainViewModel @Inject constructor(
                             runCatching { urlExistsTwoStage(candidate, referer = item.detailUrl) }.getOrDefault(false)
                         else false
                         if (okCandidate) {
+                            Log.d("EnsureFull", "[$i] OK candidate for ${item.detailUrl}: $candidate")
                             val updated = current.toMutableList()
                             updated[idx] = item.copy(
                                 fullImageUrl = candidate,
-                                preferPreviewOnly = false,
+                                // 成功描画ベースで解除するため、ここではフラグを変更しない
+                                preferPreviewOnly = item.preferPreviewOnly,
                                 // UI側で404記録をクリアさせるため注記を更新（同一URLでもOK明示）
-                                urlFixNote = "URL修正: /src/存在確認OK"
+                                urlFixNote = okNote()
                             )
                             _images.postValue(updated)
                             true
@@ -155,21 +161,27 @@ class MainViewModel @Inject constructor(
                                     ?: doc.selectFirst("a[href*='/src/']")?.absUrl("href")
                             }.getOrNull()
                             if (!resolved.isNullOrBlank()) {
+                                Log.d("EnsureFull", "[$i] Resolved from HTML for ${item.detailUrl}: $resolved")
                                 val updated = current.toMutableList()
                                 updated[idx] = item.copy(
                                     fullImageUrl = resolved,
-                                    preferPreviewOnly = false,
+                                    // 成功描画ベースで解除するため、ここではフラグを変更しない
+                                    preferPreviewOnly = item.preferPreviewOnly,
                                     // UI側で404記録をクリアさせるため注記を更新
-                                    urlFixNote = "URL修正: /src/存在確認OK"
+                                    urlFixNote = okNote()
                                 )
                                 _images.postValue(updated)
                                 true
-                            } else false
+                            } else {
+                                Log.d("EnsureFull", "[$i] No full resolved for ${item.detailUrl}")
+                                false
+                            }
                         }
                     }
                     if (applied) break else if (i == attemptDelays.lastIndex) break
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w("EnsureFull", "ensureFullImage failed for $detailUrl", e)
                 // 失敗時は黙殺（UI は既存ロジックでプレビュー継続）
             } finally {
                 synchronized(upgradingFull) { upgradingFull.remove(detailUrl) }
@@ -188,37 +200,38 @@ class MainViewModel @Inject constructor(
         synchronized(fixing404) {
             if (!fixing404.add(guardKey)) return
         }
-        viewModelScope.launch {
+        // メインスレッド負荷を避けるため Default で実行
+        viewModelScope.launch(Dispatchers.Default) {
             try {
                 val current = _images.value ?: return@launch
                 val target = current.find { it.detailUrl == detailUrl } ?: return@launch
 
                 val isFull = "/src/" in failedUrl
-                // 回数制限: 一定回数を超えたら以降は自動修正を停止
+                // 回数カウント
                 val count = inc404(detailUrl, failedUrl)
-                if (count > MAX_404_RETRY) {
-                    val limited = current.map {
-                        if (it.detailUrl == detailUrl) {
-                            if (isFull) {
-                                it.copy(preferPreviewOnly = true, fullImageUrl = null)
-                            } else {
-                                it.copy(previewUnavailable = true)
-                            }
-                        } else it
-                    }
-                    _images.postValue(limited)
-                    return@launch
-                }
+                Log.d("VM404", "notify 404(${if (isFull) "full" else "thumb"}) #$count: detail=$detailUrl url=$failedUrl")
                 if (isFull) {
-                    // UIの再試行ループを止めるため、即座にプレビュー固定へ切替
-                    runCatching {
-                        val primed = current.map {
-                            if (it.detailUrl == detailUrl) it.copy(
-                                preferPreviewOnly = true
-                            ) else it
+                    // フル画像の 404 は回数上限を設け、閾値超過で UI 依存なく停止（preferPreviewOnly=true）へ倒す。
+                    if (count >= MAX_404_RETRY) {
+                        Log.w("VM404", "exceeded max retry: preferPreviewOnly switch considered detail=$detailUrl")
+                        val limited = current.map { itm ->
+                            if (itm.detailUrl == detailUrl) {
+                                // 一度でもフル描画に成功している場合は、プレビュー固定への強制切替を避ける
+                                if (itm.hadFullSuccess) itm
+                                else itm.copy(
+                                    fullImageUrl = null,
+                                    preferPreviewOnly = true,
+                                    urlFixNote = "URL停止: フル画像の404が規定回数を超過"
+                                )
+                            } else itm
                         }
-                        _images.postValue(primed)
+                        _images.postValue(limited)
+                        return@launch
                     }
+
+                    // 以前はUIの再試行ループを止めるため即座にプレビュー固定へ切り替えていたが、
+                    // 「代替が見つからなかった場合のみ」プレビュー固定へ切り替える方針に緩和する。
+                    // ここではまずHTML探索を実施し、代替が見つからなかった場合にのみ preferPreviewOnly を切り替える。
                     // 1) 詳細HTMLから /src/ を抽出（最優先）
                     val resolved: String? = runCatching {
                         val doc = networkClient.fetchDocument(detailUrl)
@@ -235,9 +248,12 @@ class MainViewModel @Inject constructor(
                         val base = failedUrl.substringBeforeLast('.')
                         val extCandidates = listOf("jpg", "jpeg", "png", "webp", "gif", "webm", "mp4")
                             .map { "$base.$it" }
-                        extCandidates.firstOrNull { runCatching { urlExistsTwoStage(it, referer = detailUrl) }.getOrDefault(false) }
+                        val found = extCandidates.firstOrNull { runCatching { urlExistsTwoStage(it, referer = detailUrl) }.getOrDefault(false) }
+                        if (found == null) Log.d("VM404", "no ext candidate matched for $detailUrl base=$base")
+                        found
                     }
                     if (!next.isNullOrBlank() && next != target.fullImageUrl) {
+                        Log.d("VM404", "fix to $next (html=${usedHtmlDirect}) for $detailUrl")
                         val updated = current.map {
                             if (it.detailUrl == detailUrl) it.copy(
                                 fullImageUrl = next,
@@ -246,33 +262,52 @@ class MainViewModel @Inject constructor(
                                 } else {
                                     "URL修正: /src/候補を検証して確定"
                                 },
-                                preferPreviewOnly = false
+                                // 成功描画ベースで解除するため、ここではフラグを変更しない
+                                preferPreviewOnly = it.preferPreviewOnly
                             ) else it
                         }
                         _images.postValue(updated)
                         clear404ForDetail(detailUrl)
                     } else if (!next.isNullOrBlank() && next == target.fullImageUrl) {
-                        // 同一URLでも存在確認が取れた場合はプレビュー固定を解除して復帰させる
-                        // UI 側の 404 ガード解除のため、注記を更新して再合成のきっかけにする
-                        val updated = current.map {
-                            if (it.detailUrl == detailUrl) it.copy(
-                                preferPreviewOnly = false,
-                                urlFixNote = "URL修正: /src/存在確認OK"
-                            ) else it
+                        // HTML から得られた /src/ が現行URLと同一。
+                        // 成功描画ベースで解除するため、ここでは previewOnly を変更しない。
+                        val okSame = runCatching { urlExistsTwoStage(next, referer = detailUrl) }.getOrDefault(false)
+                        if (okSame) {
+                            val updated = current.map {
+                                if (it.detailUrl == detailUrl) it.copy(
+                                    urlFixNote = okNote()
+                                ) else it
+                            }
+                            _images.postValue(updated)
+                            clear404ForDetail(detailUrl)
+                        } else {
+                            Log.d("VM404", "same URL still not available, keep state for $detailUrl")
                         }
-                        _images.postValue(updated)
-                        clear404ForDetail(detailUrl)
                     } else if (target.fullImageUrl != null && next.isNullOrBlank()) {
-                        // 候補が見つからない場合はフル画像URLを一旦クリアしてプレビュー表示にフォールバック
-                        val updated = current.map {
-                            if (it.detailUrl == detailUrl) it.copy(
-                                fullImageUrl = null,
-                                preferPreviewOnly = true
-                            ) else it
+                        // 候補が見つからない（= HTML探索および拡張子候補でも代替が見つからない）場合のみ
+                        // フル画像URLを一旦クリアしてプレビュー表示にフォールバック（ただし実描画成功歴がある場合は回避）
+                        if (!target.hadFullSuccess) {
+                            Log.w("VM404", "no alternative found, fallback to preview for $detailUrl")
+                            val updated = current.map {
+                                if (it.detailUrl == detailUrl) it.copy(
+                                    fullImageUrl = null,
+                                    preferPreviewOnly = true
+                                ) else it
+                            }
+                            _images.postValue(updated)
+                        } else {
+                            Log.d("VM404", "no alternative but keeping full view due to prior success for $detailUrl")
                         }
-                        _images.postValue(updated)
                     }
                 } else {
+                    // サムネイルの場合のみ、回数制限を適用（HTML探索の対象外）
+                    if (count > MAX_404_RETRY) {
+                        val limited = current.map {
+                            if (it.detailUrl == detailUrl) it.copy(previewUnavailable = true) else it
+                        }
+                        _images.postValue(limited)
+                        return@launch
+                    }
                     // サムネイルの404: 候補からHEADで置換。見つからなければ previewUnavailable=true で停止。
                     val candidates = buildCatalogThumbCandidates(detailUrl)
                         .filter { it != target.previewUrl }
@@ -295,7 +330,8 @@ class MainViewModel @Inject constructor(
                     _images.postValue(updated)
                     if (!next.isNullOrBlank()) clear404ForDetail(detailUrl)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.e("VM404", "fixImageIf404 failed detail=$detailUrl url=$failedUrl", e)
                 // 失敗時は無視（UIは既存のエラープレースホルダを表示）
             } finally {
                 synchronized(fixing404) { fixing404.remove(guardKey) }
@@ -403,11 +439,13 @@ class MainViewModel @Inject constructor(
                 val merged = baseItems.map { fresh ->
                     val old = oldMap[fresh.detailUrl]
                     val preferPreview = old?.preferPreviewOnly ?: false
+                    val hadFull = old?.hadFullSuccess ?: false
                     val carriedFull = old?.fullImageUrl
                     val guessed = if (preferPreview) null else fresh.fullImageUrl ?: guessFullFromPreview(fresh.previewUrl)
                     fresh.copy(
                         fullImageUrl = carriedFull ?: guessed,
                         preferPreviewOnly = preferPreview,
+                        hadFullSuccess = hadFull,
                         urlFixNote = old?.urlFixNote,
                         previewUnavailable = old?.previewUnavailable ?: false
                     )
@@ -440,10 +478,12 @@ class MainViewModel @Inject constructor(
                 val carried = newItemList.map { ni ->
                     val old = currentMapByDetail[ni.detailUrl]
                     val preferPreview = old?.preferPreviewOnly ?: false
+                    val hadFull = old?.hadFullSuccess ?: false
                     val guessed = if (preferPreview) null else ni.fullImageUrl ?: guessFullFromPreview(ni.previewUrl)
                     ni.copy(
                         fullImageUrl = old?.fullImageUrl ?: guessed,
                         preferPreviewOnly = preferPreview,
+                        hadFullSuccess = hadFull,
                         previewUnavailable = old?.previewUnavailable ?: false
                     )
                 }
@@ -548,18 +588,11 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    // 短い遅延を挟んで再確認（伝播遅延などの瞬間的不一致に対応）
-    private suspend fun urlExistsWithRetry(url: String, retryDelayMs: Long = 10L, referer: String? = null): Boolean {
-        if (urlExists(url, referer)) return true
-        delay(retryDelayMs)
-        return urlExists(url, referer)
-    }
-
     // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさむ確認
     // 実質チェックタイミング:
-    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(10L, 20L)): Boolean {
-        // まず10ms待ってから1回目の確認
-        delay(10L)
+    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(1L, 2L)): Boolean {
+        // まず1ms待ってから1回目の確認
+        delay(1L)
         if (urlExists(url, referer)) return true
         for (d in delaysMs) {
             delay(d)
@@ -693,5 +726,26 @@ class MainViewModel @Inject constructor(
             }
         }
         return parsedItems
+    }
+
+    /**
+     * 実画像の描画成功をUIから通知する。成功時のみ previewOnly を解除し、404カウンタをクリア。
+     */
+    fun notifyFullImageSuccess(detailUrl: String, loadedUrl: String) {
+        viewModelScope.launch {
+            val current = _images.value ?: return@launch
+            val updated = current.map { item ->
+                if (item.detailUrl == detailUrl) {
+                    item.copy(
+                        preferPreviewOnly = false,
+                        fullImageUrl = loadedUrl,
+                        hadFullSuccess = true,
+                        urlFixNote = okNote()
+                    )
+                } else item
+            }
+            _images.postValue(updated)
+            clear404ForDetail(detailUrl)
+        }
     }
 }
