@@ -204,14 +204,12 @@ private fun ImageContent(url: String?, referer: String? = null, modifier: Modifi
                 coil3.request.ImageRequest.Builder(ctx)
                     .data(url)
                     .apply {
+                        val builder = NetworkHeaders.Builder()
+                            .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                         val ref = referer
-                        if (!ref.isNullOrBlank()) {
-                            httpHeaders(
-                                NetworkHeaders.Builder()
-                                    .add("Referer", ref)
-                                    .build()
-                            )
-                        }
+                        if (!ref.isNullOrBlank()) builder.add("Referer", ref)
+                        httpHeaders(builder.build())
                     }
                     .build()
             } else null

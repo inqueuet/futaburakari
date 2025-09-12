@@ -588,17 +588,11 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさむ確認
-    // 実質チェックタイミング:
-    private suspend fun urlExistsTwoStage(url: String, referer: String? = null, delaysMs: List<Long> = listOf(1L, 2L)): Boolean {
-        // まず1ms待ってから1回目の確認
-        delay(1L)
-        if (urlExists(url, referer)) return true
-        for (d in delaysMs) {
-            delay(d)
-            if (urlExists(url, referer)) return true
-        }
-        return false
+    // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延をはさみ1回だけ確認する
+    private suspend fun urlExistsTwoStage(url: String, referer: String? = null): Boolean {
+        // 1000ms の猶予後に1回だけ確認
+        delay(1000L)
+        return urlExists(url, referer)
     }
 
     // small 要素から <br> より前の一行目を抽出してプレーンテキスト化

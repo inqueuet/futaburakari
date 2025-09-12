@@ -714,6 +714,8 @@ fun DetailScreenScaffold(
                                                         httpHeaders(
                                                             NetworkHeaders.Builder()
                                                                 .add("Referer", ref)
+                                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                                                                 .build()
                                                         )
                                                     }
@@ -742,6 +744,8 @@ fun DetailScreenScaffold(
                                                             httpHeaders(
                                                                 NetworkHeaders.Builder()
                                                                     .add("Referer", ref)
+                                                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                                                                     .build()
                                                             )
                                                         }

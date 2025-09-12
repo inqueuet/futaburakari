@@ -37,6 +37,8 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.transitionFactory
 import coil3.transition.CrossfadeTransition
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
@@ -91,6 +93,14 @@ fun ImageDisplayScreen(
                     AsyncImage(
                         model = ImageRequest.Builder(ctx)
                             .data(imageUri)
+                            .apply {
+                                httpHeaders(
+                                    NetworkHeaders.Builder()
+                                        .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                        .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                        .build()
+                                )
+                            }
                             .transitionFactory(CrossfadeTransition.Factory())
                             .build(),
                         contentDescription = stringResource(R.string.displayed_image_description),
