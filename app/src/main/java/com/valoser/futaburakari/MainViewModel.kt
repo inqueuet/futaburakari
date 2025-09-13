@@ -126,25 +126,10 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // より多様なフル画像候補を生成
+    // フル画像候補を最小限に生成（拡張子総当たりは行わない）
     private fun buildFullImageCandidates(item: ImageItem): List<String> {
-        val candidates = mutableListOf<String>()
-
-        // 1) プレビューからの規則推測
-        guessFullFromPreview(item.previewUrl)?.let { candidates.add(it) }
-
-        // 3) プレビュー URL の拡張子置換（末尾の拡張子だけ差し替え）
-        run {
-            val dotIdx = item.previewUrl.lastIndexOf('.')
-            if (dotIdx > 0) {
-                val base = item.previewUrl.substring(0, dotIdx)
-                listOf("jpg", "png", "jpeg", "webp", "gif", "webm", "mp4").forEach { ext ->
-                    candidates.add("$base.$ext")
-                }
-            }
-        }
-
-        return candidates.distinct()
+        // 1) プレビューからの規則推測のみを候補化
+        return listOfNotNull(guessFullFromPreview(item.previewUrl))
     }
 
     /**
@@ -169,6 +154,22 @@ class MainViewModel @Inject constructor(
                             ) else itm
                         }
                         _images.postValue(updated)
+                    }
+
+                    // まずは軽量に: スレHTMLの先頭のみ取得して div.thre 内の最初のメディアリンクを抽出
+                    runCatching {
+                        sniffFullUrlFromThreadHead(detailUrl)
+                    }.getOrNull()?.let { sniffed ->
+                        val setBySniff = (_images.value ?: current).map { itm ->
+                            if (itm.detailUrl == detailUrl) itm.copy(
+                                fullImageUrl = sniffed,
+                                urlFixNote = "URL修正: スレ先頭から抽出",
+                                preferPreviewOnly = false
+                            ) else itm
+                        }
+                        _images.postValue(setBySniff)
+                        clear404ForDetail(detailUrl)
+                        return@launch
                     }
                     // 停止条件はプレビューと同じく「閾値を超えたら停止」（>）。
                     // inc404 は 1 始まりのため、MAX_404_RETRY=2 なら 3 回目で停止。
@@ -240,6 +241,33 @@ class MainViewModel @Inject constructor(
                 synchronized(fixing404) { fixing404.remove(guardKey) }
             }
         }
+    }
+
+    // スレ htm の先頭 ~60 行のみから、div.thre 内の最初のメディアリンクを抽出して絶対URLを返す
+    private suspend fun sniffFullUrlFromThreadHead(detailUrl: String): String? {
+        // 12KB 取得して先頭60行に絞る（行数優先のため余裕を確保）
+        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl) ?: return null
+        val text = EncodingUtils.decode(bytes, null)
+        val head = text.lineSequence().take(60).joinToString("\n")
+        val doc = try {
+            Jsoup.parse(head, detailUrl)
+        } catch (_: Exception) {
+            return null
+        }
+        val container = doc.selectFirst("div.thre") ?: return null
+        val a = container.select("a[target=_blank][href]").firstOrNull { el -> isMediaHref(el.attr("href")) } ?: return null
+        val href = a.attr("href")
+        return try {
+            URL(URL(detailUrl), href).toString()
+        } catch (_: Exception) { null }
+    }
+
+    private fun isMediaHref(raw: String): Boolean {
+        val h = raw.lowercase()
+        return h.contains("/src/") ||
+                h.endsWith(".png") || h.endsWith(".jpg") || h.endsWith(".jpeg") ||
+                h.endsWith(".gif") || h.endsWith(".webp") ||
+                h.endsWith(".webm") || h.endsWith(".mp4")
     }
 
     /**

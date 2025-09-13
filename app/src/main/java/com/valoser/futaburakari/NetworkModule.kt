@@ -155,7 +155,9 @@ object NetworkModule {
                 .cookieJar(cookieJar)
                 .connectTimeout(30.seconds)
                 .writeTimeout(60.seconds)
-                .readTimeout(60.seconds)
+                // 画像取得は失敗確定をさらに早める（短め）
+                .readTimeout(8.seconds)
+                .callTimeout(8.seconds)
                 .addInterceptor { chain ->
                     val originalRequest = chain.request()
                     val host = originalRequest.url.host
@@ -176,7 +178,9 @@ object NetworkModule {
                     .connectionPool(connectionPool)
                     .cookieJar(cookieJar)
                     .connectTimeout(30.seconds)
-                    .readTimeout(60.seconds)
+                    // 縮退時もタイムアウト方針は維持（さらに短め）
+                    .readTimeout(8.seconds)
+                    .callTimeout(8.seconds)
                     .build()
             } catch (fallbackException: Exception) {
                 Log.e("NetworkModule", "Fallback Coil OkHttpClient creation also failed", fallbackException)
