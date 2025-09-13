@@ -10,6 +10,7 @@ import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -100,7 +101,13 @@ class NetworkClient(
 
     // Range GET で部分取得（サーバが200を返した場合は手動でスライス）。
     // 最大2MBまで読み取り、必要十分な先頭範囲の取得に利用。
-    suspend fun fetchRange(url: String, start: Long, length: Long, referer: String? = null): ByteArray? = withContext(Dispatchers.IO) {
+    suspend fun fetchRange(
+        url: String,
+        start: Long,
+        length: Long,
+        referer: String? = null,
+        callTimeoutMs: Long? = null,
+    ): ByteArray? = withContext(Dispatchers.IO) {
         val end = if (length > 0) start + length - 1 else null
         val rangeValue = if (end != null) "bytes=$start-$end" else "bytes=$start-"
         val req = Request.Builder()
@@ -113,7 +120,12 @@ class NetworkClient(
             .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
-            httpClient.newCall(req).executeAsync().use { resp ->
+            val call = httpClient.newCall(req).apply {
+                if (callTimeoutMs != null) {
+                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                }
+            }
+            call.executeAsync().use { resp ->
                 if (!resp.isSuccessful) {
                     return@use null
                 }

@@ -234,26 +234,17 @@ fun MainCatalogScreen(
                 val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
                 val start = first.coerceAtLeast(0)
 
-                val urlPairs = items.subList(start, end + 1)
-                    .mapNotNull { item ->
-                        // プレビュー不可かつフル未確定ならプリフェッチしない
-                        val full = item.fullImageUrl
-                        val preferPreview = item.preferPreviewOnly
-                        val hadFull = item.hadFullSuccess
-                        val chosen = when {
-                            !full.isNullOrBlank() && !preferPreview && !hadFull -> full // 既に実描画成功した項目は再プリフェッチしない
-                            else -> null // プレビューはプリフェッチしない
-                        }
-                        chosen?.let { item.detailUrl to it }
-                    }
+                // 1) 先にプレビューをプリフェッチ（画面に入った瞬間に確実に出す）
+                val previewTargets = items.subList(start, end + 1)
+                    .map { it.detailUrl to it.previewUrl }
 
-                // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
-                urlPairs.chunked(2).forEach { batch ->
+                previewTargets.chunked(4).forEach { batch ->
                     batch.forEach { (referer, url) ->
                         val req = ImageRequest.Builder(context)
                             .data(url)
                             .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
                             .precision(Precision.EXACT)
+                            // 優先度は未使用（互換性のため）。先にプレビューをキューへ入れる運用でカバー
                             .httpHeaders(
                                 NetworkHeaders.Builder()
                                     .add("Referer", referer)
@@ -265,8 +256,58 @@ fun MainCatalogScreen(
                             .build()
                         context.imageLoader.enqueue(req)
                     }
-                    // キュー充満速度を抑えるため待機を10msに延長
-                    delay(10)
+                    delay(5)
+                }
+
+                // 2) 未検証フルは控えめに裏取り（LOW優先度）
+                val prefetchTargets = items.subList(start, end + 1)
+                    .mapNotNull { item ->
+                        // プレビュー不可かつフル未確定ならプリフェッチしない
+                        val full = item.fullImageUrl
+                        val preferPreview = item.preferPreviewOnly
+                        val hadFull = item.hadFullSuccess
+                        when {
+                            !full.isNullOrBlank() && !preferPreview && !hadFull -> Triple(item, item.detailUrl, full) // 未検証フルを裏取り
+                            else -> null // プレビューはプリフェッチしない
+                        }
+                    }
+
+                // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
+                prefetchTargets.chunked(1).forEach { batch ->
+                    batch.forEach { (item, referer, url) ->
+                        val req = ImageRequest.Builder(context)
+                            .data(url)
+                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
+                            .precision(Precision.EXACT)
+                            // 優先度は未使用（互換性のため）。バッチ1件＋待機で実質低優先度化
+                            .httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", referer)
+                                    .add("Accept", "*/*")
+                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
+                                    .build()
+                            )
+                            .listener(
+                                onSuccess = { request, _ ->
+                                    val loaded = request.data?.toString()
+                                    if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                        onImageLoadSuccess(item, loaded)
+                                    }
+                                },
+                                onError = { request, result ->
+                                    val ex = result.throwable
+                                    if (ex is HttpException && ex.response.code == 404) {
+                                        val failed = request.data?.toString() ?: ""
+                                        if (failed.isNotEmpty()) onImageLoadHttp404(item, failed)
+                                    }
+                                }
+                            )
+                            .build()
+                        context.imageLoader.enqueue(req)
+                    }
+                    // キュー充満速度を強めに抑制
+                    delay(25)
                 }
             }
     }
@@ -421,11 +462,9 @@ private fun CatalogCard(
         Box(modifier = Modifier.fillMaxWidth()) {
             // ViewModel の判定を信頼し、表示URLはモデルから決定
             val displayUrl = when {
-                // 検証済みURLがあれば最優先
+                // 検証済みURLがあれば最優先（未検証フルは使用しない）
                 !item.lastVerifiedFullUrl.isNullOrBlank() -> item.lastVerifiedFullUrl
-                // 次にfullImageUrlを試す（ただしpreferPreviewOnlyでない場合）
-                !item.preferPreviewOnly && !item.fullImageUrl.isNullOrBlank() -> item.fullImageUrl
-                // プレビューにフォールバック
+                // プレビューを即時表示
                 !item.previewUnavailable -> item.previewUrl
                 else -> null
             }

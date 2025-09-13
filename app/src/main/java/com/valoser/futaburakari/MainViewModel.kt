@@ -32,6 +32,7 @@ import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.coroutines.executeAsync
+import java.util.concurrent.TimeUnit
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
 import java.net.URL
@@ -194,7 +195,7 @@ class MainViewModel @Inject constructor(
                     val validUrl = withContext(Dispatchers.IO) {
                         candidates.take(5)
                             .map { url ->
-                                async { if (urlExists(url, referer = detailUrl)) url else null }
+                                async { if (urlExists(url, referer = detailUrl, attempts = 1, callTimeoutMs = 2500)) url else null }
                             }
                             .awaitAll()
                             .firstOrNull { it != null }
@@ -246,7 +247,7 @@ class MainViewModel @Inject constructor(
     // スレ htm の先頭 ~60 行のみから、div.thre 内の最初のメディアリンクを抽出して絶対URLを返す
     private suspend fun sniffFullUrlFromThreadHead(detailUrl: String): String? {
         // 12KB 取得して先頭60行に絞る（行数優先のため余裕を確保）
-        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl) ?: return null
+        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl, callTimeoutMs = 2500) ?: return null
         val text = EncodingUtils.decode(bytes, null)
         val head = text.lineSequence().take(60).joinToString("\n")
         val doc = try {
@@ -275,9 +276,14 @@ class MainViewModel @Inject constructor(
      * - まず UA 付き HEAD で確認し、失敗した場合は GET Range(0-0) でフォールバック。
      * - 一時的なネットワークエラーを考慮し、短い遅延を挟んで2回まで試行する。
      */
-    private suspend fun urlExists(url: String, referer: String? = null): Boolean {
+    private suspend fun urlExists(
+        url: String,
+        referer: String? = null,
+        attempts: Int = 2,
+        callTimeoutMs: Long? = null,
+    ): Boolean {
         Log.d("UrlExists", "ENTER urlExists for: $url")
-        for (attempt in 1..2) {
+        for (attempt in 1..attempts) {
             Log.d("UrlExists", "BEGIN Attempt #$attempt for: $url")
             // 1) HEAD with UA
             val okHead = withContext(Dispatchers.IO) {
@@ -290,7 +296,12 @@ class MainViewModel @Inject constructor(
                     .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
                     .build()
                 runCatching {
-                    okHttpClient.newCall(req).executeAsync().use { resp ->
+                    val call = okHttpClient.newCall(req).apply {
+                        if (callTimeoutMs != null) {
+                            try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                        }
+                    }
+                    call.executeAsync().use { resp ->
                         if (!resp.isSuccessful) {
                             Log.w("UrlExists", "Attempt #${attempt}: HEAD failed: ${resp.code} for $url")
                         }
@@ -308,7 +319,7 @@ class MainViewModel @Inject constructor(
             // 2) Fallback: GET Range 0-0
             Log.d("UrlExists", "HEAD failed, trying GET Range for: $url")
             val bytes = runCatching {
-                networkClient.fetchRange(url, 0, 1, referer = referer)
+                networkClient.fetchRange(url, 0, 1, referer = referer, callTimeoutMs = callTimeoutMs)
             }.onFailure { e ->
                 Log.e("UrlExists", "Attempt #${attempt}: fetchRange threw exception for $url", e)
             }.getOrNull()
@@ -318,7 +329,7 @@ class MainViewModel @Inject constructor(
             }
             Log.w("UrlExists", "Attempt #${attempt}: Both HEAD and GET Range failed for $url.")
             // 次の試行まで短い遅延を挟む（スパイク回避）。
-            if (attempt < 2) {
+            if (attempt < attempts) {
                 val backoff = 150L + kotlin.random.Random.nextLong(0, 100)
                 delay(backoff)
             }
