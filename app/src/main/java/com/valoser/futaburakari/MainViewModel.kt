@@ -77,7 +77,8 @@ class MainViewModel @Inject constructor(
     private val http404Counts = mutableMapOf<String, Int>()
     private val MAX_404_RETRY = 3
     // 再確認ディレイ（ミリ秒）のジッター範囲（スパイク緩和用）
-    private val RECHECK_DELAY_RANGE_MS: LongRange = 1100L..2200L
+    // プレビューの瞬間未反映対策の再確認待ちを短縮（体感のキビキビ感を優先）
+    private val RECHECK_DELAY_RANGE_MS: LongRange = 300L..700L
 
     // UI のローカル404ガード解除用に、同一メッセージでも値変化を起こせる短いノンス付き注記を生成
     private fun okNote(): String = "URL修正: /src/存在確認OK#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
@@ -129,8 +130,18 @@ class MainViewModel @Inject constructor(
 
     // フル画像候補を最小限に生成（拡張子総当たりは行わない）
     private fun buildFullImageCandidates(item: ImageItem): List<String> {
-        // 1) プレビューからの規則推測のみを候補化
-        return listOfNotNull(guessFullFromPreview(item.previewUrl))
+        // プレビューから src 推測したベースを起点に、代表的な拡張子を試す
+        val guessed = guessFullFromPreview(item.previewUrl) ?: return emptyList()
+        return try {
+            // ファイル名部を拡張子無しにして差し替えやすくする
+            val lastSlash = guessed.lastIndexOf('/')
+            val dir = if (lastSlash >= 0) guessed.substring(0, lastSlash + 1) else ""
+            val file = if (lastSlash >= 0) guessed.substring(lastSlash + 1) else guessed
+            val stem = file.substringBeforeLast('.')
+            listOf("jpg", "png", "webp", "jpeg").map { ext -> "$dir$stem.$ext" }
+        } catch (_: Exception) {
+            listOf(guessed)
+        }
     }
 
     /**
@@ -157,21 +168,40 @@ class MainViewModel @Inject constructor(
                         _images.postValue(updated)
                     }
 
-                    // まずは軽量に: スレHTMLの先頭のみ取得して div.thre 内の最初のメディアリンクを抽出
-                    runCatching {
-                        sniffFullUrlFromThreadHead(detailUrl)
-                    }.getOrNull()?.let { sniffed ->
-                        val setBySniff = (_images.value ?: current).map { itm ->
-                            if (itm.detailUrl == detailUrl) itm.copy(
-                                fullImageUrl = sniffed,
-                                urlFixNote = "URL修正: スレ先頭から抽出",
-                                preferPreviewOnly = false
-                            ) else itm
+                    // まずは推測候補（拡張子バリアント含む）を短タイムアウトで確認
+                    run {
+                        val candidates = buildFullImageCandidates(target)
+                            .filter { it != failedUrl && it !in target.failedUrls }
+                        val validUrl = withContext(Dispatchers.IO) {
+                            candidates.take(6)
+                                .map { url ->
+                                    async { if (urlExists(url, referer = detailUrl, attempts = 1, callTimeoutMs = 2000)) url else null }
+                                }
+                                .awaitAll()
+                                .firstOrNull { it != null }
                         }
-                        _images.postValue(setBySniff)
-                        clear404ForDetail(detailUrl)
-                        return@launch
+                        if (!validUrl.isNullOrBlank()) {
+                            updateFullImageUrl(detailUrl, validUrl)
+                            clear404ForDetail(detailUrl)
+                            return@launch
+                        }
                     }
+
+                    // 次に軽量スニッフ: スレHTMLの先頭のみ取得して div.thre 内の最初のメディアリンクを抽出
+                    runCatching { sniffFullUrlFromThreadHead(detailUrl) }
+                        .getOrNull()?.let { sniffed ->
+                            val setBySniff = (_images.value ?: current).map { itm ->
+                                if (itm.detailUrl == detailUrl) itm.copy(
+                                    fullImageUrl = sniffed,
+                                    urlFixNote = "URL修正: スレ先頭から抽出",
+                                    preferPreviewOnly = false
+                                ) else itm
+                            }
+                            _images.postValue(setBySniff)
+                            clear404ForDetail(detailUrl)
+                            return@launch
+                        }
+
                     // 停止条件はプレビューと同じく「閾値を超えたら停止」（>）。
                     // inc404 は 1 始まりのため、MAX_404_RETRY=2 なら 3 回目で停止。
                     if (count > MAX_404_RETRY) {
@@ -187,24 +217,7 @@ class MainViewModel @Inject constructor(
                         _images.postValue(limited)
                         return@launch
                     }
-                    // 候補を幅広く生成し、失敗済みを除外
-                    val candidates = buildFullImageCandidates(target)
-                        .filter { it != failedUrl && it !in target.failedUrls }
-
-                    // 上位候補を並列で存在確認（速やかに最初の成功を採用）
-                    val validUrl = withContext(Dispatchers.IO) {
-                        candidates.take(5)
-                            .map { url ->
-                                async { if (urlExists(url, referer = detailUrl, attempts = 1, callTimeoutMs = 2500)) url else null }
-                            }
-                            .awaitAll()
-                            .firstOrNull { it != null }
-                    }
-
-                    if (!validUrl.isNullOrBlank()) {
-                        updateFullImageUrl(detailUrl, validUrl)
-                        clear404ForDetail(detailUrl)
-                    } else if (target.fullImageUrl != null) {
+                    if (target.fullImageUrl != null) {
                         // 候補が見つからない場合、未成功なら一時的に解除して再試行の余地を残す
                         if (!target.hadFullSuccess) {
                             val updated = current.map {
@@ -486,11 +499,10 @@ class MainViewModel @Inject constructor(
 
     // 瞬間的な未反映（画像転送遅延等）に備え、短い遅延＋微小ジッターをはさみ1回だけ確認する
     private suspend fun urlExistsTwoStage(url: String, referer: String? = null): Boolean {
-        // 800〜1200ms の猶予後に1回だけ確認（delay は非ブロッキング）
+        // 短い猶予後に軽量確認（HEAD 1 回、短い callTimeout）
         val waitMs = kotlin.random.Random.nextLong(RECHECK_DELAY_RANGE_MS.first, RECHECK_DELAY_RANGE_MS.last + 1)
         delay(waitMs)
-        // urlExists 内で必要に応じて IO 切替を行っているため、ここでは包まない
-        return urlExists(url, referer)
+        return urlExists(url, referer, attempts = 1, callTimeoutMs = 2000)
     }
 
     // small 要素から <br> より前の一行目を抽出してプレーンテキスト化
