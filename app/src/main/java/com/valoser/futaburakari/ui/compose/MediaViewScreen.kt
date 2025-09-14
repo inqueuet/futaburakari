@@ -64,6 +64,7 @@ import coil3.request.transitionFactory
 import coil3.transition.CrossfadeTransition
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
+import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
@@ -213,6 +214,10 @@ private fun ImageContent(url: String?, referer: String? = null, modifier: Modifi
                         if (!ref.isNullOrBlank()) builder.add("Referer", ref)
                         httpHeaders(builder.build())
                     }
+                    // Use list/grid thumbnail immediately if present; then upgrade to full.
+                    .memoryCacheKey(ImageKeys.full(url))
+                    .placeholderMemoryCacheKey(ImageKeys.full(url))
+                    .precision(coil3.size.Precision.INEXACT)
                     // フル画像の初回表示や再読み込み時の表示切替をなめらかに
                     .transitionFactory(CrossfadeTransition.Factory())
                     .build()

@@ -94,6 +94,9 @@ import coil3.size.Dimension
 import coil3.size.Precision
 import coil3.size.Scale
 import coil3.size.Size
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
+import com.valoser.futaburakari.image.ImageKeys
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
 import android.util.Patterns
@@ -236,7 +239,9 @@ fun DetailListCompose(
                                 }
                                 .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
                                 .scale(Scale.FIT)
-                                .precision(Precision.EXACT)
+                                .precision(Precision.INEXACT)
+                                .memoryCacheKey(ImageKeys.full(url))
+                                .placeholderMemoryCacheKey(ImageKeys.full(url))
                                 .diskCachePolicy(CachePolicy.ENABLED)
                                 .memoryCachePolicy(CachePolicy.ENABLED)
                                 .networkCachePolicy(CachePolicy.ENABLED)
@@ -266,7 +271,9 @@ fun DetailListCompose(
                                     }
                                     .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
                                     .scale(Scale.FIT)
-                                    .precision(Precision.EXACT)
+                                    .precision(Precision.INEXACT)
+                                    .memoryCacheKey(ImageKeys.full(url))
+                                    .placeholderMemoryCacheKey(ImageKeys.full(url))
                                     .diskCachePolicy(CachePolicy.ENABLED)
                                     .memoryCachePolicy(CachePolicy.ENABLED)
                                     .networkCachePolicy(CachePolicy.ENABLED)
@@ -467,6 +474,11 @@ fun DetailListCompose(
                                         )
                                     }
                                 }
+                                // まず一覧サムネのメモリを即時流用→フルにアップグレード
+                                .memoryCacheKey(ImageKeys.full(item.imageUrl))
+                                .placeholderMemoryCacheKey(ImageKeys.full(item.imageUrl))
+                                .precision(coil3.size.Precision.INEXACT)
+                                .transitionFactory(CrossfadeTransition.Factory())
                                 .build(),
                             contentDescription = null,
                             modifier = Modifier
@@ -536,6 +548,10 @@ fun DetailListCompose(
                                         )
                                     }
                                 }
+                                .memoryCacheKey(ImageKeys.full(item.videoUrl))
+                                .placeholderMemoryCacheKey(ImageKeys.full(item.videoUrl))
+                                .precision(coil3.size.Precision.INEXACT)
+                                .transitionFactory(CrossfadeTransition.Factory())
                                 .build(),
                             contentDescription = null,
                             modifier = Modifier

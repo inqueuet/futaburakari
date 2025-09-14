@@ -67,6 +67,8 @@ import kotlinx.coroutines.flow.map
 import coil3.imageLoader
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
+import coil3.memory.MemoryCache
+import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -654,19 +656,20 @@ fun DetailScreenScaffold(
                     ) {
                         // Compose 標準のグリッドで表示
                         val images = remember(items) {
-                        data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
-                        fun findParentTextPosition(from: Int): Int {
-                            for (i in from downTo 0) if (items[i] is com.valoser.futaburakari.DetailContent.Text) return i
-                            return from
-                        }
-                        items.mapIndexedNotNull { i, c ->
-                            when (c) {
-                                is com.valoser.futaburakari.DetailContent.Image -> Entry(i, findParentTextPosition(i), c.imageUrl)
-                                is com.valoser.futaburakari.DetailContent.Video -> Entry(i, findParentTextPosition(i), c.videoUrl)
-                                else -> null
+                            data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
+                            var lastTextIdx = -1
+                            val out = ArrayList<Entry>()
+                            for (i in items.indices) {
+                                when (val c = items[i]) {
+                                    is com.valoser.futaburakari.DetailContent.Text -> lastTextIdx = i
+                                    is com.valoser.futaburakari.DetailContent.Image -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.imageUrl)
+                                    is com.valoser.futaburakari.DetailContent.Video -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.videoUrl)
+                                    else -> {}
+                                }
                             }
+                            out
                         }
-                    }
+                    
                     // グリッドの可視範囲を監視し、オフスクリーンを先読み
                     // - 前方12件・後方6件を目安にサムネイルを事前デコード
                     // - セルサイズに近い解像度（幅=画面幅/3, 高さ=110dp, Precision.INEXACT）でキャッシュを温める
@@ -722,7 +725,9 @@ fun DetailScreenScaffold(
                                                 }
                                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                                 .scale(coil3.size.Scale.FILL)
-                                                .precision(coil3.size.Precision.EXACT)
+                                                .precision(coil3.size.Precision.INEXACT)
+                                                .memoryCacheKey(ImageKeys.full(url))
+                                                .placeholderMemoryCacheKey(ImageKeys.full(url))
                                                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                 .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                 .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
@@ -752,7 +757,9 @@ fun DetailScreenScaffold(
                                                     }
                                                     .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                                     .scale(coil3.size.Scale.FILL)
-                                                    .precision(coil3.size.Precision.EXACT)
+                                                    .precision(coil3.size.Precision.INEXACT)
+                                                    .memoryCacheKey(ImageKeys.full(url))
+                                                    .placeholderMemoryCacheKey(ImageKeys.full(url))
                                                     .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                     .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                                     .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
@@ -793,7 +800,9 @@ fun DetailScreenScaffold(
                                 }
                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                 .scale(coil3.size.Scale.FILL)
-                                .precision(coil3.size.Precision.EXACT)
+                                .precision(coil3.size.Precision.INEXACT)
+                                .memoryCacheKey(ImageKeys.full(e.url ?: ""))
+                                .placeholderMemoryCacheKey(ImageKeys.full(e.url ?: ""))
                                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .build()
