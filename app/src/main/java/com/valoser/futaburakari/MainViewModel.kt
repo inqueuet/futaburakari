@@ -60,6 +60,9 @@ class MainViewModel @Inject constructor(
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
+    // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
+    private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
+
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
     private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(linkedMapOf())
     val imageMap: StateFlow<Map<String, ImageItem>> = _imageMap.asStateFlow()
@@ -347,8 +350,9 @@ class MainViewModel @Inject constructor(
      *  3) さらにバックグラウンドでフル画像URLの推測/HEAD検証（差分更新）
      */
     fun fetchImagesFromUrl(url: String) {
-        viewModelScope.launch {
-            _isLoading.value = true
+        // 専用 Dispatcher 上で実行し、LiveData の更新のみ Main に切り戻す
+        viewModelScope.launch(ImageLoadingDispatcher) {
+            withContext(Dispatchers.Main) { _isLoading.value = true }
             try {
                 val document = networkClient.fetchDocument(url)
                 // まずは解析（HEADせず）
@@ -393,9 +397,11 @@ class MainViewModel @Inject constructor(
                 // デバッグログ
                 Log.d("VM_FETCH", "Merged ${merged.size} items, ${merged.count { it.fullImageUrl != null }} have full URLs")
             } catch (e: Exception) {
-                _error.value = "データの取得に失敗しました: ${e.message}"
+                withContext(Dispatchers.Main) {
+                    _error.value = "データの取得に失敗しました: ${e.message}"
+                }
             } finally {
-                _isLoading.value = false
+                withContext(Dispatchers.Main) { _isLoading.value = false }
             }
 
             // 以降はバックグラウンドで必要最小限の改善のみ（404等の個別対応を優先するため全件HEADは行わない）

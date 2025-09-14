@@ -401,11 +401,16 @@ fun MainCatalogScreen(
                 columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
                 contentPadding = PaddingValues(LocalSpacing.current.s)
             ) {
-                // 安定キーに `detailUrl` を使用
-                items(filtered, key = { it.detailUrl }) { item ->
+                // 安定キーと contentType でリサイクルを効率化
+                items(
+                    filtered,
+                    key = { it.detailUrl },
+                    contentType = { "image_card" }
+                ) { item ->
                     CatalogCard(
                         item = item,
-                        onClick = { onItemClick(item) },
+                        // Stable 参照でリコンポジションを最小化
+                        onClick = remember(item.detailUrl) { { onItemClick(item) } },
                         onImageLoadHttp404 = onImageLoadHttp404,
                         onImageLoadSuccess = onImageLoadSuccess,
                     )
