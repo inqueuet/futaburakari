@@ -49,6 +49,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.flow.collectLatest
 import android.view.Choreographer
 import kotlin.coroutines.resume
 import java.net.URL
@@ -432,9 +433,13 @@ class MainActivity : BaseActivity() {
             isLoadingState.value = isLoading
         }
 
-        viewModel.images.observe(this) { items ->
-            setAutoUpdateIndicator(false)
-            itemsState.value = items
+        // 差分更新: Map を購読し、順序を保ったリストへ変換
+        lifecycleScope.launch {
+            viewModel.imageMap.collectLatest { map ->
+                setAutoUpdateIndicator(false)
+                // LinkedHashMap ベースの順序を維持
+                itemsState.value = map.values.toList()
+            }
         }
 
         viewModel.error.observe(this) { _ ->

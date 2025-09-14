@@ -4,7 +4,7 @@
  * 役割
  * - カタログHTMLの取得・解析（#cattable 優先 → 準備ページは空 → cgi 風フォールバック）
  * - プレビュー画像URLの検証/補正と、フル画像URLの推測・補完（HEAD 検証つき、HTML 解析なし）
- * - 表示用データ/状態（読込中/エラー）を LiveData で公開
+ * - 表示用データ/状態: 画像は `StateFlow<Map<detailUrl, ImageItem>>` で差分更新、読込中/エラーは LiveData で公開
  * - 既存リストの更新確認（checkForUpdates）では既知の fullImageUrl を引き継ぎ、不足分のみ補完
  *
  * 実装メモ
@@ -30,6 +30,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.coroutines.executeAsync
@@ -57,9 +60,9 @@ class MainViewModel @Inject constructor(
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
-    private val _images = MutableLiveData<List<ImageItem>>()
-    // 画面表示用アイテム一覧
-    val images: LiveData<List<ImageItem>> = _images
+    // 差分更新向け: detailUrl をキーにした順序付きマップで保持
+    private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(linkedMapOf())
+    val imageMap: StateFlow<Map<String, ImageItem>> = _imageMap.asStateFlow()
 
     private val _error = MutableLiveData<String>()
     // エラー時のメッセージ
@@ -143,20 +146,18 @@ class MainViewModel @Inject constructor(
         synchronized(fixing404) { if (!fixing404.add(guardKey)) return }
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                val current = _images.value ?: return@launch
-                val target = current.find { it.detailUrl == detailUrl } ?: return@launch
+                val currentMap = _imageMap.value
+                val target = currentMap[detailUrl] ?: return@launch
                 val isFull = "/src/" in failedUrl
                 val count = inc404(detailUrl, failedUrl)
                 Log.d("VM404", "notify 404(nohtml ${if (isFull) "full" else "thumb"}) #$count: detail=$detailUrl url=$failedUrl")
                 if (isFull) {
                     // 失敗URLを記録
                     run {
-                        val updated = current.map { itm ->
-                            if (itm.detailUrl == detailUrl) itm.copy(
-                                failedUrls = itm.failedUrls + failedUrl
-                            ) else itm
-                        }
-                        _images.postValue(updated)
+                        val updated = target.copy(failedUrls = target.failedUrls + failedUrl)
+                        val newMap = LinkedHashMap(currentMap)
+                        newMap[detailUrl] = updated
+                        _imageMap.value = newMap
                     }
 
                     // 軽量スニッフのみで確認（拡張子バリアントのレースは廃止）
@@ -167,14 +168,15 @@ class MainViewModel @Inject constructor(
                         if (canSniff) {
                             val sniffed = runCatching { sniffFullUrlFromThreadHead(detailUrl) }.getOrNull()
                             if (!sniffed.isNullOrBlank()) {
-                                val setBySniff = (_images.value ?: current).map { itm ->
-                                    if (itm.detailUrl == detailUrl) itm.copy(
-                                        fullImageUrl = sniffed,
-                                        urlFixNote = "URL修正: スレ先頭から抽出",
-                                        preferPreviewOnly = false
-                                    ) else itm
-                                }
-                                _images.postValue(setBySniff)
+                                val itemNow = _imageMap.value[detailUrl] ?: target
+                                val updated = itemNow.copy(
+                                    fullImageUrl = sniffed,
+                                    urlFixNote = "URL修正: スレ先頭から抽出",
+                                    preferPreviewOnly = false
+                                )
+                                val newMap = LinkedHashMap(_imageMap.value)
+                                newMap[detailUrl] = updated
+                                _imageMap.value = newMap
                                 clear404ForDetail(detailUrl)
                                 sniffNegativeUntil.remove(detailUrl)
                                 return@launch
@@ -187,48 +189,50 @@ class MainViewModel @Inject constructor(
                     // 停止条件はプレビューと同じく「閾値を超えたら停止」（>）。
                     // inc404 は 1 始まりのため、MAX_404_RETRY=2 なら 3 回目で停止。
                     if (count > MAX_404_RETRY) {
-                        val limited = current.map { itm ->
-                            if (itm.detailUrl == detailUrl) {
-                                if (itm.hadFullSuccess) itm else itm.copy(
-                                    fullImageUrl = null,
-                                    preferPreviewOnly = true,
-                                    urlFixNote = "URL停止: フル画像の404が規定回数を超過"
-                                )
-                            } else itm
-                        }
-                        _images.postValue(limited)
+                        val itemNow = _imageMap.value[detailUrl] ?: target
+                        val limited = if (itemNow.hadFullSuccess) itemNow else itemNow.copy(
+                            fullImageUrl = null,
+                            preferPreviewOnly = true,
+                            urlFixNote = "URL停止: フル画像の404が規定回数を超過"
+                        )
+                        val newMap = LinkedHashMap(_imageMap.value)
+                        newMap[detailUrl] = limited
+                        _imageMap.value = newMap
                         return@launch
                     }
                     if (target.fullImageUrl != null) {
                         // 候補が見つからない場合、未成功なら一時的に解除して再試行の余地を残す
                         if (!target.hadFullSuccess) {
-                            val updated = current.map {
-                                if (it.detailUrl == detailUrl) it.copy(
-                                    fullImageUrl = null,
-                                    preferPreviewOnly = false,
-                                    urlFixNote = "URL再試行: フル画像候補なし#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
-                                ) else it
-                            }
-                            _images.postValue(updated)
+                            val itemNow = _imageMap.value[detailUrl] ?: target
+                            val updated = itemNow.copy(
+                                fullImageUrl = null,
+                                preferPreviewOnly = false,
+                                urlFixNote = "URL再試行: フル画像候補なし#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
+                            )
+                            val newMap = LinkedHashMap(_imageMap.value)
+                            newMap[detailUrl] = updated
+                            _imageMap.value = newMap
                         }
                     }
                 } else {
                     // プレビューも同一条件（>）で統一
                     if (count > MAX_404_RETRY) {
-                        val limited = current.map { if (it.detailUrl == detailUrl) it.copy(previewUnavailable = true, urlFixNote = "URL停止: プレビュー候補の全滅") else it }
-                        _images.postValue(limited)
+                        val itemNow = _imageMap.value[detailUrl] ?: target
+                        val limited = itemNow.copy(previewUnavailable = true, urlFixNote = "URL停止: プレビュー候補の全滅")
+                        val newMap = LinkedHashMap(_imageMap.value)
+                        newMap[detailUrl] = limited
+                        _imageMap.value = newMap
                         return@launch
                     }
                     val candidates = buildCatalogThumbCandidates(detailUrl).filter { it != target.previewUrl }
                     // 404検証の高速化: 直列→限定並列（最大2並列）で探索
                     val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 2)
                     if (!next.isNullOrBlank() && next != target.previewUrl) {
-                        val updated = current.map {
-                            if (it.detailUrl == detailUrl) {
-                                it.copy(previewUrl = next, urlFixNote = "URL修正: サムネイル候補に置換", previewUnavailable = false)
-                            } else it
-                        }
-                        _images.postValue(updated)
+                        val itemNow = _imageMap.value[detailUrl] ?: target
+                        val updated = itemNow.copy(previewUrl = next, urlFixNote = "URL修正: サムネイル候補に置換", previewUnavailable = false)
+                        val newMap = LinkedHashMap(_imageMap.value)
+                        newMap[detailUrl] = updated
+                        _imageMap.value = newMap
                         clear404ForDetail(detailUrl)
                     }
                 }
@@ -350,7 +354,7 @@ class MainViewModel @Inject constructor(
                 // まずは解析（HEADせず）
                 val baseItems = parseItemsFromDocument(document, url)
                 // 既存一覧から detailUrl 単位で状態を引き継ぐ
-                val oldMap = (_images.value ?: emptyList()).associateBy { it.detailUrl }
+                val oldMap = _imageMap.value
                 val merged = baseItems.map { fresh ->
                     val old = oldMap[fresh.detailUrl]
 
@@ -381,7 +385,10 @@ class MainViewModel @Inject constructor(
                         failedUrls = old?.failedUrls ?: emptySet()
                     )
                 }
-                _images.value = merged
+                // 並び順を保ったままマップを差し替え
+                val newMap = LinkedHashMap<String, ImageItem>(merged.size)
+                merged.forEach { item -> newMap[item.detailUrl] = item }
+                _imageMap.value = newMap
 
                 // デバッグログ
                 Log.d("VM_FETCH", "Merged ${merged.size} items, ${merged.count { it.fullImageUrl != null }} have full URLs")
@@ -565,32 +572,30 @@ class MainViewModel @Inject constructor(
      */
     fun notifyFullImageSuccess(detailUrl: String, loadedUrl: String) {
         viewModelScope.launch {
-            val current = _images.value ?: return@launch
-            val updated = current.map { item ->
-                if (item.detailUrl == detailUrl) {
-                    item.copy(
-                        fullImageUrl = loadedUrl,
-                        lastVerifiedFullUrl = loadedUrl,
-                        preferPreviewOnly = false,
-                        hadFullSuccess = true,
-                        failedUrls = emptySet(),
-                        urlFixNote = okNote()
-                    )
-                } else item
-            }
-            _images.postValue(updated)
+            val item = _imageMap.value[detailUrl] ?: return@launch
+            val updated = item.copy(
+                fullImageUrl = loadedUrl,
+                lastVerifiedFullUrl = loadedUrl,
+                preferPreviewOnly = false,
+                hadFullSuccess = true,
+                failedUrls = emptySet(),
+                urlFixNote = okNote()
+            )
+            val newMap = LinkedHashMap(_imageMap.value)
+            newMap[detailUrl] = updated
+            _imageMap.value = newMap
             clear404ForDetail(detailUrl)
         }
     }
 
     private fun updateFullImageUrl(detailUrl: String, url: String) {
-        val current = _images.value ?: return
-        val updated = current.map { item ->
-            if (item.detailUrl == detailUrl) item.copy(
-                fullImageUrl = url,
-                urlFixNote = "URL修正: 推測候補の検証で確定"
-            ) else item
-        }
-        _images.postValue(updated)
+        val item = _imageMap.value[detailUrl] ?: return
+        val updated = item.copy(
+            fullImageUrl = url,
+            urlFixNote = "URL修正: 推測候補の検証で確定"
+        )
+        val newMap = LinkedHashMap(_imageMap.value)
+        newMap[detailUrl] = updated
+        _imageMap.value = newMap
     }
 }
