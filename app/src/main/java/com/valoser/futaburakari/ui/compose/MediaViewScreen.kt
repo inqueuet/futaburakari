@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -200,35 +201,34 @@ fun MediaViewScreen(
  */
 @Composable
 private fun ImageContent(url: String?, referer: String? = null, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(LocalSpacing.current.m)) {
-        Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
-            val ctx = LocalContext.current
-            val model = if (!url.isNullOrBlank()) {
-                coil3.request.ImageRequest.Builder(ctx)
-                    .data(url)
-                    .apply {
-                        val builder = NetworkHeaders.Builder()
-                            .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                        val ref = referer
-                        if (!ref.isNullOrBlank()) builder.add("Referer", ref)
-                        httpHeaders(builder.build())
-                    }
-                    // Use list/grid thumbnail immediately if present; then upgrade to full.
-                    .memoryCacheKey(ImageKeys.full(url))
-                    .placeholderMemoryCacheKey(ImageKeys.full(url))
-                    .precision(coil3.size.Precision.INEXACT)
-                    // フル画像の初回表示や再読み込み時の表示切替をなめらかに
-                    .transitionFactory(CrossfadeTransition.Factory())
-                    .build()
-            } else null
-            ZoomableAsyncImage(
-                model = model,
-                modifier = Modifier.fillMaxSize(),
-                minScale = 1f,
-                maxScale = 5f,
-            )
-        }
+    // フルスクリーン領域で中央配置し、ContentScale.Fit で短辺が必ず画面に接するように表示
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val ctx = LocalContext.current
+        val model = if (!url.isNullOrBlank()) {
+            coil3.request.ImageRequest.Builder(ctx)
+                .data(url)
+                .apply {
+                    val builder = NetworkHeaders.Builder()
+                        .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                        .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                    val ref = referer
+                    if (!ref.isNullOrBlank()) builder.add("Referer", ref)
+                    httpHeaders(builder.build())
+                }
+                // Use list/grid thumbnail immediately if present; then upgrade to full.
+                .memoryCacheKey(ImageKeys.full(url))
+                .placeholderMemoryCacheKey(ImageKeys.full(url))
+                .precision(coil3.size.Precision.INEXACT)
+                // フル画像の初回表示や再読み込み時の表示切替をなめらかに
+                .transitionFactory(CrossfadeTransition.Factory())
+                .build()
+        } else null
+        ZoomableAsyncImage(
+            model = model,
+            modifier = Modifier.fillMaxSize(),
+            minScale = 1f,
+            maxScale = 5f,
+        )
     }
 }
 
