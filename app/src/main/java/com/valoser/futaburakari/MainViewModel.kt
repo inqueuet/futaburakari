@@ -27,8 +27,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.cancel
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.coroutines.executeAsync
@@ -78,7 +79,11 @@ class MainViewModel @Inject constructor(
     private val MAX_404_RETRY = 3
     // 再確認ディレイ（ミリ秒）のジッター範囲（スパイク緩和用）
     // プレビューの瞬間未反映対策の再確認待ちを短縮（体感のキビキビ感を優先）
-    private val RECHECK_DELAY_RANGE_MS: LongRange = 300L..700L
+    private val RECHECK_DELAY_RANGE_MS: LongRange = 200L..500L
+
+    // 直近でスニッフに失敗したスレを一定時間スキップするための簡易メモ（過剰な再スニッフ抑止）
+    private val sniffNegativeUntil = mutableMapOf<String, Long>()
+    private val SNIFF_NEG_TTL_MS = 90_000L
 
     // UI のローカル404ガード解除用に、同一メッセージでも値変化を起こせる短いノンス付き注記を生成
     private fun okNote(): String = "URL修正: /src/存在確認OK#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
@@ -128,21 +133,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // フル画像候補を最小限に生成（拡張子総当たりは行わない）
-    private fun buildFullImageCandidates(item: ImageItem): List<String> {
-        // プレビューから src 推測したベースを起点に、代表的な拡張子を試す
-        val guessed = guessFullFromPreview(item.previewUrl) ?: return emptyList()
-        return try {
-            // ファイル名部を拡張子無しにして差し替えやすくする
-            val lastSlash = guessed.lastIndexOf('/')
-            val dir = if (lastSlash >= 0) guessed.substring(0, lastSlash + 1) else ""
-            val file = if (lastSlash >= 0) guessed.substring(lastSlash + 1) else guessed
-            val stem = file.substringBeforeLast('.')
-            listOf("jpg", "png", "webp", "jpeg").map { ext -> "$dir$stem.$ext" }
-        } catch (_: Exception) {
-            listOf(guessed)
-        }
-    }
+    // 拡張子バリアントの列挙・検証は廃止
 
     /**
      * HTMLを用いずに404代替探索を行う版（新規）。
@@ -168,39 +159,30 @@ class MainViewModel @Inject constructor(
                         _images.postValue(updated)
                     }
 
-                    // まずは推測候補（拡張子バリアント含む）を短タイムアウトで確認
+                    // 軽量スニッフのみで確認（拡張子バリアントのレースは廃止）
                     run {
-                        val candidates = buildFullImageCandidates(target)
-                            .filter { it != failedUrl && it !in target.failedUrls }
-                        val validUrl = withContext(Dispatchers.IO) {
-                            candidates.take(6)
-                                .map { url ->
-                                    async { if (urlExists(url, referer = detailUrl, attempts = 1, callTimeoutMs = 2000)) url else null }
+                        val now = System.currentTimeMillis()
+                        val negUntil = sniffNegativeUntil[detailUrl]
+                        val canSniff = negUntil == null || now >= negUntil
+                        if (canSniff) {
+                            val sniffed = runCatching { sniffFullUrlFromThreadHead(detailUrl) }.getOrNull()
+                            if (!sniffed.isNullOrBlank()) {
+                                val setBySniff = (_images.value ?: current).map { itm ->
+                                    if (itm.detailUrl == detailUrl) itm.copy(
+                                        fullImageUrl = sniffed,
+                                        urlFixNote = "URL修正: スレ先頭から抽出",
+                                        preferPreviewOnly = false
+                                    ) else itm
                                 }
-                                .awaitAll()
-                                .firstOrNull { it != null }
-                        }
-                        if (!validUrl.isNullOrBlank()) {
-                            updateFullImageUrl(detailUrl, validUrl)
-                            clear404ForDetail(detailUrl)
-                            return@launch
+                                _images.postValue(setBySniff)
+                                clear404ForDetail(detailUrl)
+                                sniffNegativeUntil.remove(detailUrl)
+                                return@launch
+                            } else {
+                                sniffNegativeUntil[detailUrl] = now + SNIFF_NEG_TTL_MS
+                            }
                         }
                     }
-
-                    // 次に軽量スニッフ: スレHTMLの先頭のみ取得して div.thre 内の最初のメディアリンクを抽出
-                    runCatching { sniffFullUrlFromThreadHead(detailUrl) }
-                        .getOrNull()?.let { sniffed ->
-                            val setBySniff = (_images.value ?: current).map { itm ->
-                                if (itm.detailUrl == detailUrl) itm.copy(
-                                    fullImageUrl = sniffed,
-                                    urlFixNote = "URL修正: スレ先頭から抽出",
-                                    preferPreviewOnly = false
-                                ) else itm
-                            }
-                            _images.postValue(setBySniff)
-                            clear404ForDetail(detailUrl)
-                            return@launch
-                        }
 
                     // 停止条件はプレビューと同じく「閾値を超えたら停止」（>）。
                     // inc404 は 1 始まりのため、MAX_404_RETRY=2 なら 3 回目で停止。
@@ -257,23 +239,24 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // スレ htm の先頭 ~60 行のみから、div.thre 内の最初のメディアリンクを抽出して絶対URLを返す
+    // スレ htm からの軽量スニッフ（12KB固定）。50〜60行のみを対象に href を抽出して絶対URLを返す。
     private suspend fun sniffFullUrlFromThreadHead(detailUrl: String): String? {
-        // 12KB 取得して先頭60行に絞る（行数優先のため余裕を確保）
-        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl, callTimeoutMs = 2500) ?: return null
+        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl, callTimeoutMs = 1200)
+            ?: return null
         val text = EncodingUtils.decode(bytes, null)
-        val head = text.lineSequence().take(60).joinToString("\n")
-        val doc = try {
-            Jsoup.parse(head, detailUrl)
-        } catch (_: Exception) {
-            return null
+        val lines = text.lineSequence().toList()
+        // 1-based 50..60 行のみを対象
+        val slice = lines.drop(49).take(11).joinToString("\n")
+
+        val mSrc = Regex("href\\s*=\\s*(['\"])((?:(?!\\1).)*/src/(?:(?!\\1).)*)\\1", RegexOption.IGNORE_CASE).find(slice)
+        val candidate = mSrc?.groupValues?.getOrNull(2) ?: run {
+            val mImg = Regex("href\\s*=\\s*(['\"])((?:(?!\\1).)*\\.(?:jpg|jpeg|png|gif|webp|webm|mp4))\\1", RegexOption.IGNORE_CASE).find(slice)
+            mImg?.groupValues?.getOrNull(2)
         }
-        val container = doc.selectFirst("div.thre") ?: return null
-        val a = container.select("a[target=_blank][href]").firstOrNull { el -> isMediaHref(el.attr("href")) } ?: return null
-        val href = a.attr("href")
-        return try {
-            URL(URL(detailUrl), href).toString()
-        } catch (_: Exception) { null }
+        if (!candidate.isNullOrBlank() && isMediaHref(candidate)) {
+            return try { URL(URL(detailUrl), candidate).toString() } catch (_: Exception) { null }
+        }
+        return null
     }
 
     private fun isMediaHref(raw: String): Boolean {
@@ -502,8 +485,10 @@ class MainViewModel @Inject constructor(
         // 短い猶予後に軽量確認（HEAD 1 回、短い callTimeout）
         val waitMs = kotlin.random.Random.nextLong(RECHECK_DELAY_RANGE_MS.first, RECHECK_DELAY_RANGE_MS.last + 1)
         delay(waitMs)
-        return urlExists(url, referer, attempts = 1, callTimeoutMs = 2000)
+        return urlExists(url, referer, attempts = 1, callTimeoutMs = 1500)
     }
+
+    // 先着レースは廃止
 
     // small 要素から <br> より前の一行目を抽出してプレーンテキスト化
     // - 例: "タイトル<br>サブタイトル" → "タイトル"
