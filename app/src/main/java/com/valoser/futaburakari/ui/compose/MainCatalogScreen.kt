@@ -54,6 +54,7 @@ import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import coil3.compose.SubcomposeAsyncImage
 import coil3.request.transitionFactory
@@ -215,8 +216,8 @@ fun MainCatalogScreen(
             Triple(first, last, viewportWidthPx)
         }
             .distinctUntilChanged()
-            .collect { (first, last, viewportWidthPx) ->
-                if (last <= 0 || items.isEmpty()) return@collect
+            .collectLatest { (first, last, viewportWidthPx) ->
+                if (last <= 0 || items.isEmpty()) return@collectLatest
 
                 // 1行あたりのアイテム幅（コンテンツ左右余白＋カード内余白を考慮）
                 val sPx = with(prefetchDensity) { sDp.toPx() }
@@ -266,14 +267,19 @@ fun MainCatalogScreen(
                         val full = item.fullImageUrl
                         val preferPreview = item.preferPreviewOnly
                         val hadFull = item.hadFullSuccess
+                        // 大容量動画はプリフェッチ対象から除外
+                        val isVideo = full?.lowercase()?.let { u ->
+                            u.endsWith(".webm") || u.endsWith(".mp4") || u.endsWith(".mkv")
+                        } ?: false
                         when {
-                            !full.isNullOrBlank() && !preferPreview && !hadFull -> Triple(item, item.detailUrl, full) // 未検証フルを裏取り
-                            else -> null // プレビューはプリフェッチしない
+                            !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full) // 未検証フルを裏取り
+                            else -> null // プレビューはプリフェッチしない/動画は除外
                         }
                     }
 
-                // 過度な同時リクエストを避けつつ並列プリフェッチ（チャンクを2件に縮小）
-                prefetchTargets.chunked(1).forEach { batch ->
+                // 過度な同時リクエストを避けつつ並列プリフェッチ（ユーザー設定の同時数に合わせる）
+                val concurrency = com.valoser.futaburakari.AppPreferences.getFullUpgradeConcurrency(context).coerceIn(1, 4)
+                prefetchTargets.chunked(concurrency).forEach { batch ->
                     batch.forEach { (item, referer, url) ->
                         val req = ImageRequest.Builder(context)
                             .data(url)
@@ -306,8 +312,8 @@ fun MainCatalogScreen(
                             .build()
                         context.imageLoader.enqueue(req)
                     }
-                    // キュー充満速度を強めに抑制
-                    delay(25)
+                    // キュー充満速度を抑制（軽く間隔を空ける）
+                    delay(50)
                 }
             }
     }
@@ -472,7 +478,8 @@ private fun CatalogCard(
             // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
             // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
+                // 実表示幅そのものを使用（余白の二重減算を避ける）
+                val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
                 val heightPx = (widthPx * 4f / 3f)
                 // 再挑戦経路はVMの404修正に一本化。UIからの能動的フル化要求は行わない。
 

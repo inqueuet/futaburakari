@@ -126,6 +126,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
      * - デバッグロガーを有効化（失敗理由の追跡に有用）
      */
     override fun newImageLoader(context: Context): ImageLoader {
+        val isDebug = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         return ImageLoader.Builder(context)
             .components {
                 // OkHttp を使用したネットワークフェッチャーを追加（Coil 3 では必須）
@@ -149,8 +150,8 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
                     .maxSizeBytes(256L * 1024L * 1024L) // 256MB
                     .build()
             )
-            // 開発時のデバッグログを有効化（失敗理由の特定に有用）
-            .logger(DebugLogger())
+            // デバッグビルド時のみ詳細ログを有効化
+            .apply { if (isDebug) logger(DebugLogger()) }
             .build()
     }
 }

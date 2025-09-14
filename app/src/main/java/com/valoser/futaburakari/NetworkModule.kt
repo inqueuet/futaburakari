@@ -134,7 +134,10 @@ object NetworkModule {
     @Named("coil")
     fun provideCoilOkHttpClient(
         @ApplicationContext context: Context,
-        cookieJar: CookieJar, connectionPool: ConnectionPool): OkHttpClient {
+        cookieJar: CookieJar,
+        connectionPool: ConnectionPool,
+        cache: Cache,
+    ): OkHttpClient {
         /**
          * 画像取得（Coil）用の `OkHttpClient` を生成して提供する。
          * - 設定は API 用と同等（UA/Timeout/Cookie/ConnectionPool）
@@ -153,6 +156,7 @@ object NetworkModule {
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .cookieJar(cookieJar)
+                .cache(cache)
                 .connectTimeout(30.seconds)
                 .writeTimeout(60.seconds)
                 // 画像取得は失敗確定をさらに早める（短め）
@@ -177,6 +181,7 @@ object NetworkModule {
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
                     .cookieJar(cookieJar)
+                    .cache(cache)
                     .connectTimeout(30.seconds)
                     // 縮退時もタイムアウト方針は維持（さらに短め）
                     .readTimeout(8.seconds)
