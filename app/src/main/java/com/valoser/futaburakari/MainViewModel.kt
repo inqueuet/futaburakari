@@ -241,7 +241,7 @@ class MainViewModel @Inject constructor(
 
     // スレ htm からの軽量スニッフ（12KB固定）。50〜60行のみを対象に href を抽出して絶対URLを返す。
     private suspend fun sniffFullUrlFromThreadHead(detailUrl: String): String? {
-        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl, callTimeoutMs = 1200)
+        val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl, callTimeoutMs = 800)
             ?: return null
         val text = EncodingUtils.decode(bytes, null)
         val lines = text.lineSequence().toList()
