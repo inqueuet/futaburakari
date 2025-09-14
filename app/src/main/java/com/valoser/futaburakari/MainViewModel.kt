@@ -220,7 +220,8 @@ class MainViewModel @Inject constructor(
                         return@launch
                     }
                     val candidates = buildCatalogThumbCandidates(detailUrl).filter { it != target.previewUrl }
-                    val next = candidates.firstOrNull { runCatching { urlExistsTwoStage(it, referer = detailUrl) }.getOrDefault(false) }
+                    // 404検証の高速化: 直列→限定並列（最大2並列）で探索
+                    val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 2)
                     if (!next.isNullOrBlank() && next != target.previewUrl) {
                         val updated = current.map {
                             if (it.detailUrl == detailUrl) {
@@ -486,6 +487,36 @@ class MainViewModel @Inject constructor(
         val waitMs = kotlin.random.Random.nextLong(RECHECK_DELAY_RANGE_MS.first, RECHECK_DELAY_RANGE_MS.last + 1)
         delay(waitMs)
         return urlExists(url, referer, attempts = 1, callTimeoutMs = 1500)
+    }
+
+    /**
+     * 候補URL群の中から、存在確認が取れた最初の1件を返す。
+     * - バッチ単位で最大 `maxParallel` 並列（既定: 2）で検証し、各バッチ内で最初に成功したものを採用。
+     * - バッチに成功なしの場合は次バッチへ進む。
+     */
+    private suspend fun findFirstExistingUrlLimitedParallel(
+        candidates: List<String>,
+        referer: String,
+        maxParallel: Int = 2,
+    ): String? = coroutineScope {
+        if (candidates.isEmpty()) return@coroutineScope null
+        val parallel = maxParallel.coerceAtLeast(1)
+        var idx = 0
+        while (idx < candidates.size) {
+            val end = (idx + parallel).coerceAtMost(candidates.size)
+            val batch = candidates.subList(idx, end)
+            val results = batch.map { url ->
+                async {
+                    val ok = runCatching { urlExistsTwoStage(url, referer) }.getOrDefault(false)
+                    ok to url
+                }
+            }.awaitAll()
+            // バッチ内の元順で最初の成功を採用
+            val hit = results.firstOrNull { it.first }?.second
+            if (!hit.isNullOrBlank()) return@coroutineScope hit
+            idx = end
+        }
+        null
     }
 
     // 先着レースは廃止
