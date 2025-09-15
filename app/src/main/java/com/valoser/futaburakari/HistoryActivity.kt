@@ -14,12 +14,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.ui.compose.HistoryScreen
 import com.valoser.futaburakari.ui.compose.HistorySortMode
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import kotlinx.coroutines.launch
 
 /**
  * 履歴一覧画面のアクティビティ。
@@ -57,7 +59,7 @@ class HistoryActivity : BaseActivity() {
                 val lifecycleOwner = LocalLifecycleOwner.current
 
                 // 履歴を取得し、必要に応じてクリーンアップ/フィルタ/ソートして `entries` を更新する
-                fun computeAndSet() {
+                suspend fun computeAndSet() {
                     val base = HistoryManager.getAll(this@HistoryActivity)
                     // 自動クリーンアップ: ユーザー設定の上限(MB)を超えないよう、
                     // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
@@ -67,8 +69,11 @@ class HistoryActivity : BaseActivity() {
                         if (mb > 0) {
                             val limitBytes = mb * 1024L * 1024L
                             val cm = com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity)
-                            cm.enforceLimit(limitBytes, base) { entry ->
-                                HistoryManager.clearThumbnail(this@HistoryActivity, entry.url)
+                            // ディスク走査/削除はIOスレッドで実行
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                cm.enforceLimit(limitBytes, base) { entry ->
+                                    HistoryManager.clearThumbnail(this@HistoryActivity, entry.url)
+                                }
                             }
                         }
                     }
@@ -112,7 +117,9 @@ class HistoryActivity : BaseActivity() {
                     val receiver = object : BroadcastReceiver() {
                         override fun onReceive(context: Context?, intent: Intent?) {
                             if (intent?.action == HistoryManager.ACTION_HISTORY_CHANGED) {
-                                computeAndSet()
+                                this@HistoryActivity.lifecycleScope.launch {
+                                    computeAndSet()
+                                }
                             }
                         }
                     }
@@ -130,7 +137,9 @@ class HistoryActivity : BaseActivity() {
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
-                            computeAndSet()
+                            this@HistoryActivity.lifecycleScope.launch {
+                                computeAndSet()
+                            }
                         }
                     }
                     val lifecycle = lifecycleOwner.lifecycle
@@ -169,7 +178,9 @@ class HistoryActivity : BaseActivity() {
                             invalidateCache(item.url)
                             clearArchiveForUrl(item.url)
                         }
-                        computeAndSet()
+                        this@HistoryActivity.lifecycleScope.launch {
+                            computeAndSet()
+                        }
                     }
                 )
 
@@ -185,7 +196,9 @@ class HistoryActivity : BaseActivity() {
                                 HistoryManager.clear(this@HistoryActivity)
                                 com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
                                 com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).clearAllCache()
-                                computeAndSet()
+                                this@HistoryActivity.lifecycleScope.launch {
+                                    computeAndSet()
+                                }
                             }) { androidx.compose.material3.Text(text = getString(android.R.string.ok)) }
                         },
                         dismissButton = {

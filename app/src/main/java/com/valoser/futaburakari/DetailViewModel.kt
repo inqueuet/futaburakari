@@ -123,7 +123,7 @@ class DetailViewModel @Inject constructor(
                     val cachedDetails = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
                     if (cachedDetails != null) {
                         rawContent = cachedDetails
-                        applyNgAndPost()
+                        applyNgAndPostAsync()
                         // 即時表示後に、キャッシュ由来でも不足メタデータ（画像プロンプト等）を並行取得して段階反映
                         updateMetadataInBackground(cachedDetails, url)
                         _isLoading.value = false
@@ -137,7 +137,7 @@ class DetailViewModel @Inject constructor(
                         val snap = withContext(Dispatchers.IO) { cacheManager.loadArchiveSnapshot(url) }
                         if (!snap.isNullOrEmpty()) {
                             rawContent = snap
-                            applyNgAndPost()
+                            applyNgAndPostAsync()
                             _isLoading.value = false
                             return@launch
                         }
@@ -159,7 +159,7 @@ class DetailViewModel @Inject constructor(
 
                 // キャッシュは生データを保存し、表示はNG適用後
                 rawContent = merged
-                applyNgAndPost()
+                applyNgAndPostAsync()
                 _isLoading.value = false
 
                 // バックグラウンドでメタデータを取得し、完了後に段階反映
@@ -175,7 +175,7 @@ class DetailViewModel @Inject constructor(
                         runCatching { HistoryManager.markArchived(appContext, url) }
                     }
                     rawContent = cached
-                    applyNgAndPost()
+                    applyNgAndPostAsync()
                     // キャッシュ由来でも画像プロンプト抽出を再試行（オフライン時の復元用）
                     updateMetadataInBackground(cached, url)
                     // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映
@@ -209,7 +209,7 @@ class DetailViewModel @Inject constructor(
                             if (!thumb.isNullOrBlank()) HistoryManager.updateThumbnail(appContext, url, thumb)
                         }
                         rawContent = reconstructed
-                        applyNgAndPost()
+                        applyNgAndPostAsync()
                         // スナップショット/再構成からも画像プロンプト抽出を実施（file:// を対象）
                         updateMetadataInBackground(reconstructed, url)
                         _error.value = null
@@ -242,7 +242,7 @@ class DetailViewModel @Inject constructor(
                     // 生データを更新してキャッシュ保存、表示はNG適用後
                     rawContent = rawContent + newItems
                     withContext(Dispatchers.IO) { cacheManager.saveDetails(url, rawContent) }
-                    applyNgAndPost()
+                    applyNgAndPostAsync()
                     updateMetadataInBackground(newItems, url)
                     callback(true)
                 } else {
@@ -257,7 +257,8 @@ class DetailViewModel @Inject constructor(
     }
 
     /** HTMLドキュメントから `DetailContent` の一覧を構築する。OPと返信を順に処理。 */
-    private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> {
+    private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> =
+        withContext(Dispatchers.Default) {
         val progressivelyLoadedContent = mutableListOf<DetailContent>()
         var itemIdCounter = 0L
 
@@ -266,7 +267,7 @@ class DetailViewModel @Inject constructor(
         if (threadContainer == null) {
             _error.postValue("スレッドのコンテナが見つかりませんでした。")
             Log.e("DetailViewModel", "div.thre container not found in document for URL: $url")
-            return emptyList()
+            return@withContext emptyList<DetailContent>()
         }
 
         // 処理対象となる全ての投稿（OP + 返信）をリストアップ
@@ -406,7 +407,7 @@ class DetailViewModel @Inject constructor(
             )
         }
 
-        return progressivelyLoadedContent.toList()
+        return@withContext progressivelyLoadedContent.toList()
     }
 
     /**
@@ -673,34 +674,46 @@ class DetailViewModel @Inject constructor(
 
     /** 現在のNGルールでフィルタを再適用し、表示と検索状態を更新する。 */
     fun reapplyNgFilter() {
-        applyNgAndPost()
+        viewModelScope.launch {
+            applyNgAndPostAsync()
+        }
     }
 
     /**
      * NGルールを適用した結果を `detailContent` に反映し、検索状態も更新する。
      * 併せて生データのキャッシュ保存と、表示状態のアーカイブスナップショット保存を行う。
      */
-    private fun applyNgAndPost() {
+    private suspend fun applyNgAndPostAsync() {
         ngStore.cleanup()
         val rules = ngStore.getRules()
         if (rules.isEmpty()) {
-            _detailContent.value = rawContent
-            buildPlainTextCacheAsync()
-            recomputeSearchState()
+            withContext(Dispatchers.Main) {
+                _detailContent.value = rawContent
+                buildPlainTextCacheAsync()
+                recomputeSearchState()
+            }
             return
         }
-        val filtered = filterByNgRules(rawContent, rules)
-        _detailContent.value = filtered
-        buildPlainTextCacheAsync()
-        recomputeSearchState()
-        // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
-        currentUrl?.let { url ->
-            viewModelScope.launch(Dispatchers.IO) {
-                cacheManager.saveDetails(url, rawContent)
-                // スナップショットは表示状態（フィルタ適用済み・既存プロンプトを含む）で保存
-                cacheManager.saveArchiveSnapshot(url, _detailContent.value)
+
+        val filtered = withContext(Dispatchers.Default) { filterByNgRules(rawContent, rules) }
+
+        withContext(Dispatchers.Main) {
+            _detailContent.value = filtered
+            buildPlainTextCacheAsync()
+            recomputeSearchState()
+            // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
+            currentUrl?.let { url ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    cacheManager.saveDetails(url, rawContent)
+                    cacheManager.saveArchiveSnapshot(url, _detailContent.value)
+                }
             }
         }
+    }
+
+    // 互換: 既存呼び出し箇所があるため、非suspend版はバックグラウンドで実行
+    private fun applyNgAndPost() {
+        viewModelScope.launch { applyNgAndPostAsync() }
     }
 
     /**
@@ -763,7 +776,8 @@ class DetailViewModel @Inject constructor(
             when (item) {
                 is DetailContent.Text -> {
                     val id = extractIdFromHtml(item.htmlContent)
-                    val body = extractPlainBody(item.htmlContent)
+                    // プレーンテキストはキャッシュを活用
+                    val body = extractPlainBodyFromPlain(plainTextOf(item))
                     val isNg = rules.any { r ->
                         when (r.type) {
                             RuleType.ID -> {
@@ -836,6 +850,10 @@ class DetailViewModel @Inject constructor(
     /** 検索用のプレーン本文を生成（付帯情報やファイル行を除去）。 */
     private fun extractPlainBody(html: String): String {
         val plain = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        return extractPlainBodyFromPlain(plain)
+    }
+
+    private fun extractPlainBodyFromPlain(plain: String): String {
         val dateRegex = Regex("""\d{2}/\d{2}/\d{2}\([^)]+\)\d{2}:\d{2}:\d{2}""")
         val fileExtRegex = Regex("""\.(?:jpg|jpeg|png|gif|webp|bmp|svg|webm|mp4|mov|mkv|avi|wmv|flv)\b""", RegexOption.IGNORE_CASE)
         val sizeSuffixRegex = Regex("""[ \t]*[\\-ー−―–—]?\s*\(\s*\d+(?:\.\d+)?\s*(?:[kKmMgGtT]?[bB])\s*\)""")
