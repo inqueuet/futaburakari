@@ -103,6 +103,7 @@ import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
 
 /**
@@ -129,6 +130,8 @@ fun DetailListCompose(
     // 画像/動画取得時の Referer（通常はスレの res/*.htm）
     threadUrl: String? = null,
     modifier: Modifier = Modifier,
+    // HTML->プレーンテキストの取得（ViewModelのキャッシュを利用するため注入可能）
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
     // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
@@ -295,15 +298,19 @@ fun DetailListCompose(
             hitPositions = emptyList()
             currentHit = 0
         } else {
-            val list = mutableListOf<Int>()
-            items.forEachIndexed { idx, content ->
-                val textToSearch: String? = when (content) {
-                    is DetailContent.Text -> Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-                    is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
-                    is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
-                    is DetailContent.ThreadEndTime -> null
+            // 重いのでバックグラウンドで計算
+            val list = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val acc = mutableListOf<Int>()
+                items.forEachIndexed { idx, content ->
+                    val textToSearch: String? = when (content) {
+                        is DetailContent.Text -> plainTextOf(content)
+                        is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
+                        is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
+                        is DetailContent.ThreadEndTime -> null
+                    }
+                    if (textToSearch?.contains(q, ignoreCase = true) == true) acc += idx
                 }
-                if (textToSearch?.contains(q, ignoreCase = true) == true) list += idx
+                acc
             }
             hitPositions = list
             currentHit = if (list.isNotEmpty()) 0 else 0
@@ -374,7 +381,7 @@ fun DetailListCompose(
         itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
-                    val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                    val plain = plainTextOf(item)
                     val selfResNum = remember(plain) {
                         // No 抽出を寛容に（ドット任意・全角許容・空白改行許容）
                         Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(plain)?.groupValues?.getOrNull(2)
@@ -702,7 +709,7 @@ fun DetailListCompose(
 
     // 本文タップメニュー（返信 / 確認 / NG）
     bodyForDialog?.let { src ->
-        val plain = Html.fromHtml(src.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val plain = plainTextOf(src)
         val bodyOnly = extractBodyOnlyPlain(plain)
         val source = if (bodyOnly.isNotBlank()) bodyOnly else plain
         val quoted = source.lines().joinToString("\n") { ">" + it }

@@ -685,11 +685,13 @@ class DetailViewModel @Inject constructor(
         val rules = ngStore.getRules()
         if (rules.isEmpty()) {
             _detailContent.value = rawContent
+            buildPlainTextCacheAsync()
             recomputeSearchState()
             return
         }
         val filtered = filterByNgRules(rawContent, rules)
         _detailContent.value = filtered
+        buildPlainTextCacheAsync()
         recomputeSearchState()
         // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
         currentUrl?.let { url ->
@@ -906,25 +908,66 @@ class DetailViewModel @Inject constructor(
 
     /** 現在の表示リストから検索ヒット位置を再計算して公開。 */
     private fun recomputeSearchState() {
-        searchResultPositions.clear()
         val q = currentSearchQuery?.trim().orEmpty()
+        searchResultPositions.clear()
         if (q.isBlank()) {
             publishSearchState()
             return
         }
         val contentList = _detailContent.value
-        contentList.forEachIndexed { index, content ->
-            val textToSearch: String? = when (content) {
-                is DetailContent.Text -> android.text.Html.fromHtml(content.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
-                is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
-                is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
-                is DetailContent.ThreadEndTime -> null
+        viewModelScope.launch(Dispatchers.Default) {
+            val hits = mutableListOf<Int>()
+            contentList.forEachIndexed { index, content ->
+                val textToSearch: String? = when (content) {
+                    is DetailContent.Text -> plainTextOf(content)
+                    is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
+                    is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
+                    is DetailContent.ThreadEndTime -> null
+                }
+                if (textToSearch?.contains(q, ignoreCase = true) == true) {
+                    hits.add(index)
+                }
             }
-            if (textToSearch?.contains(q, ignoreCase = true) == true) {
-                searchResultPositions.add(index)
+            withContext(Dispatchers.Main) {
+                searchResultPositions.clear()
+                searchResultPositions.addAll(hits)
+                if (hits.isNotEmpty() && currentSearchHitIndex !in hits.indices) {
+                    currentSearchHitIndex = 0
+                }
+                publishSearchState()
             }
         }
-        publishSearchState()
+    }
+
+    // ===== Plain text cache =====
+    private val _plainTextCache = MutableStateFlow<Map<String, String>>(emptyMap())
+    val plainTextCache: StateFlow<Map<String, String>> = _plainTextCache.asStateFlow()
+
+    private fun buildPlainTextCacheAsync() {
+        val list = _detailContent.value
+        viewModelScope.launch(Dispatchers.Default) {
+            val cache = list.asSequence()
+                .filterIsInstance<DetailContent.Text>()
+                .associate { t ->
+                    val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+                    t.id to plain
+                }
+            withContext(Dispatchers.Main) { _plainTextCache.value = cache }
+        }
+    }
+
+    fun plainTextOf(t: DetailContent.Text): String {
+        val cached = _plainTextCache.value[t.id]
+        if (cached != null) return cached
+        val now = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        viewModelScope.launch(Dispatchers.Default) {
+            val updated = HashMap(_plainTextCache.value)
+            if (!updated.containsKey(t.id)) {
+                updated[t.id] = now
+                withContext(Dispatchers.Main) { _plainTextCache.value = updated }
+            }
+        }
+        return now
     }
 
     /** 検索UI表示用の集計（アクティブ/現在位置/総数）をフローに反映。 */

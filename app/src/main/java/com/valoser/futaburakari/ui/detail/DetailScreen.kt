@@ -149,6 +149,7 @@ fun DetailScreenScaffold(
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
     itemsFlow: StateFlow<List<DetailContent>>? = null,
+    plainTextOf: ((DetailContent.Text) -> String)? = null,
     currentQueryFlow: StateFlow<String?>? = null,
     getSodaneState: ((String) -> Boolean)? = null,
     onQuoteClick: ((String) -> Unit)? = null,
@@ -252,6 +253,9 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
+            val plainOfProvider = remember(plainTextOf) {
+                plainTextOf ?: { t: DetailContent.Text -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() }
+            }
             // UI をブロックしないためのスコープ（重い集計はメインスレッド外で実行）
             val scope = rememberCoroutineScope()
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
@@ -325,6 +329,7 @@ fun DetailScreenScaffold(
                         threadUrl = threadUrl,
                         modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
+                        plainTextOf = plainOfProvider,
                         onQuoteClick = { token ->
                             // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
                             val snapshot = items
@@ -332,8 +337,8 @@ fun DetailScreenScaffold(
                             val isFilename = Regex("""(?i)^[A-Za-z0-9._-]+\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)$""").matches(core)
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    if (isFilename) buildFilenameReferencesItems(snapshot, core)
-                                    else buildQuoteAndBackrefItems(snapshot, token, threadTitle = title)
+                                    if (isFilename) buildFilenameReferencesItems(snapshot, core, plainTextOf = plainOfProvider)
+                                    else buildQuoteAndBackrefItems(snapshot, token, threadTitle = title, plainTextOf = plainOfProvider)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -352,7 +357,7 @@ fun DetailScreenScaffold(
                             val snapshot = items
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    buildResReferencesItems(snapshot, resNum)
+                                    buildResReferencesItems(snapshot, resNum, plainTextOf = plainOfProvider)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -370,9 +375,9 @@ fun DetailScreenScaffold(
                         onFileNameClick = { fn ->
                             val snapshot = items
                             scope.launch {
-                                val list = withContext(Dispatchers.Default) {
-                                    buildFilenameReferencesItems(snapshot, fn)
-                                }
+                                    val list = withContext(Dispatchers.Default) {
+                                        buildFilenameReferencesItems(snapshot, fn, plainTextOf = plainOfProvider)
+                                    }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
                                 }
@@ -383,7 +388,7 @@ fun DetailScreenScaffold(
                             val snapshot = items
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    buildSelfAndBackrefItems(snapshot, src)
+                                    buildSelfAndBackrefItems(snapshot, src, plainTextOf = plainOfProvider)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -478,7 +483,7 @@ fun DetailScreenScaffold(
                                 val target = idTarget
                                 scope.launch {
                                     val list = withContext(Dispatchers.Default) {
-                                        buildIdPostsItems(snapshot, target)
+                                        buildIdPostsItems(snapshot, target, plainTextOf = plainOfProvider)
                                     }
                                     idMenuTarget = null
                                     idSheetItems = list
@@ -972,10 +977,10 @@ fun DetailScreenScaffold(
                     if (firstIdx >= 0) {
                         val src = items[firstIdx] as DetailContent.Text
                         // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
-                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title))
+                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title), plainTextOf = plainOfProvider)
                         // 2) OP の No. を使った引用先（>>No など番号参照）
                         val rn = src.resNum
-                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn) else emptyList()
+                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn, plainTextOf = plainOfProvider) else emptyList()
                         // 3) 結合 + 重複排除（表示順は byContent → byNumber）
                         if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
                             val seen = HashSet<String>()
