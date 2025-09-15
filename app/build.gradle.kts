@@ -34,8 +34,8 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 50 // 内部バージョン（Play Console 配信管理で使用）
-        versionName = "1.0" // 表示バージョン
+        versionCode = 52 // 内部バージョン（Play Console 配信管理で使用）
+        versionName = "1.2" // 表示バージョン
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
