@@ -277,8 +277,8 @@ fun MainCatalogScreen(
                         }
                     }
 
-                // 過度な同時リクエストを避けつつ並列プリフェッチ（ユーザー設定の同時数に合わせる）
-                val concurrency = com.valoser.futaburakari.AppPreferences.getFullUpgradeConcurrency(context).coerceIn(1, 4)
+                // 過度な同時リクエストを避けつつ並列プリフェッチ（同時接続数に統一）
+                val concurrency = com.valoser.futaburakari.AppPreferences.getConcurrencyLevel(context).coerceIn(1, 4)
                 prefetchTargets.chunked(concurrency).forEach { batch ->
                     batch.forEach { (item, referer, url) ->
                         val req = ImageRequest.Builder(context)

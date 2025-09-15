@@ -101,13 +101,12 @@ object MediaSaver {
                         }
                         src.use { input -> input.copyTo(outputStream) }
                     } else {
-                        val bytes = networkClient.fetchBytes(url)
-                        if (bytes == null) {
+                        val ok = networkClient.downloadTo(url, outputStream)
+                        if (!ok) {
                             showToast(context, "ファイルのダウンロードに失敗しました。")
                             resolver.delete(uri, null, null)
                             return@withContext
                         }
-                        outputStream.write(bytes)
                     }
                 }
 

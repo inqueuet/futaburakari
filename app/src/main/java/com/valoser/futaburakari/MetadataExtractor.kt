@@ -72,6 +72,46 @@ object MetadataExtractor {
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
 
+    // ===== 正規表現（プリコンパイル） =====
+    private val RE_JSON_PROMPT: Pattern = Pattern.compile(
+        """prompt"\s*:\s*("([^"\\]*(\\.[^"\\]*)*)"|\{.*?\})""",
+        Pattern.DOTALL
+    )
+    private val RE_JSON_WORKFLOW: Pattern = Pattern.compile(
+        """workflow"\s*:\s*(\{.*?\})""",
+        Pattern.DOTALL
+    )
+    private val RE_CLIPTEXTENCODE: Pattern = Pattern.compile(
+        """CLIPTextEncode"[\s\S]{0,2000}?"title"\s*:\s*"([^"]*Positive[^"]*)"[\s\S]{0,1000}?"(text|string)"\s*:\s*"((?:\\.|[^"\\])*)"""",
+        Pattern.CASE_INSENSITIVE
+    )
+    private val RE_NOVELAI_SOFTWARE: Pattern = Pattern.compile(
+        """"software"\s*:\s*"NovelAI"""",
+        Pattern.CASE_INSENSITIVE
+    )
+    // Match a JSON-like block enclosed in braces, non-greedy
+    private val RE_JSON_BRACE: Pattern = Pattern.compile("""\{[\s\S]*?\}""", Pattern.DOTALL)
+    private val RE_XMP_ATTR: Pattern = Pattern.compile(
+        """([a-zA-Z0-9_:.\-]*?(prompt|parameters))\s*=\s*"((?:\\.|[^"])*)"""",
+        Pattern.CASE_INSENSITIVE or Pattern.DOTALL
+    )
+    private val RE_XMP_TAG: Pattern = Pattern.compile(
+        """<([a-zA-Z0-9_:.\-]*?(prompt|parameters))[^>]*>([\\s\\S]*?)</[^>]+>""",
+        Pattern.CASE_INSENSITIVE
+    )
+    private val RE_XMP_DESC: Pattern = Pattern.compile(
+        "<dc:description[^>]*>\\s*<rdf:Alt>\\s*<rdf:li[^>]*>([\\s\\S]*?)</rdf:li>",
+        Pattern.CASE_INSENSITIVE
+    )
+
+    // ===== 結果キャッシュ（陽性のみ保存） =====
+    private const val CACHE_MAX = 256
+    private val resultCache: java.util.LinkedHashMap<String, String> = object : java.util.LinkedHashMap<String, String>(CACHE_MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > CACHE_MAX
+    }
+    @Synchronized private fun cacheGet(key: String): String? = resultCache[key]
+    @Synchronized private fun cachePut(key: String, value: String) { resultCache[key] = value }
+
     // ====== Public API ======
     /**
      * URI/URL からプロンプトらしき文字列を抽出して返す。見つからなければ null。
@@ -79,40 +119,45 @@ object MetadataExtractor {
      */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
+            // 1) in-memory LRU
+            cacheGet(uriOrUrl)?.let { return@withContext it }
+            // 2) persistent cache
+            runCatching { MetadataCache(context).get(uriOrUrl) }.getOrNull()?.let { cached ->
+                cachePut(uriOrUrl, cached)
+                return@withContext cached
+            }
             // セマフォを最新設定に同期
             ensureSemaphore(context)
-            if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
+            val result: String? = if (uriOrUrl.startsWith("content://") || uriOrUrl.startsWith("file://")) {
                 context.contentResolver.openInputStream(Uri.parse(uriOrUrl))?.use { input ->
-                    // ローカルは全体（または上限）を読んでタイプ別に抽出
                     val all = input.readBytes(limit = GLOBAL_MAX_BYTES)
-                    // EXIF のみではなく、JPEG の APP1(XMP)/APP13(IPTC)、テキスト走査まで含む経路で抽出
-                    return@withContext extractBySniff(all, uriOrUrl)
+                    extractBySniff(all, uriOrUrl)
                 }
-                return@withContext null
-            }
-
-            val ext = uriOrUrl.substringAfterLast('.', "").lowercase()
-            return@withContext when (ext) {
-                "jpg", "jpeg", "webp" -> {
-                    val head = httpGetRangeWithLimit(context, uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
-                    if (head != null) {
-                        // EXIF優先 → JPEGのAPP1(XMP)/APP13(IPTC) → テキスト走査
-                        extractFromExif(head)
-                            ?: extractFromJpegAppSegments(head)
-                            ?: extractBySniff(head, uriOrUrl)
-                    } else null
-                }
-                "png" -> {
-                    extractPngPromptStreamingWithLimit(context, uriOrUrl, networkClient)
-                }
-                // 動画のプロンプト取得は廃止
-                "mp4", "mov", "m4v" -> null
-                "webm" -> null
-                else -> {
-                    val head = httpGetRangeWithLimit(context, uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient) ?: return@withContext null
-                    extractBySniff(head, uriOrUrl)
+            } else {
+                val ext = uriOrUrl.substringAfterLast('.', "").lowercase()
+                when (ext) {
+                    "jpg", "jpeg", "webp" -> {
+                        val head = httpGetRangeWithLimit(context, uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
+                        if (head != null) {
+                            extractFromExif(head)
+                                ?: extractFromJpegAppSegments(head)
+                                ?: extractBySniff(head, uriOrUrl)
+                        } else null
+                    }
+                    "png" -> extractPngPromptStreamingWithLimit(context, uriOrUrl, networkClient)
+                    // 動画のプロンプト取得は廃止
+                    "mp4", "mov", "m4v", "webm" -> null
+                    else -> {
+                        val head = httpGetRangeWithLimit(context, uriOrUrl, 0, FIRST_EXIF_BYTES.toLong(), networkClient)
+                        if (head != null) extractBySniff(head, uriOrUrl) else null
+                    }
                 }
             }
+            if (!result.isNullOrBlank()) {
+                cachePut(uriOrUrl, result)
+                runCatching { MetadataCache(context).put(uriOrUrl, result) }
+            }
+            result
         } catch (_: Exception) {
             null
         }
@@ -246,19 +291,13 @@ object MetadataExtractor {
 
     // テキスト中から prompt/workflow/CLIPTextEncode 由来の候補を正規表現で抽出
     private fun scanTextForPrompts(text: String): String? {
-        val promptPattern = Pattern.compile("""prompt"\s*:\s*("([^"\\]*(\\.[^"\\]*)*)"|\{.*?\})""", Pattern.DOTALL)
-        promptPattern.matcher(text).apply {
+        RE_JSON_PROMPT.matcher(text).apply {
             if (find()) parsePromptJson(group(1) ?: "")?.let { return it }
         }
-        val workflowPattern = Pattern.compile("""workflow"\s*:\s*(\{.*?\})""", Pattern.DOTALL)
-        workflowPattern.matcher(text).apply {
+        RE_JSON_WORKFLOW.matcher(text).apply {
             if (find()) parseWorkflowJson(group(1) ?: "")?.let { return it }
         }
-        val clipTextEncodePattern = Pattern.compile(
-            """CLIPTextEncode"[\s\S]{0,2000}?"title"\s*:\s*"([^"]*Positive[^"]*)"[\s\S]{0,1000}?"(text|string)"\s*:\s*"((?:\\.|[^"\\])*)"""",
-            Pattern.CASE_INSENSITIVE
-        )
-        clipTextEncodePattern.matcher(text).apply {
+        RE_CLIPTEXTENCODE.matcher(text).apply {
             if (find()) return (group(3) ?: "").replace("\\\"", "\"")
         }
         return null
@@ -312,8 +351,8 @@ object MetadataExtractor {
         var offset = 8
 
         fun isPromptKey(key: String): Boolean {
-            val k = key.trim().lowercase()
-            return k == "parameters" || k == "description" || k == "comment" || k == "prompt"
+            val t = key.trim()
+            return PROMPT_KEYS.any { it.equals(t, ignoreCase = true) }
         }
 
         while (offset + 12 <= bytes.size) {
@@ -342,13 +381,17 @@ object MetadataExtractor {
                     val nul = data.indexOf(0.toByte())
                     if (nul > 0 && nul + 1 < data.size) {
                         val key = String(data, 0, nul, StandardCharsets.ISO_8859_1)
-                        val compressed = data.copyOfRange(nul + 2, data.size)
-                        val valueBytes = decompress(compressed)
-                        val value = valueBytes.toString(StandardCharsets.UTF_8)
-                        if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
-                            scanXmpForPrompts(value)?.let { prompts += it }
-                        } else if (isPromptKey(key)) {
-                            if (value.isNotBlank()) prompts += value
+                        // 目的のキー（XMP or prompt系）以外は伸長しない
+                        val isTarget = key.equals("XML:com.adobe.xmp", ignoreCase = true) || isPromptKey(key)
+                        if (isTarget) {
+                            val compressed = data.copyOfRange(nul + 2, data.size)
+                            val valueBytes = decompress(compressed)
+                            val value = valueBytes.toString(StandardCharsets.UTF_8)
+                            if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                                scanXmpForPrompts(value)?.let { prompts += it }
+                            } else if (isPromptKey(key)) {
+                                if (value.isNotBlank()) prompts += value
+                            }
                         }
                     }
                 }
@@ -362,11 +405,15 @@ object MetadataExtractor {
                         val langEnd = indexOfZero(data, p)
                         if (langEnd == -1) {
                             val textField = data.copyOfRange(p, data.size)
-                            val valueBytes = if (compFlag == 1) decompress(textField) else textField
-                            val value = valueBytes.toString(StandardCharsets.UTF_8)
-                            if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
-                                scanXmpForPrompts(value)?.let { prompts += it }
-                            } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                            // 目的キー以外は伸長/文字列化をスキップ
+                            val isTarget = key.equals("XML:com.adobe.xmp", ignoreCase = true) || isPromptKey(key)
+                            if (isTarget) {
+                                val valueBytes = if (compFlag == 1) decompress(textField) else textField
+                                val value = valueBytes.toString(StandardCharsets.UTF_8)
+                                if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
+                                    scanXmpForPrompts(value)?.let { prompts += it }
+                                } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                            }
                         } else {
                             p = langEnd + 1
                             val transEnd = indexOfZero(data, p)
@@ -571,12 +618,10 @@ object MetadataExtractor {
             // 可読域を文字列化し、NovelAI JSON らしきブロックを探す
             val s = try { String(bytes, StandardCharsets.UTF_8) } catch (_: Exception) { return null }
             // 簡易正規表現で { ... } を広めに拾い、"software":"NovelAI" を含むものを採用
-            val obj = Pattern.compile(""""software"\s*:\s*"NovelAI"""", Pattern.CASE_INSENSITIVE)
-            val brace = Pattern.compile("""{[\s\S]*}""", Pattern.DOTALL)
-            val m = brace.matcher(s)
+            val m = RE_JSON_BRACE.matcher(s)
             while (m.find()) {
                 val cand = s.substring(m.start(), m.end())
-                if (obj.matcher(cand).find()) {
+                if (RE_NOVELAI_SOFTWARE.matcher(cand).find()) {
                     scanTextForPrompts(cand)?.let { return it }
                     // 最後の手段として丸ごと返す
                     return cand
@@ -681,8 +726,7 @@ object MetadataExtractor {
     private fun scanXmpForPrompts(xmp: String): String? {
         // 属性 prompt/parameters="..."
         run {
-            val attrPattern = Pattern.compile("""([a-zA-Z0-9_:.\-]*?(prompt|parameters))\s*=\s*"((?:\\.|[^"])*)"""", Pattern.CASE_INSENSITIVE or Pattern.DOTALL)
-            val m = attrPattern.matcher(xmp)
+            val m = RE_XMP_ATTR.matcher(xmp)
             if (m.find()) {
                 val v = m.group(3) ?: ""
                 if (v.isNotBlank()) return v.replace("\\\"", "\"")
@@ -690,8 +734,7 @@ object MetadataExtractor {
         }
         // タグ <ns:prompt>...</ns:prompt> or <ns:parameters>...</ns:parameters>
         run {
-            val tagPattern = Pattern.compile("""<([a-zA-Z0-9_:.\-]*?(prompt|parameters))[^>]*>([\\s\\S]*?)</[^>]+>""", Pattern.CASE_INSENSITIVE)
-            val m = tagPattern.matcher(xmp)
+            val m = RE_XMP_TAG.matcher(xmp)
             if (m.find()) {
                 val v = m.group(3) ?: ""
                 if (v.isNotBlank()) return v.trim()
@@ -699,8 +742,7 @@ object MetadataExtractor {
         }
         // dc:description/rdf:Alt/rdf:li のテキスト
         run {
-            val descPattern = Pattern.compile("<dc:description[^>]*>\\s*<rdf:Alt>\\s*<rdf:li[^>]*>([\\s\\S]*?)</rdf:li>", Pattern.CASE_INSENSITIVE)
-            val m = descPattern.matcher(xmp)
+            val m = RE_XMP_DESC.matcher(xmp)
             if (m.find()) {
                 val v = m.group(1) ?: ""
                 if (v.isNotBlank() && !isLabely(v)) return v.trim()

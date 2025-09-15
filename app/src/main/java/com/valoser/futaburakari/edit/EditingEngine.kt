@@ -35,6 +35,9 @@ class EditingEngine(
     private val paintMaskErase = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) // 透明に戻す＝消す
     }
+    private val paintDstIn = Paint().apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    }
 
     // モザイク重ねの不透明度（0..255）。
     private var mosaicAlpha: Int = 255
@@ -64,11 +67,8 @@ class EditingEngine(
         // モザイクにマスクを掛けてから載せる（DST_INで交差領域のみ残す）
         c.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         c.drawBitmap(mosaicFull, 0f, 0f, null)
-        val pMask = Paint().apply {
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-            alpha = mosaicAlpha // 合成時の不透明度
-        }
-        c.drawBitmap(maskBitmap, 0f, 0f, pMask)
+        paintDstIn.alpha = mosaicAlpha
+        c.drawBitmap(maskBitmap, 0f, 0f, paintDstIn)
         c.restore()
         return out
     }
@@ -77,11 +77,8 @@ class EditingEngine(
     fun drawMosaicWithMask(canvas: Canvas) {
         canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         canvas.drawBitmap(mosaicFull, 0f, 0f, null)
-        val pMask = Paint().apply {
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-            alpha = mosaicAlpha // 合成時の不透明度
-        }
-        canvas.drawBitmap(maskBitmap, 0f, 0f, pMask)
+        paintDstIn.alpha = mosaicAlpha
+        canvas.drawBitmap(maskBitmap, 0f, 0f, paintDstIn)
         canvas.restore()
     }
 

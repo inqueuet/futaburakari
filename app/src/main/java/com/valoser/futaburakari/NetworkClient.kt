@@ -15,6 +15,7 @@ import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
+import java.io.OutputStream
 
 /**
  * Futaba系サイト向けのネットワーク操作をまとめたクライアント。
@@ -40,6 +41,41 @@ class NetworkClient(
     private fun mergeCookies(vararg cookieStrs: String?): String? {
         val merged = cookieStrs.fold(emptyMap<String, String>()) { acc, s -> acc + parseCookieString(s) }
         return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
+    }
+
+    // ストリーミングで任意URLの内容を出力先へコピー（成功時 true）。
+    // 大きなファイルでもメモリを逼迫しない。
+    suspend fun downloadTo(
+        url: String,
+        output: OutputStream,
+        referer: String? = null,
+        callTimeoutMs: Long? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
+            .build()
+        return@withContext try {
+            val call = httpClient.newCall(req).apply {
+                if (callTimeoutMs != null) {
+                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                }
+            }
+            call.executeAsync().use { resp ->
+                if (!resp.isSuccessful) return@use false
+                val body = resp.body ?: return@use false
+                body.byteStream().use { input ->
+                    input.copyTo(output)
+                }
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     // ===== HTML GET（SJIS/UTF-8 自動判定） =====

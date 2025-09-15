@@ -343,9 +343,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val f = fileFor(remoteUrl)
             if (f.exists() && f.length() > 0) return f.toURI().toString()
             return try {
-                val bytes = networkClient.fetchBytes(remoteUrl)
-                if (bytes == null) return null
-                f.outputStream().use { out -> out.write(bytes) }
+                f.outputStream().use { out ->
+                    val ok = networkClient.downloadTo(remoteUrl, out)
+                    if (!ok) return null
+                }
                 f.toURI().toString()
             } catch (_: Exception) {
                 null

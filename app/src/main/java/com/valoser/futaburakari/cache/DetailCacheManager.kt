@@ -292,12 +292,28 @@ class DetailCacheManager(private val context: Context) {
                 .thenBy { if (it.lastUpdatedAt > 0) it.lastUpdatedAt else Long.MAX_VALUE }
         )
 
+        fun fileSize(f: File?): Long = if (f != null && f.exists()) f.length() else 0L
+        fun dirSizeQuick(d: File): Long {
+            if (!d.exists()) return 0L
+            var sum = 0L
+            d.walkTopDown().forEach { if (it.isFile) sum += it.length() }
+            return sum
+        }
+
         for (e in ordered) {
+            // 事前にこのスレ分のサイズを見積もる
+            val archiveDir = getArchiveDirForUrl(e.url)
+            val archiveBytes = dirSizeQuick(archiveDir)
+            val cacheFile = getCacheFile(e.url)
+            val cacheBytes = fileSize(cacheFile)
+
             // スレごとに媒体と詳細キャッシュを削除
             clearArchiveForUrl(e.url)
             invalidateCache(e.url)
             onEntryCleaned(e)
-            total = totalBytes()
+
+            // 全体サイズから差分で減算（全走査の繰り返しを避ける）
+            total -= (archiveBytes + cacheBytes)
             if (total <= target) break
         }
     }
