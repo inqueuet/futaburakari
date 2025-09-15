@@ -866,7 +866,7 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
             addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
         }
     }
-    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行(>)を除き、行内に No. が無くても対象にする
+    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行を除き、No.の直後のみ対象（IDより前のみ）
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
     var start = 0
     while (start <= text.length) {
@@ -876,13 +876,34 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val line = text.substring(lineStart, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        // No の有無に関わらず、本文行に現れた そうだね トークンをクリック可能にする
+
         if (!isQuote) {
-            sodaneRegex.findAll(line).forEach { m ->
-                val s = lineStart + m.range.first
-                val e = lineStart + m.range.last + 1
-                addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
-                addStringAnnotation("sodane", "1", s, e)
+            // No.パターンを検出（行頭限定を解除）
+            val noRegex = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""")
+
+            // 行内の全てのNo.パターンを検出
+            noRegex.findAll(line).forEach { noMatch ->
+                // No.の終了位置（行全体に対する位置）
+                val noEnd = lineStart + noMatch.range.last + 1
+
+                // No.の後、次のトークン（ID:など）までの範囲を確認
+                val afterNoStartInLine = noMatch.range.last + 1
+                if (afterNoStartInLine < line.length) {
+                    val afterNo = line.substring(afterNoStartInLine)
+
+                    // IDパターンを検出して、それより前の範囲に限定
+                    val idMatch = Regex("""ID[:：]""").find(afterNo)
+                    val searchEnd = idMatch?.range?.first ?: afterNo.length
+                    val searchRange = afterNo.substring(0, searchEnd)
+
+                    // 最初のそうだねトークンのみを対象にする
+                    sodaneRegex.find(searchRange)?.let { sodaneMatch ->
+                        val s = lineStart + afterNoStartInLine + sodaneMatch.range.first
+                        val e = lineStart + afterNoStartInLine + sodaneMatch.range.last + 1
+                        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
+                        addStringAnnotation("sodane", "1", s, e)
+                    }
+                }
             }
         }
         if (nl < 0) break else start = nl + 1
@@ -909,7 +930,7 @@ private fun padTokensForSpacing(src: String): String {
     t = Regex("""(No[.\uFF0E]?\s*\d+)(?=(?:[+＋]|そうだね))""").replace(t, "$1 ")
     // 複数の空白を1つに正規化
     t = Regex("[ ]{2,}").replace(t, " ")
-    // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（本文や引用行は対象外）
+    // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（IDより前の位置のみチェック）
     val sb = StringBuilder()
     var start = 0
     while (start < t.length) {
@@ -918,10 +939,19 @@ private fun padTokensForSpacing(src: String): String {
         val line = t.substring(start, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(line)
+        // No. を行内どこでも許容（行頭限定を解除）
+        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(trimmed)
         if (!isQuote && hasNo) {
-            if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(line)) {
-                sb.append(line).append(" そうだね")
+            // ID がある場合は、その前の範囲のみをチェックして挿入位置を調整
+            val idMatch = Regex("ID[:：]").find(line)
+            val idIdx = idMatch?.range?.first ?: -1
+            val checkRange = if (idIdx > 0) line.substring(0, idIdx) else line
+            if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(checkRange)) {
+                if (idIdx > 0) {
+                    sb.append(line.substring(0, idIdx)).append(" そうだね ").append(line.substring(idIdx))
+                } else {
+                    sb.append(line).append(" そうだね")
+                }
             } else sb.append(line)
         } else sb.append(line)
         if (nl >= 0) sb.append('\n')
