@@ -7,6 +7,7 @@ package com.valoser.futaburakari
 
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -15,19 +16,20 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.preference.PreferenceManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.valoser.futaburakari.ui.compose.BookmarkScreen
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
 /**
  * ブックマークを管理するアクティビティ（Jetpack Compose ベース）。
  * 追加/更新/削除/選択の操作を提供し、`BookmarkManager` を通じて永続化する。
  */
+@AndroidEntryPoint
 class BookmarkActivity : BaseActivity() {
+
+    private val viewModel: BookmarkViewModel by viewModels()
 
     /**
      * テーマ適用済みの Compose コンテンツを設定し、各操作を永続化ロジックに接続する。
@@ -36,14 +38,12 @@ class BookmarkActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-
         setContent {
             // アプリのテーマ（表現的カラースキーム）を適用
             FutaburakariTheme(expressive = true) {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
-                // BookmarkManager のストレージを元にした UI 用のメモリ状態
-                var bookmarks by remember { mutableStateOf(BookmarkManager.getBookmarks(this@BookmarkActivity)) }
+                val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
 
                 Box {
                     BookmarkScreen(
@@ -55,9 +55,8 @@ class BookmarkActivity : BaseActivity() {
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
-                                BookmarkManager.addBookmark(this@BookmarkActivity, Bookmark(name, url))
+                                viewModel.addBookmark(Bookmark(name, url))
                                 scope.launch { snackbarHostState.showSnackbar("ブックマークを追加しました") }
-                                bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
                             }
                         },
                         onUpdateBookmark = { oldUrl, name, url ->
@@ -65,26 +64,18 @@ class BookmarkActivity : BaseActivity() {
                             if (name.isBlank() || url.isBlank()) {
                                 scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
                             } else {
-                                BookmarkManager.updateBookmark(this@BookmarkActivity, oldUrl, Bookmark(name, url))
-                                if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == oldUrl) {
-                                    BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, url)
-                                }
+                                viewModel.updateBookmark(oldUrl, Bookmark(name, url))
                                 scope.launch { snackbarHostState.showSnackbar("ブックマークを更新しました") }
-                                bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
                             }
                         },
                         onDeleteBookmark = { bookmark ->
                             // ストレージから削除。削除対象が選択中なら選択状態をクリア
-                            BookmarkManager.deleteBookmark(this@BookmarkActivity, bookmark)
-                            if (BookmarkManager.getSelectedBookmarkUrl(this@BookmarkActivity) == bookmark.url) {
-                                BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, null)
-                            }
+                            viewModel.deleteBookmark(bookmark)
                             scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を削除しました") }
-                            bookmarks = BookmarkManager.getBookmarks(this@BookmarkActivity)
                         },
                         onSelectBookmark = { bookmark ->
                             // 選択したブックマークを保存して画面を閉じる
-                            BookmarkManager.saveSelectedBookmarkUrl(this@BookmarkActivity, bookmark.url)
+                            viewModel.saveSelectedBookmarkUrl(bookmark.url)
                             scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を選択しました") }
                             finish()
                         }
