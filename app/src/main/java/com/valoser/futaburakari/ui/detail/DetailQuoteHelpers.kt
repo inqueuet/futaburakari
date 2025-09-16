@@ -23,12 +23,16 @@ import java.text.Normalizer
  * - ヒットごとに Text 行と直後の Image/Video を次の Text/ThreadEndTime までまとめます。
  * - 先頭要素の id で重複排除し、可能なら抽出した No. 昇順でグループを並べ替えてからフラット化します。
  */
-internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): List<DetailContent> {
+internal fun buildResReferencesItems(
+    all: List<DetailContent>,
+    resNum: String,
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
+): List<DetailContent> {
     if (resNum.isBlank()) return emptyList()
     val esc = Regex.escape(resNum)
 
     fun plainOf(t: DetailContent.Text): String =
-        Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        plainTextOf(t)
             .replace("\u200B", "")
             .replace('　', ' ')
             .replace('＞', '>')
@@ -64,7 +68,7 @@ internal fun buildResReferencesItems(all: List<DetailContent>, resNum: String): 
 
     fun extractResNo(c: DetailContent): Int? = when (c) {
         is DetailContent.Text -> {
-            val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+            val plain = plainTextOf(c)
             Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
         else -> null
@@ -88,6 +92,7 @@ internal fun buildBackReferencesByContent(
     all: List<DetailContent>,
     source: DetailContent.Text,
     extraCandidates: Set<String> = emptySet(),
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
 ): List<DetailContent> {
     fun normalize(s: String): String = Normalizer.normalize(
         s.replace("\u200B", "").replace('　', ' ').replace('＞', '>').replace('≫', '>'),
@@ -95,7 +100,7 @@ internal fun buildBackReferencesByContent(
     ).replace(Regex("\\s+"), " ").trim()
 
     // ソース本文から候補行を抽出（空でない/ヘッダ風でない/長さ>=2）
-    val srcPlain = Html.fromHtml(source.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+    val srcPlain = plainTextOf(source)
     val candidates: Set<String> = srcPlain.lines()
         .map { normalize(it) }
         .filter { it.isNotBlank() && !it.startsWith("No.", ignoreCase = true) && !it.startsWith("ID:", ignoreCase = true) && it.length >= 2 }
@@ -110,7 +115,7 @@ internal fun buildBackReferencesByContent(
     val hitIndexes = all.withIndex().filter { (idx, c) ->
         if (c !is DetailContent.Text) return@filter false
         if (c.id == source.id) return@filter false
-        val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val plain = plainTextOf(c)
         val quoteLines = plain.lines()
             .filter { it.trim().startsWith(">") }
             .map { normalize(it.trim().replaceFirst(Regex("^>+"), "")) }
@@ -147,7 +152,7 @@ internal fun buildBackReferencesByContent(
 
     fun extractResNo(c: DetailContent): Int? = when (c) {
         is DetailContent.Text -> {
-            val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+            val plain = plainTextOf(c)
             Regex("""No\.(\d+)""").find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
         else -> null
@@ -168,6 +173,7 @@ internal fun buildSelfAndBackrefItems(
     all: List<DetailContent>,
     source: DetailContent.Text,
     extraCandidates: Set<String> = emptySet(),
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
 ): List<DetailContent> {
     // Build group for the source itself
     val srcIndex = all.indexOfFirst { it.id == source.id }
@@ -186,7 +192,7 @@ internal fun buildSelfAndBackrefItems(
         groups += g
     }
     // 被引用のグループを後ろに連結
-    val back = buildBackReferencesByContent(all, source, extraCandidates = extraCandidates)
+    val back = buildBackReferencesByContent(all, source, extraCandidates = extraCandidates, plainTextOf = plainTextOf)
     if (back.isNotEmpty()) {
         var k = 0
         while (k < back.size) {
@@ -215,12 +221,16 @@ internal fun buildSelfAndBackrefItems(
  * - 本文は正規化（ZWSP 除去、全角空白/＞/≫→半角、NFKC）。
  * - ヒット単位で Text 行＋直後のメディアをまとめ、No. 昇順で整列後にフラット化します。
  */
-internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List<DetailContent> {
+internal fun buildTextSearchItems(
+    all: List<DetailContent>,
+    query: String,
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
+): List<DetailContent> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
 
     fun plainOf(t: DetailContent.Text): String =
-        android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        plainTextOf(t)
             .replace("\u200B", "")
             .replace('　', ' ')
             .replace('＞', '>')
@@ -249,7 +259,7 @@ internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List
 
     fun extractResNo(c: DetailContent): Int? = when (c) {
         is DetailContent.Text -> {
-            val plain = android.text.Html.fromHtml(c.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+            val plain = plainTextOf(c)
             Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
                 .find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
@@ -273,7 +283,11 @@ internal fun buildTextSearchItems(all: List<DetailContent>, query: String): List
  * 先頭 id で重複排除してから、可能なら No. 昇順に並べ替えてフラット化します。
  * URL のクエリ/フラグメントは無視し、末尾セグメントで比較します。
  */
-internal fun buildFilenameReferencesItems(all: List<DetailContent>, fileName: String): List<DetailContent> {
+internal fun buildFilenameReferencesItems(
+    all: List<DetailContent>,
+    fileName: String,
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
+): List<DetailContent> {
     val needle = fileName.trim()
     if (needle.isEmpty()) return emptyList()
 
@@ -282,8 +296,7 @@ internal fun buildFilenameReferencesItems(all: List<DetailContent>, fileName: St
         java.text.Normalizer.Form.NFKC
     ).trim()
 
-    fun plainOf(t: DetailContent.Text): String =
-        android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+    fun plainOf(t: DetailContent.Text): String = plainTextOf(t)
 
     fun parentTextIndex(from: Int): Int {
         var i = from
@@ -352,7 +365,7 @@ internal fun buildFilenameReferencesItems(all: List<DetailContent>, fileName: St
 
     fun extractResNo(c: DetailContent): Int? = when (c) {
         is DetailContent.Text -> {
-            val plain = android.text.Html.fromHtml(c.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+            val plain = plainTextOf(c)
             Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
                 .find(plain)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }

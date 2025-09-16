@@ -76,8 +76,7 @@ class DetailActivity : BaseActivity() {
     private var markViewedJob: kotlinx.coroutines.Job? = null
 
     // 本文検索のためのプレーンテキストキャッシュ（Text.id -> plainText）
-    private var plainTextCache: Map<String, String> = emptyMap()
-    private var buildPlainCacheJob: kotlinx.coroutines.Job? = null
+    // ViewModel がプレーンテキストキャッシュを管理
 
     private val ngStore by lazy { NgStore(this) }
 
@@ -215,6 +214,7 @@ class DetailActivity : BaseActivity() {
                         scrollStore.saveScrollState(key, pos, off)
                     },
                     itemsFlow = viewModel.detailContent,
+                    plainTextOf = { t -> viewModel.plainTextOf(t) },
                     currentQueryFlow = viewModel.currentQuery,
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
                     // Compose側で引用一覧を表示するため、ここでは何もしない
@@ -373,18 +373,7 @@ class DetailActivity : BaseActivity() {
 
             // Compose側は LiveData を直接購読しているため、ここでのAdapter更新は不要
 
-            // プレーンテキストキャッシュをバックグラウンドで構築
-            buildPlainCacheJob?.cancel()
-            buildPlainCacheJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-                val cache = list.asSequence()
-                    .filterIsInstance<DetailContent.Text>()
-                    .associate { t ->
-                        val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT)
-                            .toString()
-                        t.id to plain
-                    }
-                withContext(kotlinx.coroutines.Dispatchers.Main) { plainTextCache = cache }
-            }
+            // プレーンテキストキャッシュは ViewModel 内で構築
 
             // 検索ナビの表示は ViewModel.searchState に統一
 
@@ -502,7 +491,7 @@ class DetailActivity : BaseActivity() {
         // 1) No.\d+
         Regex("""No\.(\d+)""").find(searchText)?.groupValues?.getOrNull(1)?.let { num ->
             val hit = all.firstOrNull {
-                it is DetailContent.Text && (plainTextCache[it.id]?.contains("No.$num") == true)
+            it is DetailContent.Text && (viewModel.plainTextOf(it).contains("No.$num"))
             }
             if (hit != null) return hit
         }
@@ -519,17 +508,17 @@ class DetailActivity : BaseActivity() {
         // 3) 本文 部分一致（空白圧縮・大文字小文字無視）
         val needle = searchText.trim().replace(Regex("\\s+"), " ")
         return all.firstOrNull {
-            it is DetailContent.Text && (plainTextCache[it.id]
-                ?.trim()
-                ?.replace(Regex("\\s+"), " ")
-                ?.contains(needle, ignoreCase = true) == true)
+            it is DetailContent.Text && (viewModel.plainTextOf(it)
+                .trim()
+                .replace(Regex("\\s+"), " ")
+                .contains(needle, ignoreCase = true))
         }
     }
 
     // 行頭が '>' 1個の引用行（最初の1つ）を返す（旧：単一版）
     /** 行頭が '>' 1個の引用行（最初の1つ）を抽出する。 */
     private fun extractFirstLevelQuoteCore(item: DetailContent.Text): String? {
-        val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val plain = viewModel.plainTextOf(item)
         val m = Regex("^>([^>].+)$", RegexOption.MULTILINE).find(plain)
         return m?.groupValues?.getOrNull(1)?.trim()
     }
@@ -537,7 +526,7 @@ class DetailActivity : BaseActivity() {
     // 行頭が '>' 1個の引用行を「複数」返す（多段で複数候補がある場合に使用）
     /** 行頭が '>' 1個の引用行（複数）をすべて抽出する。 */
     private fun extractFirstLevelQuoteCores(item: DetailContent.Text): List<String> {
-        val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val plain = viewModel.plainTextOf(item)
         return Regex("^>([^>].+)$", RegexOption.MULTILINE)
             .findAll(plain)
             .map { it.groupValues[1].trim() }

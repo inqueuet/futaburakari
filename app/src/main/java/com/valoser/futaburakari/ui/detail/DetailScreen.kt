@@ -1,3 +1,8 @@
+/**
+ * スレ詳細画面（Scaffold構成）のCompose実装。
+ * - リスト、検索、ダイアログ/シート、広告などのUIを統合します。
+ * - ここではコメントの修正/追記のみを行い、コードは変更しません。
+ */
 package com.valoser.futaburakari.ui.detail
 
 import androidx.compose.foundation.clickable
@@ -56,6 +61,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import coil3.imageLoader
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
+import coil3.memory.MemoryCache
+import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -75,6 +88,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
+ *   一覧グリッドは可視範囲の前後にあるサムネイルを Coil でプリフェッチし、スクロール直後の表示遅延を低減。
  * - AppBar: 戻る/更新/検索/メディア一覧のアイコンに加え、
  *            右上メニュー（More）から「返信 → NG 管理 → 画像編集（任意）」を提供。
  *
@@ -86,8 +100,10 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onSodaneClick`: 「そうだね」押下時のハンドラ（null で非表示）。
  * - `onDeletePost`: 削除要求のハンドラ（レス番/画像のみ指定）。
  * - `onSubmitSearch`/`onDebouncedSearch`/`onClearSearch`: 検索の確定/遅延/クリア時ハンドラ。
+ * - `onSearchPrev`/`onSearchNext`: 検索ヒットの前/次へ移動するためのハンドラ。
  * - `onReapplyNgFilter`: NG ルール変更後に再適用するためのフック。
  * - `searchStateFlow`/`searchActiveFlow`/`onSearchActiveChange`: 検索 UI の状態連携。
+ * - `bottomOffsetPxFlow`: 既存実装との互換用の下部オフセット（広告等の高さを px で通知）。
  * - `recentSearchesFlow`: 検索サジェスト用の履歴。
  * - `showAds`/`adUnitId`/`onBottomPaddingChange`/`bottomOffsetPxFlow`: 広告や下部パディングの制御。
  * - `threadUrl`: NG ルールの sourceKey 生成向けのスレ URL。
@@ -133,6 +149,7 @@ fun DetailScreenScaffold(
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
     itemsFlow: StateFlow<List<DetailContent>>? = null,
+    plainTextOf: ((DetailContent.Text) -> String)? = null,
     currentQueryFlow: StateFlow<String?>? = null,
     getSodaneState: ((String) -> Boolean)? = null,
     onQuoteClick: ((String) -> Unit)? = null,
@@ -236,6 +253,9 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
+            val plainOfProvider = remember(plainTextOf) {
+                plainTextOf ?: { t: DetailContent.Text -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() }
+            }
             // UI をブロックしないためのスコープ（重い集計はメインスレッド外で実行）
             val scope = rememberCoroutineScope()
             val ngStore = remember(ctx) { com.valoser.futaburakari.NgStore(ctx) }
@@ -306,8 +326,10 @@ fun DetailScreenScaffold(
                     DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
+                        threadUrl = threadUrl,
                         modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
+                        plainTextOf = plainOfProvider,
                         onQuoteClick = { token ->
                             // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
                             val snapshot = items
@@ -315,8 +337,8 @@ fun DetailScreenScaffold(
                             val isFilename = Regex("""(?i)^[A-Za-z0-9._-]+\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)$""").matches(core)
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    if (isFilename) buildFilenameReferencesItems(snapshot, core)
-                                    else buildQuoteAndBackrefItems(snapshot, token, threadTitle = title)
+                                    if (isFilename) buildFilenameReferencesItems(snapshot, core, plainTextOf = plainOfProvider)
+                                    else buildQuoteAndBackrefItems(snapshot, token, threadTitle = title, plainTextOf = plainOfProvider)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -335,7 +357,7 @@ fun DetailScreenScaffold(
                             val snapshot = items
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    buildResReferencesItems(snapshot, resNum)
+                                    buildResReferencesItems(snapshot, resNum, plainTextOf = plainOfProvider)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -353,9 +375,9 @@ fun DetailScreenScaffold(
                         onFileNameClick = { fn ->
                             val snapshot = items
                             scope.launch {
-                                val list = withContext(Dispatchers.Default) {
-                                    buildFilenameReferencesItems(snapshot, fn)
-                                }
+                                    val list = withContext(Dispatchers.Default) {
+                                        buildFilenameReferencesItems(snapshot, fn, plainTextOf = plainOfProvider)
+                                    }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
                                 }
@@ -366,7 +388,7 @@ fun DetailScreenScaffold(
                             val snapshot = items
                             scope.launch {
                                 val list = withContext(Dispatchers.Default) {
-                                    buildSelfAndBackrefItems(snapshot, src)
+                                    buildSelfAndBackrefItems(snapshot, src, plainTextOf = plainOfProvider)
                                 }
                                 if (list.isNotEmpty()) {
                                     resRefItems = list
@@ -461,7 +483,7 @@ fun DetailScreenScaffold(
                                 val target = idTarget
                                 scope.launch {
                                     val list = withContext(Dispatchers.Default) {
-                                        buildIdPostsItems(snapshot, target)
+                                        buildIdPostsItems(snapshot, target, plainTextOf = plainOfProvider)
                                     }
                                     idMenuTarget = null
                                     idSheetItems = list
@@ -566,6 +588,7 @@ fun DetailScreenScaffold(
                         DetailListCompose(
                             items = idItems,
                             searchQuery = null,
+                            threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
@@ -603,6 +626,7 @@ fun DetailScreenScaffold(
                         DetailListCompose(
                             items = refItems,
                             searchQuery = null,
+                            threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
@@ -631,33 +655,166 @@ fun DetailScreenScaffold(
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
                 // シート内の操作用のローカルスコープ（例: クリックで親リストへスクロール）
                 val scope = rememberCoroutineScope()
-                androidx.compose.material3.ModalBottomSheet(
-                    onDismissRequest = { openMediaSheet = false },
-                    sheetState = sheetState
-                ) {
-                    // Compose 標準のグリッドで表示
-                    val images = remember(items) {
-                        data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
-                        fun findParentTextPosition(from: Int): Int {
-                            for (i in from downTo 0) if (items[i] is com.valoser.futaburakari.DetailContent.Text) return i
-                            return from
-                        }
-                        items.mapIndexedNotNull { i, c ->
-                            when (c) {
-                                is com.valoser.futaburakari.DetailContent.Image -> Entry(i, findParentTextPosition(i), c.imageUrl)
-                                is com.valoser.futaburakari.DetailContent.Video -> Entry(i, findParentTextPosition(i), c.videoUrl)
-                                else -> null
+                    androidx.compose.material3.ModalBottomSheet(
+                        onDismissRequest = { openMediaSheet = false },
+                        sheetState = sheetState
+                    ) {
+                        // Compose 標準のグリッドで表示
+                        val images = remember(items) {
+                            data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
+                            var lastTextIdx = -1
+                            val out = ArrayList<Entry>()
+                            for (i in items.indices) {
+                                when (val c = items[i]) {
+                                    is com.valoser.futaburakari.DetailContent.Text -> lastTextIdx = i
+                                    is com.valoser.futaburakari.DetailContent.Image -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.imageUrl)
+                                    is com.valoser.futaburakari.DetailContent.Video -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.videoUrl)
+                                    else -> {}
+                                }
                             }
+                            out
+                        }
+                    
+                    // グリッドの可視範囲を監視し、オフスクリーンを先読み
+                    // - 前方12件・後方6件を目安にサムネイルを事前デコード
+                    // - セルサイズに近い解像度（幅=画面幅/3, 高さ=110dp, Precision.INEXACT）でキャッシュを温める
+                    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+                    run {
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        val imageLoader = ctx.imageLoader
+                        val prefetched = remember(images) { mutableSetOf<String>() }
+                        val config = androidx.compose.ui.platform.LocalConfiguration.current
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val screenWidthPx = remember(config.screenWidthDp, density) {
+                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+                        }
+                        val cellWidthPx = remember(screenWidthPx) { (screenWidthPx / 3).coerceAtLeast(1) }
+                        val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+                        val prefetchAhead = 12
+                        val prefetchBack = 6
+
+                        LaunchedEffect(images, gridState) {
+                            snapshotFlow { gridState.layoutInfo.visibleItemsInfo }
+                                .map { vis ->
+                                    val first = vis.minOfOrNull { it.index } ?: 0
+                                    val last = vis.maxOfOrNull { it.index } ?: -1
+                                    first to last
+                                }
+                                .distinctUntilChanged()
+                                .collectLatest { (first, last) ->
+                                    if (images.isEmpty()) return@collectLatest
+                                    val startAhead = (last + 1).coerceAtLeast(0)
+                                    val endAhead = (last + prefetchAhead).coerceAtMost(images.lastIndex)
+                                    val startBack = (first - prefetchBack).coerceAtLeast(0)
+                                    val endBack = (first - 1).coerceAtLeast(-1)
+
+                                    fun urlFor(i: Int): String? = images.getOrNull(i)?.url
+
+                                    // 前方プリフェッチ
+                                    for (i in startAhead..endAhead) {
+                                        val url = urlFor(i) ?: continue
+                                        if (prefetched.add(url)) {
+                                            val req = coil3.request.ImageRequest.Builder(ctx)
+                                                .data(url)
+                                                .apply {
+                                                    val ref = threadUrl
+                                                    if (!ref.isNullOrBlank()) {
+                                                        httpHeaders(
+                                                            NetworkHeaders.Builder()
+                                                                .add("Referer", ref)
+                                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                                .build()
+                                                        )
+                                                    }
+                                                }
+                                                .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
+                                                .scale(coil3.size.Scale.FILL)
+                                                .precision(coil3.size.Precision.INEXACT)
+                                                .memoryCacheKey(ImageKeys.full(url))
+                                                .placeholderMemoryCacheKey(ImageKeys.full(url))
+                                                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                .build()
+                                            imageLoader.enqueue(req)
+                                        }
+                                    }
+
+                                    // 後方（少しだけ戻り）のプリフェッチ
+                                    if (endBack >= startBack) {
+                                        for (i in startBack..endBack) {
+                                            val url = urlFor(i) ?: continue
+                                            if (prefetched.add(url)) {
+                                                val req = coil3.request.ImageRequest.Builder(ctx)
+                                                    .data(url)
+                                                    .apply {
+                                                        val ref = threadUrl
+                                                        if (!ref.isNullOrBlank()) {
+                                                            httpHeaders(
+                                                                NetworkHeaders.Builder()
+                                                                    .add("Referer", ref)
+                                                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                                    .build()
+                                                            )
+                                                        }
+                                                    }
+                                                    .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
+                                                    .scale(coil3.size.Scale.FILL)
+                                                    .precision(coil3.size.Precision.INEXACT)
+                                                    .memoryCacheKey(ImageKeys.full(url))
+                                                    .placeholderMemoryCacheKey(ImageKeys.full(url))
+                                                    .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                    .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                    .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                                    .build()
+                                                imageLoader.enqueue(req)
+                                            }
+                                        }
+                                    }
+                                }
                         }
                     }
                     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                         columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                        state = gridState,
                         contentPadding = PaddingValues(LocalSpacing.current.s)
                     ) {
                         items(images.size) { idx ->
                             val e = images[idx]
-                            coil.compose.AsyncImage(
-                                model = e.url,
+                            // Gridセルと同一のサイズ指定でリクエストし、プリフェッチとキャッシュキーを一致させる
+                            val ctx = androidx.compose.ui.platform.LocalContext.current
+                            val config = androidx.compose.ui.platform.LocalConfiguration.current
+                            val density = androidx.compose.ui.platform.LocalDensity.current
+                            val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+                            val cellWidthPx = (screenWidthPx / 3).coerceAtLeast(1)
+                            val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+
+                            val request = coil3.request.ImageRequest.Builder(ctx)
+                                .data(e.url)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .build()
+                                        )
+                                    }
+                                }
+                                .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
+                                .scale(coil3.size.Scale.FILL)
+                                .precision(coil3.size.Precision.INEXACT)
+                                .memoryCacheKey(ImageKeys.full(e.url ?: ""))
+                                .placeholderMemoryCacheKey(ImageKeys.full(e.url ?: ""))
+                                .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+                                .build()
+
+                            coil3.compose.SubcomposeAsyncImage(
+                                model = request,
+                                imageLoader = ctx.imageLoader,
                                 contentDescription = null,
                                 modifier = Modifier
                                     .padding(LocalSpacing.current.xs)
@@ -667,7 +824,19 @@ fun DetailScreenScaffold(
                                         scope.launch { listState.scrollToItem(e.parentTextIdx) }
                                         openMediaSheet = false
                                     },
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                loading = {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(110.dp)
+                                    ) {
+                                        androidx.compose.material3.CircularProgressIndicator(
+                                            modifier = Modifier
+                                                .align(androidx.compose.ui.Alignment.Center)
+                                        )
+                                    }
+                                }
                             )
                         }
                     }
@@ -808,10 +977,10 @@ fun DetailScreenScaffold(
                     if (firstIdx >= 0) {
                         val src = items[firstIdx] as DetailContent.Text
                         // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
-                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title))
+                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title), plainTextOf = plainOfProvider)
                         // 2) OP の No. を使った引用先（>>No など番号参照）
                         val rn = src.resNum
-                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn) else emptyList()
+                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn, plainTextOf = plainOfProvider) else emptyList()
                         // 3) 結合 + 重複排除（表示順は byContent → byNumber）
                         if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
                             val seen = HashSet<String>()

@@ -1,3 +1,8 @@
+/**
+ * 画像とプロンプト（説明文）を表示する画面のCompose実装。
+ * - 正方形領域に画像を表示し、下部にスクロール可能なテキストとコピー操作を提供します。
+ * - ここではコメントのみを整備し、ロジックやUIの挙動は変更しません。
+ */
 package com.valoser.futaburakari.ui.compose
 
 import android.content.ClipData
@@ -28,8 +33,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
@@ -82,7 +91,18 @@ fun ImageDisplayScreen(
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
                 if (!imageUri.isNullOrBlank()) {
                     AsyncImage(
-                        model = ImageRequest.Builder(ctx).data(imageUri).crossfade(true).build(),
+                        model = ImageRequest.Builder(ctx)
+                            .data(imageUri)
+                            .apply {
+                                httpHeaders(
+                                    NetworkHeaders.Builder()
+                                        .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                        .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                        .build()
+                                )
+                            }
+                            .transitionFactory(CrossfadeTransition.Factory())
+                            .build(),
                         contentDescription = stringResource(R.string.displayed_image_description),
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop

@@ -16,6 +16,10 @@ object AppPreferences {
     private const val KEY_PWD = "pwd"
     /** Key for the flag that appends a GUID. */
     private const val KEY_APPEND_GUID = "append_guid_on"
+    /** Key for the global concurrency level (1..4). */
+    private const val KEY_CONCURRENCY_LEVEL = "concurrency_level"
+    /** Key for the full image upgrade concurrency (legacy; now unified with global). */
+    private const val KEY_FULL_UPGRADE_CONCURRENCY = "full_upgrade_concurrency"
 
     /**
      * Returns the app's private SharedPreferences instance.
@@ -65,6 +69,49 @@ object AppPreferences {
      */
     fun setAppendGuidOn(context: Context, enabled: Boolean) {
         getPreferences(context).edit().putBoolean(KEY_APPEND_GUID, enabled).apply()
+    }
+
+    /**
+     * Gets the user-selected global concurrency level (1..4).
+     * Defaults to 2 when unset; clamped to 1..4.
+     */
+    fun getConcurrencyLevel(context: Context): Int {
+        val prefs = getPreferences(context)
+        val hasUnified = prefs.contains(KEY_CONCURRENCY_LEVEL)
+        val raw = if (hasUnified) {
+            prefs.getInt(KEY_CONCURRENCY_LEVEL, 2)
+        } else {
+            // Migrate from legacy full-upgrade key if present
+            val legacy = prefs.getInt(KEY_FULL_UPGRADE_CONCURRENCY, 2)
+            // Persist migrated value to unified key for future reads
+            prefs.edit().putInt(KEY_CONCURRENCY_LEVEL, legacy.coerceIn(1, 4)).apply()
+            legacy
+        }
+        return raw.coerceIn(1, 4)
+    }
+
+    /**
+     * Saves the global concurrency level (clamped to 1..4).
+     */
+    fun setConcurrencyLevel(context: Context, level: Int) {
+        val v = level.coerceIn(1, 4)
+        getPreferences(context).edit().putInt(KEY_CONCURRENCY_LEVEL, v).apply()
+    }
+
+    /**
+     * Gets the concurrency for full-size image upgrades.
+     * Unified with the global concurrency level for consistency.
+     */
+    fun getFullUpgradeConcurrency(context: Context): Int {
+        return getConcurrencyLevel(context)
+    }
+
+    /**
+     * Saves the full-size image upgrade concurrency.
+     * Unified to set the global concurrency level for consistency.
+     */
+    fun setFullUpgradeConcurrency(context: Context, level: Int) {
+        setConcurrencyLevel(context, level)
     }
 
     /**

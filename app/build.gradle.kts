@@ -1,7 +1,9 @@
 // アプリモジュールのビルド設定（Kotlin DSL）。
-// - Kotlin/JDK 17 ツールチェーンと JVM 11 バイトコードを使用
-// - Jetpack Compose・Hilt・KSP・Firebase・AdMob を利用
-// - リリース時は ProGuard 最適化とネイティブデバッグシンボル出力を有効化
+// 概要:
+// - ツールチェーン: Kotlin/JDK 17（出力バイトコードは JVM 11）
+// - フレームワーク: Jetpack Compose / Hilt / KSP / Firebase / AdMob
+// - リリース: ProGuard 最適化とネイティブデバッグシンボルの出力を有効化
+// - 目的: 最新 API を利用しつつ、Compose を中心とした UI と依存関係管理を Version Catalog で統一
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -9,30 +11,31 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     id("com.google.dagger.hilt.android")
-    // KSP は Version Catalog でバージョンを管理（libs.plugins.ksp を使用）
+    // KSP は Version Catalog でバージョンを管理（`libs.plugins.ksp` を使用）
     alias(libs.plugins.ksp)
+    // Firebase/Analytics 等の連携用プラグイン
     id("com.google.gms.google-services")
 }
 
 kotlin {
-    // JDK は 17 を使用（ビルド環境のツールチェーン）
+    // ビルド環境の JDK は 17 を使用
     jvmToolchain(17)
     compilerOptions {
-        // 旧 kotlinOptions { jvmTarget = "11" } の代替（deprecated の解消）
+        // 旧 `kotlinOptions { jvmTarget = "11" }` の代替（deprecated の解消）
         jvmTarget.set(JvmTarget.JVM_11)
     }
 }
 
 android {
     namespace = "com.valoser.futaburakari"
-    compileSdk = 36
+    compileSdk = 36 // Android 14（Upside Down Cake）
 
     defaultConfig {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36
-        versionCode = 33
-        versionName = "4.3"
+        versionCode = 52 // 内部バージョン（Play Console 配信管理で使用）
+        versionName = "1.2" // 表示バージョン
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -89,9 +92,17 @@ dependencies {
     // LiveData → Compose State 変換
     implementation("androidx.compose.runtime:runtime-livedata")
 
-    // ネットワーク/JSON（Version Catalog 統一管理）
+    // ネットワーク（OkHttp）/ JSON（Gson）
+    // - `libs.okhttp` と BOM によりバージョンを統一しつつ、必要な OkHttp モジュールを明示的に追加
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
+    implementation("com.squareup.okhttp3:okhttp")
+    implementation("com.squareup.okhttp3:okhttp-android")
+    implementation("com.squareup.okhttp3:okhttp-tls")
+    implementation("com.squareup.okhttp3:okhttp-sse")
+    implementation("com.squareup.okhttp3:okhttp-urlconnection")
+    implementation("com.squareup.okhttp3:okhttp-coroutines")
+    
     implementation(libs.gson)
 
     // Media3（ExoPlayer）
@@ -107,7 +118,7 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
-    // レガシー View 依存は削除（Compose へ移行）
+    // レガシー View 依存は最小限に留めつつ Compose に移行
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.preference.ktx)
     // Material Components（XML Material 3 テーマ/ウィジェット/ブリッジ）
@@ -119,6 +130,9 @@ dependencies {
     implementation(libs.coil.core)
     implementation(libs.coil.video)
     implementation(libs.coil.gif)
+    implementation(libs.coil.svg)
+    // Coil 3 network（OkHttp 連携）
+    implementation(libs.coil.network.okhttp)
 
     // Google Mobile Ads SDK（AdMob）
     implementation(libs.play.services.ads)
@@ -129,14 +143,15 @@ dependencies {
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.hilt.compiler)
 
-    // Firebase（Analytics）
+    // Firebase（Analytics）: BOM でバージョン統一
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
 
     // MP4 パーサは不要（動画プロンプト解析を削除済み）
 
-    // テスト依存関係
+    // テスト依存関係（UI/Compose のインストルメンテーションを含む）
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp) // ネットワーク関連の単体テストで使用
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

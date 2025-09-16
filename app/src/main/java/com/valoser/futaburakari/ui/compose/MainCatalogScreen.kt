@@ -1,3 +1,13 @@
+/**
+ * 画像カタログ（メイン一覧）画面の Compose 実装。
+ *
+ * 特徴:
+ * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
+ * - 体験: 可視範囲＋先読みの軽量プリフェッチでスクロールを滑らかに。
+ * - 表示: カード下部にグラデーション＋タイトル、右下に返信数バッジ。
+ * - エラー: プレビューは使用せず、フル画像の取得が失敗した場合は簡易プレースホルダを表示。
+ *          404 検知時は `onImageLoadHttp404` を介して ViewModel に通知し、URL 補正を試みる。
+ */
 package com.valoser.futaburakari.ui.compose
 
 import androidx.compose.foundation.background
@@ -32,14 +42,23 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import coil.imageLoader
-import coil.request.ImageRequest
-import coil.size.Dimension
-import coil.size.Precision
+import coil3.compose.AsyncImage
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.size.Dimension
+import coil3.size.Precision
+import coil3.network.HttpException
+import coil3.request.ErrorResult
+import coil3.request.SuccessResult
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import coil.compose.AsyncImage
+import coil3.compose.SubcomposeAsyncImage
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
 import com.valoser.futaburakari.ImageItem
 import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
@@ -58,6 +77,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
  * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
+ * - エラー: プレビューにフォールバックせず、失敗時は簡易プレースホルダを表示。
  *
  * パラメータ:
  * - `modifier`: ルートレイアウト用の修飾子。
@@ -74,6 +94,8 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
+ * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
+ *                         ViewModel 側で URL 補正（代替URLの探索・差し替え）を行うために使用。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,6 +117,8 @@ fun MainCatalogScreen(
     onBrowseLocalImages: () -> Unit,
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
+    onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
+    onImageLoadSuccess: (item: ImageItem, loadedUrl: String) -> Unit,
 ) {
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
@@ -176,6 +200,8 @@ fun MainCatalogScreen(
             }
     }
 
+    // 404のローカル抑止は廃止（VM側の回数管理と候補探索に委任）
+
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
     val context = LocalContext.current
@@ -190,8 +216,8 @@ fun MainCatalogScreen(
             Triple(first, last, viewportWidthPx)
         }
             .distinctUntilChanged()
-            .collect { (first, last, viewportWidthPx) ->
-                if (last <= 0 || items.isEmpty()) return@collect
+            .collectLatest { (first, last, viewportWidthPx) ->
+                if (last <= 0 || items.isEmpty()) return@collectLatest
 
                 // 1行あたりのアイテム幅（コンテンツ左右余白＋カード内余白を考慮）
                 val sPx = with(prefetchDensity) { sDp.toPx() }
@@ -200,32 +226,99 @@ fun MainCatalogScreen(
                 val cellWidthPx = ((contentWidthPx / spanCount) - (xsPx * 2)).coerceAtLeast(64f)
                 val cellHeightPx = (cellWidthPx * 4f / 3f)
 
-                // 先読み行数は画面内の行数の約4倍（4画面分）
+                // 先読み行数は画面内の行数の約2倍（2画面分）
                 val visibleCount = (last - first + 1).coerceAtLeast(spanCount)
                 val rowsVisible = (visibleCount + spanCount - 1) / spanCount
-                val prefetchRows = (rowsVisible * 4).coerceAtLeast(2)
+                val prefetchRows = (rowsVisible * 2).coerceAtLeast(1)
                 val prefetchAhead = (prefetchRows * spanCount)
 
                 val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
                 val start = first.coerceAtLeast(0)
 
-                val urls = items.subList(start, end + 1)
-                    .mapNotNull { it.fullImageUrl ?: it.previewUrl }
+                // 1) 先にプレビューをプリフェッチ（画面に入った瞬間に確実に出す）
+                val previewTargets = items.subList(start, end + 1)
+                    .map { it.detailUrl to it.previewUrl }
 
-                // 過度な同時リクエストを避けつつ並列プリフェッチ
-                urls.chunked(6).forEach { batch ->
-                    batch.forEach { url ->
+                previewTargets.chunked(4).forEach { batch ->
+                    batch.forEach { (referer, url) ->
                         val req = ImageRequest.Builder(context)
                             .data(url)
                             .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
-                            .precision(Precision.INEXACT)
+                            .precision(Precision.EXACT)
+                            // 優先度は未使用（互換性のため）。先にプレビューをキューへ入れる運用でカバー
+                            .httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", referer)
+                                    .add("Accept", "*/*")
+                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
+                                    .build()
+                            )
                             .build()
                         context.imageLoader.enqueue(req)
                     }
-                    delay(40)
+                    delay(5)
+                }
+
+                // 2) 未検証フルは控えめに裏取り（LOW優先度）
+                val prefetchTargets = items.subList(start, end + 1)
+                    .mapNotNull { item ->
+                        // プレビュー不可かつフル未確定ならプリフェッチしない
+                        val full = item.fullImageUrl
+                        val preferPreview = item.preferPreviewOnly
+                        val hadFull = item.hadFullSuccess
+                        // 大容量動画はプリフェッチ対象から除外
+                        val isVideo = full?.lowercase()?.let { u ->
+                            u.endsWith(".webm") || u.endsWith(".mp4") || u.endsWith(".mkv")
+                        } ?: false
+                        when {
+                            !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full) // 未検証フルを裏取り
+                            else -> null // プレビューはプリフェッチしない/動画は除外
+                        }
+                    }
+
+                // 過度な同時リクエストを避けつつ並列プリフェッチ（同時接続数に統一）
+                val concurrency = com.valoser.futaburakari.AppPreferences.getConcurrencyLevel(context).coerceIn(1, 4)
+                prefetchTargets.chunked(concurrency).forEach { batch ->
+                    batch.forEach { (item, referer, url) ->
+                        val req = ImageRequest.Builder(context)
+                            .data(url)
+                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
+                            .precision(Precision.EXACT)
+                            // 優先度は未使用（互換性のため）。バッチ1件＋待機で実質低優先度化
+                            .httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", referer)
+                                    .add("Accept", "*/*")
+                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
+                                    .build()
+                            )
+                            .listener(
+                                onSuccess = { request, _ ->
+                                    val loaded = request.data?.toString()
+                                    if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                        onImageLoadSuccess(item, loaded)
+                                    }
+                                },
+                                onError = { request, result ->
+                                    val ex = result.throwable
+                                    if (ex is HttpException && ex.response.code == 404) {
+                                        val failed = request.data?.toString() ?: ""
+                                        if (failed.isNotEmpty()) onImageLoadHttp404(item, failed)
+                                    }
+                                }
+                            )
+                            .build()
+                        context.imageLoader.enqueue(req)
+                    }
+                    // キュー充満速度を抑制（軽く間隔を空ける）
+                    delay(50)
                 }
             }
     }
+
+    // 再読み込み直後の能動的なフル化は行わない（経路を404修正に一本化）
 
     Scaffold(
         topBar = {
@@ -308,9 +401,19 @@ fun MainCatalogScreen(
                 columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
                 contentPadding = PaddingValues(LocalSpacing.current.s)
             ) {
-                // 安定キーに `detailUrl` を使用
-                items(filtered, key = { it.detailUrl }) { item ->
-                    CatalogCard(item = item, onClick = { onItemClick(item) })
+                // 安定キーと contentType でリサイクルを効率化
+                items(
+                    filtered,
+                    key = { it.detailUrl },
+                    contentType = { "image_card" }
+                ) { item ->
+                    CatalogCard(
+                        item = item,
+                        // Stable 参照でリコンポジションを最小化
+                        onClick = remember(item.detailUrl) { { onItemClick(item) } },
+                        onImageLoadHttp404 = onImageLoadHttp404,
+                        onImageLoadSuccess = onImageLoadSuccess,
+                    )
                 }
             }
 
@@ -351,38 +454,176 @@ private fun MoreMenu(
  * カタログアイテムのカード表示。
  * 下部グラデーション上にタイトルを配置し、返信数は右下バッジとして上位レイヤーに重ねる。
  * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
+ * エラー時の挙動: プレビューは使用せず、フル画像の取得を試行。
+ * 取得に失敗（例: HTTP 4xx）した場合は簡易プレースホルダを表示し、404 は `onImageLoadHttp404` に通知して
+ * ViewModel 側で代替URLの探索・補正を試みる。
  */
 @Composable
-private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
+private fun CatalogCard(
+    item: ImageItem,
+    onClick: () -> Unit,
+    onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
+    onImageLoadSuccess: (item: ImageItem, loadedUrl: String) -> Unit,
+) {
     Card(
         modifier = Modifier
             .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs),
         onClick = onClick
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
+            // ViewModel の判定を信頼し、表示URLはモデルから決定
+            val displayUrl = when {
+                // 検証済みURLがあれば最優先（未検証フルは使用しない）
+                !item.lastVerifiedFullUrl.isNullOrBlank() -> item.lastVerifiedFullUrl
+                // プレビューを即時表示
+                !item.previewUnavailable -> item.previewUrl
+                else -> null
+            }
+
             // サムネイル（幅:高さ = 3:4）でアイテムの高さを一定に保つ
             // 実表示サイズを Coil に伝えてキャッシュ共有を確実にする
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val widthPx = with(LocalDensity.current) { maxWidth.toPx() - (LocalSpacing.current.xs.toPx() * 2) }
+                // 実表示幅そのものを使用（余白の二重減算を避ける）
+                val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
                 val heightPx = (widthPx * 4f / 3f)
-                AsyncImage(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // 長方形アスペクトでサイズを統一（幅:高さ = 3:4）
-                        .aspectRatio(3f / 4f),
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(item.fullImageUrl ?: item.previewUrl)
-                        .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
-                        .precision(Precision.INEXACT)
+                // 再挑戦経路はVMの404修正に一本化。UIからの能動的フル化要求は行わない。
+
+                if (!displayUrl.isNullOrBlank()) {
+                    SubcomposeAsyncImage(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(3f / 4f),
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(displayUrl)
+                            .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
+                            .precision(Precision.EXACT)
+                            // 画像（プレビュー⇄フル）切替時のフラッシュ感を抑える
+                            .transitionFactory(CrossfadeTransition.Factory())
+                            .httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", item.detailUrl)
+                                    .add("Accept", "*/*")
+                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
+                                    .build()
+                            )
+                            .listener(
+                                onSuccess = { request, _ ->
+                                    val loaded = request.data?.toString()
+                                    if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                        onImageLoadSuccess(item, loaded)
+                                    }
+                                },
+                                onError = { request, result ->
+                                    val ex = result.throwable
+                                    if (ex is HttpException && ex.response.code == 404) {
+                                        val failed = request.data?.toString() ?: ""
+                                        if (failed.isNotEmpty()) onImageLoadHttp404(item, failed)
+                                    }
+                                }
+                            )
                         .build(),
-                    contentDescription = item.title
-                )
+                        imageLoader = LocalContext.current.imageLoader,
+                        contentDescription = item.title,
+                        loading = {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(3f / 4f)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.align(Alignment.Center)
+                                )
+                            }
+                        },
+                        error = {
+                            // フル画像の読み込みエラー時は、可能ならプレビュー画像を表示する
+                            if (displayUrl == item.fullImageUrl && !item.previewUnavailable) {
+                                SubcomposeAsyncImage(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(3f / 4f),
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(item.previewUrl)
+                                        .size(Dimension.Pixels(widthPx.toInt()), Dimension.Pixels(heightPx.toInt()))
+                                        .precision(Precision.EXACT)
+                                        // フォールバック時もクロスフェードで切替を穏やかに
+                                        .transitionFactory(CrossfadeTransition.Factory())
+                                        .httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", item.detailUrl)
+                                                .add("Accept", "*/*")
+                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
+                                                .build()
+                                        )
+                                        .build(),
+                                    imageLoader = LocalContext.current.imageLoader,
+                                    contentDescription = item.title,
+                                    loading = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(3f / 4f)
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.align(Alignment.Center)
+                                            )
+                                        }
+                                    },
+                                    error = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(3f / 4f)
+                                        ) {
+                                            Text(
+                                                text = "画像を表示できません",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.align(Alignment.Center)
+                                            )
+                                        }
+                                    }
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(3f / 4f)
+                                ) {
+                                    Text(
+                                        text = "画像を表示できません",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.align(Alignment.Center)
+                                    )
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    val giveUp = item.preferPreviewOnly || item.previewUnavailable
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(3f / 4f)
+                    ) {
+                        if (!giveUp) {
+                            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                        } else {
+                            Text(
+                                text = "画像を表示できません",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        }
+                    }
+                }
             }
 
-            // 動画の場合は中央に再生アイコンを重ねる
-            val isVideo = (item.fullImageUrl ?: item.previewUrl).let { url ->
+            // 動画の場合は中央に再生アイコンを重ねる（表示URL基準）
+            val isVideo = displayUrl?.let { url ->
                 url.lowercase().endsWith(".webm") || url.lowercase().endsWith(".mp4") || url.lowercase().endsWith(".mkv")
-            }
+            } ?: false
             if (isVideo) {
                 Surface(
                     modifier = Modifier
@@ -398,6 +639,8 @@ private fun CatalogCard(item: ImageItem, onClick: () -> Unit) {
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
+
+            // 注記は不要（画像が表示されればOKのためUI反映しない）
 
             // タイトル用のオーバーレイ（固定高さでレイアウトを安定化）
             Box(

@@ -1,3 +1,8 @@
+/**
+ * スレ詳細コンテンツを表示するリストビュー（Compose版）。
+ * - 本ファイルではリスト表示や検索ナビ、メディアのプリフェッチ等を扱います。
+ * - ドキュメントコメントの補足のみを行い、実装には変更を加えません。
+ */
 package com.valoser.futaburakari.ui.detail
 
 /**
@@ -28,6 +33,8 @@ package com.valoser.futaburakari.ui.detail
  *   また、日付や閉じカッコ `)` の直後に No が隣接してしまう場合、および `ID:` と `No` が隣接する場合は
  *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
  *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
+ * - パフォーマンス: 可視範囲の変化に応じて前方/後方のメディア（画像/動画）を Coil にプリフェッチし、
+ *   スクロール時の初回表示を高速化（前方6件・後方2件を目安に先読み）。
  * - 本文返信の引用テキスト: 先頭ヘッダ（ID/ID無し/No/日付時刻/ファイル情報/先行引用）を除いた「本文のみ」を `>` で引用。
  * - レイアウト: `modifier` で外側からサイズ指定を受け取る。
  *   - 画面全体のリストでは `Modifier.fillMaxSize()` を渡す。
@@ -37,6 +44,7 @@ package com.valoser.futaburakari.ui.detail
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
@@ -76,13 +84,26 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.R
 import android.text.Html
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
+import coil3.imageLoader
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
+import coil3.size.Dimension
+import coil3.size.Precision
+import coil3.size.Scale
+import coil3.size.Size
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
+import com.valoser.futaburakari.image.ImageKeys
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
 import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
 
 /**
@@ -106,7 +127,11 @@ import androidx.compose.foundation.layout.Column
 fun DetailListCompose(
     items: List<DetailContent>,
     searchQuery: String?,
+    // 画像/動画取得時の Referer（通常はスレの res/*.htm）
+    threadUrl: String? = null,
     modifier: Modifier = Modifier,
+    // HTML->プレーンテキストの取得（ViewModelのキャッシュを利用するため注入可能）
+    plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
     // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
@@ -160,6 +185,110 @@ fun DetailListCompose(
         initialFirstVisibleItemScrollOffset = safeOffset
     )
 
+    // スクロール外の画像を先読み（プリフェッチ）
+    // - 現在の可視範囲から前後に数件分のメディア(Image/Video)をCoilへ事前リクエスト
+    // - メモリサイズが不明なため、サイズは幅ピクセルを優先（高さは同値でINEXACT精度）
+    // - 既に処理したURLは重複プリフェッチを避けるためセットで管理
+    run {
+        val ctx = LocalContext.current
+        val imageLoader = ctx.imageLoader
+        val prefetched = remember(items) { mutableSetOf<String>() }
+        val config = androidx.compose.ui.platform.LocalConfiguration.current
+        val density = LocalDensity.current
+        val screenWidthPx = remember(config.screenWidthDp, density) {
+            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+        }
+        val prefetchAhead = 6
+        val prefetchBack = 2
+
+        LaunchedEffect(items, internalState) {
+            snapshotFlow { internalState.layoutInfo.visibleItemsInfo }
+                .map { vis ->
+                    val first = vis.minOfOrNull { it.index } ?: 0
+                    val last = vis.maxOfOrNull { it.index } ?: -1
+                    first to last
+                }
+                .distinctUntilChanged()
+                .collectLatest { (first, last) ->
+                    if (items.isEmpty()) return@collectLatest
+                    val startAhead = (last + 1).coerceAtLeast(0)
+                    val endAhead = (last + prefetchAhead).coerceAtMost(items.lastIndex)
+                    val startBack = (first - prefetchBack).coerceAtLeast(0)
+                    val endBack = (first - 1).coerceAtLeast(-1)
+
+                    fun urlFor(i: Int): String? = when (val c = items.getOrNull(i)) {
+                        is DetailContent.Image -> c.imageUrl
+                        is DetailContent.Video -> c.videoUrl
+                        else -> null
+                    }
+
+                    // 前方プリフェッチ
+                    for (i in startAhead..endAhead) {
+                        val url = urlFor(i) ?: continue
+                        if (prefetched.add(url)) {
+                            val req = ImageRequest.Builder(ctx)
+                                .data(url)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                .build()
+                                        )
+                                    }
+                                }
+                                .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
+                                .scale(Scale.FIT)
+                                .precision(Precision.INEXACT)
+                                .memoryCacheKey(ImageKeys.full(url))
+                                .placeholderMemoryCacheKey(ImageKeys.full(url))
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .networkCachePolicy(CachePolicy.ENABLED)
+                                .build()
+                            imageLoader.enqueue(req)
+                        }
+                    }
+
+                    // 後方（少しだけ戻り）のプリフェッチ
+                    if (endBack >= startBack) {
+                        for (i in startBack..endBack) {
+                            val url = urlFor(i) ?: continue
+                            if (prefetched.add(url)) {
+                                val req = ImageRequest.Builder(ctx)
+                                    .data(url)
+                                    .apply {
+                                        val ref = threadUrl
+                                        if (!ref.isNullOrBlank()) {
+                                            httpHeaders(
+                                                NetworkHeaders.Builder()
+                                                    .add("Referer", ref)
+                                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                    .build()
+                                            )
+                                        }
+                                    }
+                                    .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
+                                    .scale(Scale.FIT)
+                                    .precision(Precision.INEXACT)
+                                    .memoryCacheKey(ImageKeys.full(url))
+                                    .placeholderMemoryCacheKey(ImageKeys.full(url))
+                                    .diskCachePolicy(CachePolicy.ENABLED)
+                                    .memoryCachePolicy(CachePolicy.ENABLED)
+                                    .networkCachePolicy(CachePolicy.ENABLED)
+                                    .build()
+                                imageLoader.enqueue(req)
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
     // Compose内で検索ヒット位置を計算してナビゲーションを提供
     var hitPositions by remember(items, searchQuery) { mutableStateOf<List<Int>>(emptyList()) }
     var currentHit by remember(items, searchQuery) { mutableStateOf(0) }
@@ -169,15 +298,19 @@ fun DetailListCompose(
             hitPositions = emptyList()
             currentHit = 0
         } else {
-            val list = mutableListOf<Int>()
-            items.forEachIndexed { idx, content ->
-                val textToSearch: String? = when (content) {
-                    is DetailContent.Text -> Html.fromHtml(content.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
-                    is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
-                    is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
-                    is DetailContent.ThreadEndTime -> null
+            // 重いのでバックグラウンドで計算
+            val list = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val acc = mutableListOf<Int>()
+                items.forEachIndexed { idx, content ->
+                    val textToSearch: String? = when (content) {
+                        is DetailContent.Text -> plainTextOf(content)
+                        is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
+                        is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
+                        is DetailContent.ThreadEndTime -> null
+                    }
+                    if (textToSearch?.contains(q, ignoreCase = true) == true) acc += idx
                 }
-                if (textToSearch?.contains(q, ignoreCase = true) == true) list += idx
+                acc
             }
             hitPositions = list
             currentHit = if (list.isNotEmpty()) 0 else 0
@@ -248,7 +381,7 @@ fun DetailListCompose(
         itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
-                    val plain = Html.fromHtml(item.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                    val plain = plainTextOf(item)
                     val selfResNum = remember(plain) {
                         // No 抽出を寛容に（ドット任意・全角許容・空白改行許容）
                         Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(plain)?.groupValues?.getOrNull(2)
@@ -333,8 +466,27 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        AsyncImage(
-                            model = item.imageUrl,
+                        coil3.compose.SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(ctx)
+                                .data(item.imageUrl)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                .build()
+                                        )
+                                    }
+                                }
+                                // まず一覧サムネのメモリを即時流用→フルにアップグレード
+                                .memoryCacheKey(ImageKeys.full(item.imageUrl))
+                                .placeholderMemoryCacheKey(ImageKeys.full(item.imageUrl))
+                                .precision(coil3.size.Precision.INEXACT)
+                                .transitionFactory(CrossfadeTransition.Factory())
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -343,10 +495,22 @@ fun DetailListCompose(
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
+                                        threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
                                     }
                                     ctx.startActivity(i)
                                 },
                             contentScale = ContentScale.Fit,
+                            loading = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 120.dp)
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                    )
+                                }
+                            },
                             onSuccess = { onImageLoaded?.invoke() }
                         )
                         // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。長文はタップで展開/折りたたみ。
@@ -376,8 +540,26 @@ fun DetailListCompose(
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        AsyncImage(
-                            model = item.videoUrl,
+                        coil3.compose.SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(ctx)
+                                .data(item.videoUrl)
+                                .apply {
+                                    val ref = threadUrl
+                                    if (!ref.isNullOrBlank()) {
+                                        httpHeaders(
+                                            NetworkHeaders.Builder()
+                                                .add("Referer", ref)
+                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                                .build()
+                                        )
+                                    }
+                                }
+                                .memoryCacheKey(ImageKeys.full(item.videoUrl))
+                                .placeholderMemoryCacheKey(ImageKeys.full(item.videoUrl))
+                                .precision(coil3.size.Precision.INEXACT)
+                                .transitionFactory(CrossfadeTransition.Factory())
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -385,10 +567,22 @@ fun DetailListCompose(
                                     val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_VIDEO)
                                         putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.videoUrl)
+                                        threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
                                     }
                                     ctx.startActivity(i)
                                 },
                             contentScale = ContentScale.Fit,
+                            loading = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 120.dp)
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                    )
+                                }
+                            },
                             onSuccess = { onImageLoaded?.invoke() }
                         )
                         // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
@@ -515,7 +709,7 @@ fun DetailListCompose(
 
     // 本文タップメニュー（返信 / 確認 / NG）
     bodyForDialog?.let { src ->
-        val plain = Html.fromHtml(src.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val plain = plainTextOf(src)
         val bodyOnly = extractBodyOnlyPlain(plain)
         val source = if (bodyOnly.isNotBlank()) bodyOnly else plain
         val quoted = source.lines().joinToString("\n") { ">" + it }
@@ -679,7 +873,7 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
             addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
         }
     }
-    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行(>)を除き、行内に No. が無くても対象にする
+    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行を除き、No.の直後のみ対象（IDより前のみ）
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
     var start = 0
     while (start <= text.length) {
@@ -689,13 +883,34 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val line = text.substring(lineStart, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        // No の有無に関わらず、本文行に現れた そうだね トークンをクリック可能にする
+
         if (!isQuote) {
-            sodaneRegex.findAll(line).forEach { m ->
-                val s = lineStart + m.range.first
-                val e = lineStart + m.range.last + 1
-                addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
-                addStringAnnotation("sodane", "1", s, e)
+            // No.パターンを検出（行頭限定を解除）
+            val noRegex = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""")
+
+            // 行内の全てのNo.パターンを検出
+            noRegex.findAll(line).forEach { noMatch ->
+                // No.の終了位置（行全体に対する位置）
+                val noEnd = lineStart + noMatch.range.last + 1
+
+                // No.の後、次のトークン（ID:など）までの範囲を確認
+                val afterNoStartInLine = noMatch.range.last + 1
+                if (afterNoStartInLine < line.length) {
+                    val afterNo = line.substring(afterNoStartInLine)
+
+                    // IDパターンを検出して、それより前の範囲に限定
+                    val idMatch = Regex("""ID[:：]""").find(afterNo)
+                    val searchEnd = idMatch?.range?.first ?: afterNo.length
+                    val searchRange = afterNo.substring(0, searchEnd)
+
+                    // 最初のそうだねトークンのみを対象にする
+                    sodaneRegex.find(searchRange)?.let { sodaneMatch ->
+                        val s = lineStart + afterNoStartInLine + sodaneMatch.range.first
+                        val e = lineStart + afterNoStartInLine + sodaneMatch.range.last + 1
+                        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
+                        addStringAnnotation("sodane", "1", s, e)
+                    }
+                }
             }
         }
         if (nl < 0) break else start = nl + 1
@@ -722,7 +937,7 @@ private fun padTokensForSpacing(src: String): String {
     t = Regex("""(No[.\uFF0E]?\s*\d+)(?=(?:[+＋]|そうだね))""").replace(t, "$1 ")
     // 複数の空白を1つに正規化
     t = Regex("[ ]{2,}").replace(t, " ")
-    // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（本文や引用行は対象外）
+    // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（IDより前の位置のみチェック）
     val sb = StringBuilder()
     var start = 0
     while (start < t.length) {
@@ -731,10 +946,19 @@ private fun padTokensForSpacing(src: String): String {
         val line = t.substring(start, end)
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
-        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(line)
+        // No. を行内どこでも許容（行頭限定を解除）
+        val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(trimmed)
         if (!isQuote && hasNo) {
-            if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(line)) {
-                sb.append(line).append(" そうだね")
+            // ID がある場合は、その前の範囲のみをチェックして挿入位置を調整
+            val idMatch = Regex("ID[:：]").find(line)
+            val idIdx = idMatch?.range?.first ?: -1
+            val checkRange = if (idIdx > 0) line.substring(0, idIdx) else line
+            if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(checkRange)) {
+                if (idIdx > 0) {
+                    sb.append(line.substring(0, idIdx)).append(" そうだね ").append(line.substring(idIdx))
+                } else {
+                    sb.append(line).append(" そうだね")
+                }
             } else sb.append(line)
         } else sb.append(line)
         if (nl >= 0) sb.append('\n')

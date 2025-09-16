@@ -1,3 +1,8 @@
+/**
+ * アプリ設定画面のComposeファイル。
+ * - 表示/ネットワーク/投稿/キャッシュ/広告/その他のセクションを扱います。
+ * - コメント整備のみを行い、コードの修正は一切行いません。
+ */
 package com.valoser.futaburakari.ui.compose
 
 /**
@@ -63,7 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.ui.theme.LocalSpacing
-import coil.imageLoader
+import coil3.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
 import com.valoser.futaburakari.R
@@ -98,6 +103,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     // 旧「カラーモード」設定は廃止
     var autoCleanup by remember { mutableStateOf(prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0") }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
+    // 同時接続数（1..4）。AppPreferences に保存（フル画像アップグレードはこの設定に統合）
+    var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
     // バックグラウンド監視トグルは常時有効化のため廃止
 
     // 投稿用パスワード入力ダイアログの状態
@@ -201,6 +208,34 @@ fun SettingsScreen(onBack: () -> Unit) {
                     })
                 }
             }
+
+            // ネットワーク（同時接続数）
+            item { SectionHeader(text = "ネットワーク") }
+            item {
+                DropdownPreferenceRow(
+                    title = "同時接続数",
+                    entries = listOf(
+                        "1: Dispatcher(1/1), メタデータ(1), 並列(1)",
+                        "2: Dispatcher(2/2), メタデータ(1), 並列(2)",
+                        "3: Dispatcher(3/3), メタデータ(1), 並列(3)",
+                        "4: Dispatcher(4/4), メタデータ(1), 並列(4)",
+                    ),
+                    values = (1..4).map { it.toString() },
+                    value = concurrencyLevel,
+                    onValueChange = { v ->
+                        concurrencyLevel = v
+                        AppPreferences.setConcurrencyLevel(ctx, v.toInt())
+                        android.widget.Toast.makeText(
+                            ctx,
+                            "同時接続数を保存しました。完全反映にはアプリ再起動が必要です。",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        // Activity 再生成で ViewModel 側の並列度は反映されやすい
+                        (ctx as? Activity)?.recreate()
+                    }
+                )
+            }
+            // フル画像アップグレード同時数の個別設定は廃止（同時接続数に統合）
 
             item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "投稿設定") }

@@ -10,9 +10,12 @@ import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.concurrent.TimeUnit
+import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.IOException
+import java.io.OutputStream
 
 /**
  * Futaba系サイト向けのネットワーク操作をまとめたクライアント。
@@ -40,6 +43,41 @@ class NetworkClient(
         return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
     }
 
+    // ストリーミングで任意URLの内容を出力先へコピー（成功時 true）。
+    // 大きなファイルでもメモリを逼迫しない。
+    suspend fun downloadTo(
+        url: String,
+        output: OutputStream,
+        referer: String? = null,
+        callTimeoutMs: Long? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
+            .build()
+        return@withContext try {
+            val call = httpClient.newCall(req).apply {
+                if (callTimeoutMs != null) {
+                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                }
+            }
+            call.executeAsync().use { resp ->
+                if (!resp.isSuccessful) return@use false
+                val body = resp.body ?: return@use false
+                body.byteStream().use { input ->
+                    input.copyTo(output)
+                }
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     // ===== HTML GET（SJIS/UTF-8 自動判定） =====
     // HTMLを取得し、レスポンスのContent-Type等からエンコードを推定してJsoup Documentに変換
     suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
@@ -50,7 +88,7 @@ class NetworkClient(
             .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .build()
 
-        httpClient.newCall(req).execute().use { resp ->
+        httpClient.newCall(req).executeAsync().use { resp ->
             if (!resp.isSuccessful) {
                 throw IOException("HTTPエラー: ${resp.code} ${resp.message}")
             }
@@ -65,9 +103,11 @@ class NetworkClient(
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .build()
         return@withContext try {
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 resp.body?.bytes()
             }
@@ -82,9 +122,11 @@ class NetworkClient(
             .url(url)
             .head()
             .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
             .build()
         return@withContext try {
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 resp.header("Content-Length")?.toLongOrNull()
             }
@@ -95,7 +137,13 @@ class NetworkClient(
 
     // Range GET で部分取得（サーバが200を返した場合は手動でスライス）。
     // 最大2MBまで読み取り、必要十分な先頭範囲の取得に利用。
-    suspend fun fetchRange(url: String, start: Long, length: Long): ByteArray? = withContext(Dispatchers.IO) {
+    suspend fun fetchRange(
+        url: String,
+        start: Long,
+        length: Long,
+        referer: String? = null,
+        callTimeoutMs: Long? = null,
+    ): ByteArray? = withContext(Dispatchers.IO) {
         val end = if (length > 0) start + length - 1 else null
         val rangeValue = if (end != null) "bytes=$start-$end" else "bytes=$start-"
         val req = Request.Builder()
@@ -103,9 +151,20 @@ class NetworkClient(
             .get()
             .header("Range", rangeValue)
             .header("User-Agent", Ua.STRING)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
-            httpClient.newCall(req).execute().use { resp ->
+            val call = httpClient.newCall(req).apply {
+                if (callTimeoutMs != null) {
+                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                }
+            }
+            call.executeAsync().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@use null
+                }
                 val code = resp.code
                 val body = resp.body ?: return@use null
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
@@ -143,7 +202,7 @@ class NetworkClient(
         val origin = "${refUrl.scheme}://${refUrl.host}"
         val sdUrl = "$origin/sd.php?$board.$resNum"
 
-        // ★ ここを“必ず戻り値を返す式”に修正
+            // use ブロックの評価値（件数等の応答数値）をそのまま返す設計に統一
         suspend fun once(): Int? {
             val jarCookies: List<Cookie> = runCatching { httpClient.cookieJar.loadForRequest(sdUrl.toHttpUrl()) }
                 .getOrElse { emptyList() }
@@ -168,7 +227,7 @@ class NetworkClient(
                 .build()
 
             // use の戻り値（件数等の応答数値）をそのまま返す
-            return httpClient.newCall(req).execute().use { resp ->
+            return httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val raw = resp.body?.bytes() ?: return@use null
                 val text = EncodingUtils.decode(raw, resp.header("Content-Type")).trim()
@@ -201,7 +260,7 @@ class NetworkClient(
                 .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                 .build()
 
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 Log.d("NetworkClient", "applySettings: HTTP ${resp.code}")
             }
         }
@@ -242,7 +301,7 @@ class NetworkClient(
                 .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
                 .build()
 
-            return@withContext httpClient.newCall(req).execute().use { resp ->
+            return@withContext httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) {
                     Log.w("NetworkClient", "deletePost: HTTP ${resp.code}")
                     return@use false
@@ -304,7 +363,7 @@ class NetworkClient(
                 .apply { if (!mergedCookie.isNullOrBlank()) header("Cookie", mergedCookie) }
                 .build()
 
-            return@withContext httpClient.newCall(req).execute().use { resp ->
+            return@withContext httpClient.newCall(req).executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use false
                 val body = resp.body?.bytes() ?: return@use false
                 val okBySize = body.size == 2

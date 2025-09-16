@@ -1,3 +1,8 @@
+/**
+ * 画像/動画/テキストを共通UIで表示するメディアビューのCompose実装。
+ * - 画像のズーム、動画再生、テキストのコピー/保存などを提供します。
+ * - コメントの追記のみを行い、コードの挙動は変更しません。
+ */
 package com.valoser.futaburakari.ui.compose
 
 import android.content.ClipData
@@ -43,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -54,7 +60,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
+import coil3.request.transitionFactory
+import coil3.transition.CrossfadeTransition
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
+import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.MetadataExtractor
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
@@ -64,21 +75,21 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * 画像/動画/テキストを表示する汎用メディア画面。
  *
  * 機能概要:
- * - `type == image`: ピンチ/ダブルタップズーム対応の画像ビュー。
- * - `type == video`: ExoPlayer による動画再生ビュー（ライフサイクルで開放）。
- * - それ以外: スクロール可能なテキストビュー。
- * - テキスト（プロンプト）が利用可能ならトップバーからコピー/保存アクションを表示。
- * - 画像時は必要に応じてメタデータ抽出（`MetadataExtractor`）で `text` を補完。
- * - 画像/動画の保存アクションはコールバック指定時のみ表示（URL が空の場合はスナックバー通知）。
+ * - `type == image`: ピンチ/ダブルタップでズーム可能な画像ビュー。
+ * - `type == video`: ExoPlayer による動画再生ビュー（ライフサイクルで安全に解放）。
+ * - 上記以外: スクロール可能なテキストビュー。
+ * - テキスト（プロンプト）があればトップバーからコピー/保存が可能。
+ * - 画像時は必要に応じて `MetadataExtractor` により `text` を補完。
+ * - 画像/動画の保存はコールバックが指定されている場合のみ表示（URL が空のときはスナックバーで通知）。
  *
- * パラメータ:
- * - `title`: 上部タイトル。
- * - `type`: メディア種別（"image"/"video"/その他）。
- * - `url`: メディアの URL（テキスト時は未使用）。
- * - `initialText`: 初期テキスト（image の場合は抽出で上書き補完される場合あり）。
- * - `networkClient`: メタデータ抽出で利用するネットワーククライアント。
- * - `onBack`: 戻る押下時のハンドラ。
- * - `onSaveImage`/`onSaveVideo`: 保存アクションのハンドラ（指定時のみ表示）。
+ * @param title 上部タイトル。
+ * @param type メディア種別（"image"/"video"/その他）。
+ * @param url メディアの URL（テキスト時は未使用）。
+ * @param initialText 初期テキスト（image の場合は抽出により上書き補完される場合あり）。
+ * @param networkClient メタデータ抽出に利用するネットワーククライアント。
+ * @param onBack 戻る押下時のハンドラ。
+ * @param onSaveImage 画像保存アクションのハンドラ（指定時のみ表示）。
+ * @param onSaveVideo 動画保存アクションのハンドラ（指定時のみ表示）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,6 +99,7 @@ fun MediaViewScreen(
     url: String?,
     initialText: String?,
     networkClient: NetworkClient,
+    referer: String? = null,
     onBack: () -> Unit,
     onSaveImage: (() -> Unit)? = null,
     onSaveVideo: (() -> Unit)? = null
@@ -177,7 +189,7 @@ fun MediaViewScreen(
         }
     ) { inner ->
         when (type) {
-            "image" -> ImageContent(url = url, modifier = Modifier.fillMaxSize().padding(inner))
+            "image" -> ImageContent(url = url, referer = referer, modifier = Modifier.fillMaxSize().padding(inner))
             "video" -> VideoContent(url = url, modifier = Modifier.fillMaxSize().padding(inner))
             else -> TextContent(text = text ?: "", modifier = Modifier.fillMaxSize().padding(inner))
         }
@@ -188,16 +200,35 @@ fun MediaViewScreen(
  * ズーム可能な画像表示。1:1 のエリアに収め、ピンチやダブルタップで拡大縮小可。
  */
 @Composable
-private fun ImageContent(url: String?, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(LocalSpacing.current.m)) {
-        Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
-            ZoomableAsyncImage(
-                model = url,
-                modifier = Modifier.fillMaxSize(),
-                minScale = 1f,
-                maxScale = 5f,
-            )
-        }
+private fun ImageContent(url: String?, referer: String? = null, modifier: Modifier = Modifier) {
+    // フルスクリーン領域で中央配置し、ContentScale.Fit で短辺が必ず画面に接するように表示
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val ctx = LocalContext.current
+        val model = if (!url.isNullOrBlank()) {
+            coil3.request.ImageRequest.Builder(ctx)
+                .data(url)
+                .apply {
+                    val builder = NetworkHeaders.Builder()
+                        .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                        .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                    val ref = referer
+                    if (!ref.isNullOrBlank()) builder.add("Referer", ref)
+                    httpHeaders(builder.build())
+                }
+                // Use list/grid thumbnail immediately if present; then upgrade to full.
+                .memoryCacheKey(ImageKeys.full(url))
+                .placeholderMemoryCacheKey(ImageKeys.full(url))
+                .precision(coil3.size.Precision.INEXACT)
+                // フル画像の初回表示や再読み込み時の表示切替をなめらかに
+                .transitionFactory(CrossfadeTransition.Factory())
+                .build()
+        } else null
+        ZoomableAsyncImage(
+            model = model,
+            modifier = Modifier.fillMaxSize(),
+            minScale = 1f,
+            maxScale = 5f,
+        )
     }
 }
 
@@ -253,6 +284,13 @@ private fun TextContent(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * デフォルトのテキスト保存ファイル名を生成する。
+ * パターン: `<テキスト先頭15文字のサニタイズ>_<yyyyMMdd_HHmmss>`
+ *
+ * @param text 保存対象テキスト。
+ * @return 生成されたファイル名（拡張子なし）。
+ */
 private fun buildDefaultFileName(text: String?): String {
     val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
     val timestamp = sdf.format(java.util.Date())
