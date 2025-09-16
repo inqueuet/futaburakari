@@ -43,8 +43,18 @@ class NetworkClient(
         return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
     }
 
-    // ストリーミングで任意URLの内容を出力先へコピー（成功時 true）。
-    // 大きなファイルでもメモリを逼迫しない。
+    /**
+     * 任意 URL の内容をストリーミングで `output` へコピーする。
+     *
+     * - メモリに全量を展開せずに転送するため、大きなファイルでも安全。
+     * - `callTimeoutMs` 指定時はコール単位のタイムアウトを短縮可能。
+     *
+     * @param url 取得対象の URL
+     * @param output 転送先のストリーム（呼び出し側で管理）
+     * @param referer 参照元 URL（必要な場合のみヘッダ付与）
+     * @param callTimeoutMs コール単位のタイムアウト（ミリ秒）。未指定なら既定を使用
+     * @return 成功した場合は true、失敗時は false
+     */
     suspend fun downloadTo(
         url: String,
         output: OutputStream,
@@ -78,8 +88,15 @@ class NetworkClient(
         }
     }
 
-    // ===== HTML GET（SJIS/UTF-8 自動判定） =====
-    // HTMLを取得し、レスポンスのContent-Type等からエンコードを推定してJsoup Documentに変換
+    /**
+     * HTML を取得し、レスポンスの Content-Type 等からエンコードを推定して `Jsoup Document` に変換する。
+     *
+     * - SJIS/UTF-8 の自動判定を行い、文字化けを抑制。
+     *
+     * @param url 取得対象の URL
+     * @throws IOException HTTP エラー時
+     * @return 解析済みの `Document`
+     */
     suspend fun fetchDocument(url: String): Document = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -98,7 +115,12 @@ class NetworkClient(
         }
     }
 
-    // 任意URLのバイト列を取得（失敗時はnull）
+    /**
+     * 任意 URL のバイト列を取得する。
+     *
+     * @param url 取得対象の URL
+     * @return 取得したバイト配列。失敗時は null
+     */
     suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -116,7 +138,12 @@ class NetworkClient(
         }
     }
 
-    // HEADでContent-Lengthを取得（失敗時はnull）
+    /**
+     * HEAD リクエストで `Content-Length` を取得する。
+     *
+     * @param url 対象の URL
+     * @return バイト長。取得できない場合は null
+     */
     suspend fun headContentLength(url: String): Long? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
@@ -135,8 +162,19 @@ class NetworkClient(
         }
     }
 
-    // Range GET で部分取得（サーバが200を返した場合は手動でスライス）。
-    // 最大2MBまで読み取り、必要十分な先頭範囲の取得に利用。
+    /**
+     * Range GET で指定範囲を部分取得する。
+     *
+     * - サーバが Range を無視して 200 を返す場合はクライアント側で手動スライス。
+     * - 最大 2MB まで読み取り、先頭範囲の検査などに利用。
+     *
+     * @param url 取得対象の URL
+     * @param start 開始オフセット（バイト）
+     * @param length 取得長（バイト）。負や 0 の場合は末尾まで
+     * @param referer 参照元 URL（必要な場合のみヘッダ付与）
+     * @param callTimeoutMs コール単位のタイムアウト（ミリ秒）
+     * @return 取得したバイト配列。失敗時は null
+     */
     suspend fun fetchRange(
         url: String,
         start: Long,
@@ -194,8 +232,15 @@ class NetworkClient(
         }
     }
 
-    // ===== そうだね =====
-    // レス番号(resNum)に対して「そうだね」を送信。必要に応じてRefererのページ取得後に再試行。
+    /**
+     * レス番号に対して「そうだね」を送信する。
+     *
+     * - 失敗時は Referer ページの取得後、短い遅延を置いて再試行。
+     *
+     * @param resNum 対象レス番号
+     * @param referer 操作元のスレッド URL
+     * @return サーバ応答の数値（例: 件数）。失敗時は null
+     */
     suspend fun postSodaNe(resNum: String, referer: String): Int? = withContext(Dispatchers.IO) {
         val refUrl = referer.toHttpUrl()
         val board = refUrl.pathSegments.firstOrNull() ?: return@withContext null
@@ -243,8 +288,12 @@ class NetworkClient(
         return@withContext once()
     }
 
-    // ===== カタログ設定 =====
-    // 板名URL（末尾は futaba.php までのベース）に対して catset パラメータをPOSTして適用
+    /**
+     * カタログ設定を POST で適用する。
+     *
+     * @param boardBaseUrl 板名のベース URL（末尾は `futaba.php` まで）
+     * @param settings `catset` に渡すパラメータ群
+     */
     suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
         withContext(Dispatchers.IO) {
             val settingsUrl = "${boardBaseUrl}futaba.php?mode=catset"
@@ -266,8 +315,18 @@ class NetworkClient(
         }
     }
 
-    // ===== レス削除 =====
-    // 通常の usrdel（ユーザ削除）エンドポイント。画像のみ削除フラグにも対応。
+    /**
+     * 通常の `usrdel` エンドポイントでレス削除を行う。
+     *
+     * - 画像のみ削除にも対応（`onlyImage=true`）。
+     *
+     * @param postUrl `usrdel` POST 先の URL
+     * @param referer 操作元のスレッド URL
+     * @param resNum 対象レス番号
+     * @param pwd 削除用パスワード
+     * @param onlyImage 画像のみ削除フラグ
+     * @return 成功時 true、失敗時 false
+     */
     suspend fun deletePost(
         postUrl: String,
         referer: String,
@@ -319,10 +378,18 @@ class NetworkClient(
         }
     }
 
-    // ===== del.php 経由の削除（管理用エンドポイント想定） =====
-    // 例: https://may.2chan.net/b/res/1347318913.htm を参照中 →
-    //     POST https://may.2chan.net/del.php
-    //     body: mode=post&b=b&d=1347319371&reason=110&responsemode=ajax
+    /**
+     * `del.php` 経由での削除（管理用エンドポイント想定）を行う。
+     *
+     * 例）参照中: `https://may.2chan.net/b/res/1347318913.htm`
+     * 送信先: `POST https://may.2chan.net/del.php`
+     * body: `mode=post&b=b&d=1347319371&reason=110&responsemode=ajax`
+     *
+     * @param threadUrl 参照しているスレッド URL
+     * @param targetResNum 対象レス番号
+     * @param reason 理由コード（既定: 110）
+     * @return 成功時 true、失敗時 false
+     */
     suspend fun deleteViaDelPhp(
         threadUrl: String,
         targetResNum: String,

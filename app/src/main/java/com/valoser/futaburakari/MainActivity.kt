@@ -72,7 +72,7 @@ import java.net.URL
 class MainActivity : BaseActivity() {
     private val viewModel: MainViewModel by viewModels()
     private var currentSelectedUrl: String? = null
-    // Compose検索クエリ状態
+    // 検索クエリ（Compose 側で双方向バインド）
     private val queryState = mutableStateOf("")
     private var lastIsLoading: Boolean = false
     private var autoIndicatorShown: Boolean = false
@@ -269,6 +269,10 @@ class MainActivity : BaseActivity() {
     // 何もしない: 旧実装との互換のために残置（Compose 移行で不要）
     private fun configureSwipeRefreshIndicatorPosition() { }
     // RecyclerView時代の処理はComposeへ移行済み
+    /**
+     * 自動更新（旧RecyclerView由来の仕組み）を明示的に停止する。
+     * Compose 版ではスクロール連動等は未使用のためインジケータ制御のみを行う。
+     */
     private fun cancelAutoUpdate() {
         // RecyclerViewコールバックはComposeでは不要
         autoUpdateRunnable = null
@@ -365,7 +369,10 @@ class MainActivity : BaseActivity() {
         }
     }
 
-    // 次の描画フレームを待機するサスペンド関数
+    /**
+     * 次の描画フレームのコールバックを1回待機する。
+     * 画面遷移直後のカクつきを避けるため、重い処理の前に1フレーム挟む用途に使用。
+     */
     private suspend fun awaitNextFrame() = suspendCancellableCoroutine { cont ->
         val choreographer = Choreographer.getInstance()
         val callback = Choreographer.FrameCallback { if (!cont.isCompleted) cont.resume(Unit) }
@@ -373,7 +380,10 @@ class MainActivity : BaseActivity() {
         cont.invokeOnCancellation { choreographer.removeFrameCallback(callback) }
     }
 
-    // 板のカタログ設定(catset)を適用し、適用済み情報を永続化
+    /**
+     * 板のカタログ設定(catset)を適用し、適用済み情報を永続化する。
+     * TTL 内に適用済みであれば再適用をスキップする。
+     */
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
         val boardKey = boardBaseUrl.trimEnd('/')
         if (isCatsetAppliedRecent(boardKey)) return
@@ -386,7 +396,10 @@ class MainActivity : BaseActivity() {
         persistAppliedBoards()
     }
 
-    // 起動時に、適用済みボード情報を読み込む（TTL内のもののみ有効）
+    /**
+     * 起動時に、適用済みボード情報を読み込む。
+     * TTL を過ぎたものは破棄し、有効なもののみを復元する。
+     */
     private fun restoreAppliedBoards() {
         val sp = getSharedPreferences(catsetPrefsName, MODE_PRIVATE)
         val legacy = sp.getStringSet(catsetPrefsKey, null)
@@ -413,7 +426,9 @@ class MainActivity : BaseActivity() {
         }
     }
 
-    // 適用済みボード情報を永続化
+    /**
+     * 適用済みボード情報（ボード集合とタイムスタンプ）を SharedPreferences へ保存する。
+     */
     private fun persistAppliedBoards() {
         val sp = getSharedPreferences(catsetPrefsName, MODE_PRIVATE)
         sp.edit().putStringSet(catsetPrefsKey, catsetAppliedBoards).apply()
@@ -421,12 +436,17 @@ class MainActivity : BaseActivity() {
         sp.edit().putString(catsetPrefsTsKey, json).apply()
     }
 
-    // TTL内に catset が適用済みかどうか
+    /**
+     * 指定ボードに対して catset が TTL 内に適用済みか判定する。
+     */
     private fun isCatsetAppliedRecent(boardKey: String): Boolean {
         val ts = catsetAppliedTimestamps[boardKey] ?: return false
         return (System.currentTimeMillis() - ts) < CATSET_TTL_MS
     }
 
+    /**
+     * ViewModel の公開状態を監視して UI の状態（ローディング/一覧/エラー）に反映する。
+     */
     private fun observeViewModel() {
         viewModel.isLoading.observe(this) { isLoading ->
             lastIsLoading = isLoading
@@ -447,10 +467,17 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    /**
+     * 自動更新インジケータの表示状態を更新。
+     * 現在は視覚的な表示は行わず、状態のみ保持する。
+     */
     private fun setAutoUpdateIndicator(show: Boolean) {
         autoIndicatorShown = show
     }
 
+    /**
+     * 現在選択中のブックマーク名を取得する（未選択時は既定文言）。
+     */
     private fun getCurrentBookmarkName(): String {
         val bookmarks = BookmarkManager.getBookmarks(this)
         return bookmarks.find { it.url == currentSelectedUrl }?.name ?: "ブックマーク未選択"

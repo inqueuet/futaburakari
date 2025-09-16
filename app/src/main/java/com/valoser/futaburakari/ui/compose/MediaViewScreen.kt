@@ -87,6 +87,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * @param url メディアの URL（テキスト時は未使用）。
  * @param initialText 初期テキスト（image の場合は抽出により上書き補完される場合あり）。
  * @param networkClient メタデータ抽出に利用するネットワーククライアント。
+ * @param referer 画像取得時に付与する Referer ヘッダ（必要な場合）。
  * @param onBack 戻る押下時のハンドラ。
  * @param onSaveImage 画像保存アクションのハンドラ（指定時のみ表示）。
  * @param onSaveVideo 動画保存アクションのハンドラ（指定時のみ表示）。

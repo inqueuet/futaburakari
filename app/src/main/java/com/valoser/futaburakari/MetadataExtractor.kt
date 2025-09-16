@@ -115,7 +115,14 @@ object MetadataExtractor {
     // ====== Public API ======
     /**
      * URI/URL からプロンプトらしき文字列を抽出して返す。見つからなければ null。
-     * 種別に応じて、先頭範囲のみ取得やチャンク走査を行う。
+     *
+     * - ファイル種別に応じて、先頭範囲のみ取得やチャンク走査を行う。
+     * - HTTP(S) の取得には `NetworkClient` を用い、ヘッダ/Range/HEAD を適切に利用。
+     *
+     * @param context 設定やリソース取得に使用する `Context`
+     * @param uriOrUrl `content://`/`file://`/`http(s)://` のいずれか
+     * @param networkClient ネットワークアクセス用クライアント
+     * @return 抽出されたプロンプト文字列。見つからない場合は null
      */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
@@ -166,7 +173,14 @@ object MetadataExtractor {
     // ====== 同時接続数制限付きHTTPメソッド ======
 
     /**
-     * 同時接続数を制限してRange GETを実行
+     * 同時接続数を制限して Range GET を実行する。
+     *
+     * @param context 同時接続制御のための設定参照用 `Context`
+     * @param urlStr 対象 URL
+     * @param start 開始オフセット
+     * @param length 取得長
+     * @param networkClient 取得に使用するクライアント
+     * @return 取得したバイト配列。失敗時は null
      */
     private suspend fun httpGetRangeWithLimit(context: Context, urlStr: String, start: Long, length: Long, networkClient: NetworkClient): ByteArray? {
         ensureSemaphore(context)
@@ -182,7 +196,12 @@ object MetadataExtractor {
     }
 
     /**
-     * 同時接続数を制限してHEADリクエストを実行
+     * 同時接続数を制限して HEAD リクエストを実行する。
+     *
+     * @param context 同時接続制御のための設定参照用 `Context`
+     * @param urlStr 対象 URL
+     * @param networkClient 取得に使用するクライアント
+     * @return `HeadInfo`。失敗時は null
      */
     private suspend fun httpHeadWithLimit(context: Context, urlStr: String, networkClient: NetworkClient): HeadInfo? {
         ensureSemaphore(context)
@@ -203,7 +222,17 @@ object MetadataExtractor {
     }
 
     // ====== PNG: 同時接続数制限付きストリーミング処理 ======
-    // 初回は固定サイズを取得し、必要に応じて窓を広げて tEXt/zTXt/iTXt や XMP を検出する。
+    /**
+     * PNG をストリーミングで走査し、tEXt/zTXt/iTXt や XMP からプロンプトを抽出する。
+     *
+     * - 初回は固定サイズを取得し、必要に応じて窓を広げる。
+     * - IEND 検出またはグローバル上限到達で打ち切る。
+     *
+     * @param context 同時接続制御のための設定参照用 `Context`
+     * @param fileUrl PNG 画像の URL
+     * @param networkClient 取得に使用するクライアント
+     * @return 抽出したプロンプト。見つからない場合は null
+     */
     private suspend fun extractPngPromptStreamingWithLimit(context: Context, fileUrl: String, networkClient: NetworkClient): String? {
         var windowSize = PNG_WINDOW_BYTES
         var totalFetched = 0
@@ -237,14 +266,10 @@ object MetadataExtractor {
 
     // ====== 接続管理用のユーティリティ関数 ======
 
-    /**
-     * 現在のアクティブ接続数を取得
-     */
+    /** 現在のアクティブ接続数を取得する。 */
     fun getActiveConnectionCount(): Int = activeConnectionCount.get()
 
-    /**
-     * 最大同時接続数を取得
-     */
+    /** 最大同時接続数を取得する。 */
     fun getMaxConcurrentConnections(): Int = currentPermits
 
     // ====== 既存のHTTPヘルパー関数（変更なし） ======

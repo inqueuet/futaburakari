@@ -4,76 +4,62 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Centralized accessors for app preferences backed by `SharedPreferences`.
- * Stores and retrieves `pthc`, `pwd`, and the GUID append toggle.
+ * アプリ共通の設定値にアクセスするユーティリティ（`SharedPreferences` バックエンド）。
+ * `pthc`・`pwd`・GUID 付与フラグ・並列度設定などを保存/取得する。
  */
 object AppPreferences {
-    /** Name of the SharedPreferences file. */
+    /** `SharedPreferences` のファイル名。 */
     private const val PREFS_NAME = "futaba_prefs"
-    /** Key for the `pthc` value. */
+    /** `pthc` のキー。 */
     private const val KEY_PTHC = "pthc"
-    /** Key for the `pwd` value. */
+    /** `pwd` のキー。 */
     private const val KEY_PWD = "pwd"
-    /** Key for the flag that appends a GUID. */
+    /** GUID を付与するかどうかのフラグキー。 */
     private const val KEY_APPEND_GUID = "append_guid_on"
-    /** Key for the global concurrency level (1..4). */
+    /** 全体の並列度（1..4）のキー。 */
     private const val KEY_CONCURRENCY_LEVEL = "concurrency_level"
-    /** Key for the full image upgrade concurrency (legacy; now unified with global). */
+    /** フル画像アップグレード用の並列度（レガシー。現状は全体と統合）のキー。 */
     private const val KEY_FULL_UPGRADE_CONCURRENCY = "full_upgrade_concurrency"
 
-    /**
-     * Returns the app's private SharedPreferences instance.
-     */
+    /** アプリ専用の `SharedPreferences` を返す。 */
     private fun getPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
-    /**
-     * Retrieves the stored `pthc` value, or `null` if not set.
-     */
+    /** 保存された `pthc` を取得（未設定なら `null`）。 */
     fun getPthc(context: Context): String? {
         return getPreferences(context).getString(KEY_PTHC, null)
     }
 
-    /**
-     * Persists the given `pthc` value.
-     */
+    /** `pthc` を保存。 */
     fun savePthc(context: Context, pthc: String) {
         getPreferences(context).edit().putString(KEY_PTHC, pthc).apply()
     }
 
-    /**
-     * Retrieves the stored `pwd` value, or `null` if not set.
-     */
+    /** 保存された `pwd` を取得（未設定なら `null`）。 */
     fun getPwd(context: Context): String? {
         return getPreferences(context).getString(KEY_PWD, null)
     }
 
-    /**
-     * Persists the given `pwd` value.
-     */
+    /** `pwd` を保存。 */
     fun savePwd(context: Context, pwd: String) {
         getPreferences(context).edit().putString(KEY_PWD, pwd).apply()
     }
 
-    /**
-     * Returns whether appending a GUID is enabled.
-     * Defaults to `true` when no value has been stored.
-     */
+    /** GUID を付与する設定かどうかを返す。未設定時は `true`。 */
     fun getAppendGuidOn(context: Context): Boolean {
         return getPreferences(context).getBoolean(KEY_APPEND_GUID, true)
     }
 
-    /**
-     * Enables or disables appending a GUID.
-     */
+    /** GUID の付与を有効/無効にする。 */
     fun setAppendGuidOn(context: Context, enabled: Boolean) {
         getPreferences(context).edit().putBoolean(KEY_APPEND_GUID, enabled).apply()
     }
 
     /**
-     * Gets the user-selected global concurrency level (1..4).
-     * Defaults to 2 when unset; clamped to 1..4.
+     * ユーザー選択の全体並列度（1..4）を取得。
+     * 未設定時は 2。返却時は必ず 1..4 に丸める。
+     * レガシーのフル画像アップグレード設定があれば初回に統合移行する。
      */
     fun getConcurrencyLevel(context: Context): Int {
         val prefs = getPreferences(context)
@@ -81,42 +67,33 @@ object AppPreferences {
         val raw = if (hasUnified) {
             prefs.getInt(KEY_CONCURRENCY_LEVEL, 2)
         } else {
-            // Migrate from legacy full-upgrade key if present
+            // 旧キー（フル画像アップグレードの並列度）があればそれを読み出して統合キーへ移行
             val legacy = prefs.getInt(KEY_FULL_UPGRADE_CONCURRENCY, 2)
-            // Persist migrated value to unified key for future reads
+            // 今後の読み出し用に統合キーへ保存
             prefs.edit().putInt(KEY_CONCURRENCY_LEVEL, legacy.coerceIn(1, 4)).apply()
             legacy
         }
         return raw.coerceIn(1, 4)
     }
 
-    /**
-     * Saves the global concurrency level (clamped to 1..4).
-     */
+    /** 全体並列度を保存（1..4に丸める）。 */
     fun setConcurrencyLevel(context: Context, level: Int) {
         val v = level.coerceIn(1, 4)
         getPreferences(context).edit().putInt(KEY_CONCURRENCY_LEVEL, v).apply()
     }
 
-    /**
-     * Gets the concurrency for full-size image upgrades.
-     * Unified with the global concurrency level for consistency.
-     */
+    /** フル画像アップグレードの並列度を取得（全体設定と統一）。 */
     fun getFullUpgradeConcurrency(context: Context): Int {
         return getConcurrencyLevel(context)
     }
 
-    /**
-     * Saves the full-size image upgrade concurrency.
-     * Unified to set the global concurrency level for consistency.
-     */
+    /** フル画像アップグレードの並列度を保存（全体設定へ委譲）。 */
     fun setFullUpgradeConcurrency(context: Context, level: Int) {
         setConcurrencyLevel(context, level)
     }
 
     /**
-     * Generates a new random 8-digit numeric password as a String.
-     * Note: uses non-cryptographic randomness.
+     * 8 桁のランダムな数値文字列を生成（簡易用途。暗号論的強度は持たない）。
      */
     fun generateNewPwd(): String {
         return (10000000..99999999).random().toString()

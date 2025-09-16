@@ -21,8 +21,9 @@ import kotlinx.coroutines.launch
 /**
  * 画像/動画/テキストを表示するメディアビューア。
  *
- * - `MediaViewScreen` に種類（画像/動画/テキスト）とURL/テキストを渡して表示
- * - 画像/動画は保存ボタンを提供（API 28以下は書き込み権限を事前確認）
+ * - `MediaViewScreen` に種類（画像/動画/テキスト）と URL/テキストを渡して表示
+ * - 画像/動画は保存ボタンを提供（API 28 以下は書き込み権限を事前確認）
+ * - メディア取得時の Referer 指定に対応（スレの `res/*.htm` を想定）
  */
 class MediaViewActivity : BaseActivity() {
 
@@ -35,6 +36,9 @@ class MediaViewActivity : BaseActivity() {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
     }
 
+    /**
+     * 画面起動時に受け取るパラメータ定義。
+     */
     companion object {
         // 表示種別: 画像/動画/テキスト
         const val EXTRA_TYPE = "EXTRA_TYPE"

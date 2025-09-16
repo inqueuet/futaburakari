@@ -12,7 +12,8 @@ import java.util.concurrent.TimeUnit
 import com.valoser.futaburakari.UrlNormalizer
 
 /**
- * Container for cached thread details with a timestamp for when they were saved.
+ * キャッシュしたスレ詳細と保存時刻を保持するコンテナ。
+ * timestamp はミリ秒（epoch）。
  */
 data class CachedDetails(
     val timestamp: Long,
@@ -20,10 +21,10 @@ data class CachedDetails(
 )
 
 /**
- * Manages on-disk caching for thread detail content and archived media.
- * - Caches JSON-serialized `DetailContent` lists keyed by normalized thread URL (SHA-256).
- * - Supports legacy cache keys for backward compatibility.
- * - Archives media per-thread and can reconstruct minimal details from files.
+ * スレッドの詳細内容および媒体アーカイブのオンディスクキャッシュを管理するクラス。
+ * - 正規化済みスレURL（SHA-256）をキーに `DetailContent` のリストを JSON で保存/読込。
+ * - 旧版との互換のためレガシーキー（ドメイン非含有）も読み込み・移行をサポート。
+ * - スレ単位で媒体をアーカイブし、スナップショットが無い場合はファイルから最小限の詳細を再構成。
  */
 class DetailCacheManager(private val context: Context) {
 
@@ -36,7 +37,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Builds a Gson instance that knows how to (de)serialize `DetailContent` via a registered factory.
+     * `DetailContent` の（逆）シリアライズに対応した Gson を生成する。
      */
     init {
         gson = GsonBuilder()
@@ -46,7 +47,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Returns the cache file for a given thread `url` using a normalized key hashed with SHA-256.
+     * 与えられたスレ `url` に対応するキャッシュファイルパスを返す（正規化 → SHA-256 でファイル名化）。
      */
     private fun getCacheFile(url: String): File {
         val key = UrlNormalizer.threadKey(url)   // 正規化キーに変換
@@ -55,7 +56,7 @@ class DetailCacheManager(private val context: Context) {
         return File(cacheDir, fileName)
     }
 
-    // レガシーキー（ドメイン非含有）のキャッシュファイル（旧版互換）
+    // レガシーキー（ドメイン非含有）のキャッシュファイル（旧版互換）。
     private fun getLegacyCacheFile(url: String): File {
         val key = UrlNormalizer.legacyThreadKey(url)
         val fileName = key.sha256()
@@ -63,7 +64,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Returns or creates the per-thread archive directory under app files.
+     * スレごとの媒体アーカイブ用ディレクトリを返す（必要なら作成）。
      */
     fun getArchiveDirForUrl(url: String): File {
         val key = UrlNormalizer.threadKey(url)
@@ -72,7 +73,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Returns the snapshot file path (JSON) inside the archive directory.
+     * アーカイブディレクトリ直下のスナップショット JSON ファイルパスを返す。
      */
     private fun getArchiveSnapshotFile(url: String): File {
         val dir = getArchiveDirForUrl(url)
@@ -80,7 +81,8 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Saves details for a thread to the cache file and removes any legacy-named file.
+     * スレ詳細をキャッシュファイルへ保存し、レガシー名のファイルがあれば削除する。
+     * 既存内容と同一（details が変化なし）の場合は書き換えをスキップする。
      */
     fun saveDetails(url: String, details: List<DetailContent>) {
         val cacheFile = getCacheFile(url)
@@ -114,8 +116,8 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Loads cached details for the thread; falls back to legacy file and migrates if present.
-     * If parsing fails, deletes the corrupt cache and returns null.
+     * スレ詳細キャッシュを読み込む。無ければレガシー名をフォールバックし、読み込めた場合は移行する。
+     * 破損している場合は当該キャッシュを削除して null を返す。
      */
     fun loadDetails(url: String): List<DetailContent>? {
         val cacheFile = getCacheFile(url)
@@ -159,7 +161,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Deletes the cache file for the given URL (and legacy file if present).
+     * 指定 URL に対応するキャッシュファイル（存在すればレガシー名も）を削除する。
      */
     fun invalidateCache(url: String) {
         val cacheFile = getCacheFile(url)
@@ -181,7 +183,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * Deletes the entire archive directory tree for the given URL if it exists.
+     * 指定 URL のアーカイブディレクトリ配下を再帰的に削除する（存在する場合）。
      */
     fun clearArchiveForUrl(url: String) {
         val dir = getArchiveDirForUrl(url)
@@ -222,7 +224,10 @@ class DetailCacheManager(private val context: Context) {
         return list
     }
 
-    // アーカイブスナップショット（本文含む）
+    /**
+     * アーカイブスナップショット（本文含む）を保存する。
+     * 既存スナップショットと同一内容なら書き換えをスキップする。
+     */
     fun saveArchiveSnapshot(url: String, details: List<DetailContent>) {
         runCatching {
             val f = getArchiveSnapshotFile(url)
@@ -246,7 +251,9 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
-    /** Loads an archive snapshot if present; returns null on absence or parse failure. */
+    /**
+     * アーカイブスナップショットを読み込む。ファイルが無い、または解析に失敗した場合は null。
+     */
     fun loadArchiveSnapshot(url: String): List<DetailContent>? {
         val f = getArchiveSnapshotFile(url)
         if (!f.exists()) return null
@@ -260,7 +267,9 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
-    /** Returns total bytes occupied by cache and archived media. */
+    /**
+     * キャッシュと媒体アーカイブが占有する総バイト数を返す。
+     */
     fun totalBytes(): Long {
         fun dirSize(d: File): Long {
             if (!d.exists()) return 0L
@@ -270,13 +279,8 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * limitBytes を超えている場合、履歴の古い順に各スレのアーカイブ/キャッシュを削除して
-     * 全体サイズが (limitBytes * 0.9) を下回るまで間引く。
-     * ユーザが未読のスレは最後に回す（未読0を優先的に削除）。
-     */
-    /**
-     * If total bytes exceed `limitBytes`, delete per-thread archives and caches in history order
-     * until the size drops below 90% of the limit. Unread threads are deprioritized for deletion.
+     * 総サイズが `limitBytes` を超える場合、履歴順にスレのアーカイブ/キャッシュを削除し、
+     * 全体サイズがおおよそ 90% 未満になるまで間引く。未読があるスレは後回しにする。
      */
     fun enforceLimit(limitBytes: Long, history: List<com.valoser.futaburakari.HistoryEntry>, onEntryCleaned: (com.valoser.futaburakari.HistoryEntry) -> Unit = {}) {
         if (limitBytes <= 0) return
@@ -319,9 +323,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     // 追加ユーティリティ群
-    /**
-     * すべてのスレッド内容キャッシュを削除します。
-     */
+    /** すべてのスレッド内容キャッシュおよび媒体アーカイブを削除する。 */
     fun clearAllCache() {
         if (cacheDir.exists()) {
             // cacheDirの中身をすべて削除する
@@ -344,7 +346,7 @@ class DetailCacheManager(private val context: Context) {
         }
     }
 
-    /** SHA-256 hash for strings, returned as a lowercase hex digest. */
+    /** 文字列の SHA-256 ハッシュ（小文字16進）を返す。 */
     private fun String.sha256(): String {
         return java.security.MessageDigest
             .getInstance("SHA-256")

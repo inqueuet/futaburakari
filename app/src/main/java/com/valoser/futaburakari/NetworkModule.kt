@@ -77,6 +77,12 @@ object NetworkModule {
          * - 同時接続数はユーザー設定値（1..4）を Dispatcher に反映
          * - 2chan 系ホストへは軽い遅延（約 2ms）を入れてアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
+         *
+         * @param context 設定参照用のアプリケーションコンテキスト
+         * @param cookieJar 共有 CookieJar
+         * @param connectionPool 共有 ConnectionPool
+         * @param cache HTTP キャッシュ
+         * @return 構成済みの OkHttpClient
          */
         return try {
             // 同時接続数はユーザー設定値を使用
@@ -144,6 +150,12 @@ object NetworkModule {
          * - Dispatcher はユーザー設定の同時接続数（1..4）
          * - 2chan 系ホストへは軽い遅延（約 2ms）でアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
+         *
+         * @param context 設定参照用のアプリケーションコンテキスト
+         * @param cookieJar 共有 CookieJar
+         * @param connectionPool 共有 ConnectionPool
+         * @param cache HTTP キャッシュ
+         * @return 画像取得に最適化された OkHttpClient
          */
         return try {
             val level = AppPreferences.getConcurrencyLevel(context)
