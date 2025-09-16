@@ -972,26 +972,33 @@ fun DetailScreenScaffold(
                     )
                 }
                 // タイトルクリック要求: items が利用可能なタイミングで処理し、成功時にだけフラグを落とす
-                if (titleClickPending) {
-                    val firstIdx = items.indexOfFirst { it is DetailContent.Text }
-                    if (firstIdx >= 0) {
-                        val src = items[firstIdx] as DetailContent.Text
-                        // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
-                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title), plainTextOf = plainOfProvider)
-                        // 2) OP の No. を使った引用先（>>No など番号参照）
-                        val rn = src.resNum
-                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn, plainTextOf = plainOfProvider) else emptyList()
-                        // 3) 結合 + 重複排除（表示順は byContent → byNumber）
-                        if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
-                            val seen = HashSet<String>()
-                            val merged = ArrayList<DetailContent>(byContent.size + byNumber.size)
-                            for (c in byContent + byNumber) if (seen.add(c.id)) merged += c
-                            resRefItems = merged
+                LaunchedEffect(titleClickPending, items) {
+                    if (titleClickPending) {
+                        val firstIdx = items.indexOfFirst { it is DetailContent.Text }
+                        if (firstIdx >= 0) {
+                            val src = items[firstIdx] as DetailContent.Text
+                            val snapshot = items
+                            // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
+                            val byContent = withContext(Dispatchers.Default) {
+                                buildSelfAndBackrefItems(snapshot, src, extraCandidates = setOf(title), plainTextOf = plainOfProvider)
+                            }
+                            // 2) OP の No. を使った引用先（>>No など番号参照）
+                            val rn = src.resNum
+                            val byNumber = if (!rn.isNullOrBlank()) {
+                                withContext(Dispatchers.Default) {
+                                    buildResReferencesItems(snapshot, rn, plainTextOf = plainOfProvider)
+                                }
+                            } else emptyList()
+                            // 3) 結合 + 重複排除（表示順は byContent → byNumber）
+                            if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
+                                val seen = HashSet<String>()
+                                val merged = ArrayList<DetailContent>(byContent.size + byNumber.size)
+                                for (c in byContent + byNumber) if (seen.add(c.id)) merged += c
+                                resRefItems = merged
+                            }
                             titleClickPending = false
                         }
-                        // ヒットしなければフラグは保持
                     }
-                    // items がまだ空の場合もフラグ保持
                 }
             }
         }
