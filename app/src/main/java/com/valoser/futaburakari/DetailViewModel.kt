@@ -652,7 +652,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    // ===== Helpers & Regex =====
+    // ===== 補助関数と正規表現 =====
 
     /**
      * メディア（画像/動画）ファイル拡張子を持つかを簡易判定する。
@@ -665,12 +665,12 @@ class DetailViewModel @Inject constructor(
                 h.endsWith(".webm") || h.endsWith(".mp4")
     }
     companion object {
-        // (E) プリコンパイル済み正規表現
+        // プリコンパイル済み正規表現
         private val DOC_WRITE = Regex("""document\.write\s*\(\s*'(.*?)'\s*\)""")
         private val TIME = Regex("""<span id="contdisp">([^<]+)</span>""")
     }
 
-    // ===== NG filtering =====
+    // ===== NG フィルタリング =====
 
     /** 現在のNGルールでフィルタを再適用し、表示と検索状態を更新する。 */
     fun reapplyNgFilter() {
@@ -881,7 +881,7 @@ class DetailViewModel @Inject constructor(
             .trimEnd()
     }
 
-    // ===== Search: public APIs and internals =====
+    // ===== 検索: 公開APIと内部実装 =====
     /** 検索を開始し、最初のヒット位置に移動できるよう状態を更新。 */
     fun performSearch(query: String) {
         currentSearchQuery = query
@@ -957,7 +957,7 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    // ===== Plain text cache =====
+    // ===== プレーンテキストキャッシュ =====
     private val _plainTextCache = MutableStateFlow<Map<String, String>>(emptyMap())
     val plainTextCache: StateFlow<Map<String, String>> = _plainTextCache.asStateFlow()
 

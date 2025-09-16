@@ -31,6 +31,15 @@ class MetadataCache(context: Context) {
         prefs.edit().putString(key, gson.toJson(map)).apply()
     }
 
+    /**
+     * 指定したキーに対応するメタデータ文字列を取得する。
+     *
+     * - 永続キャッシュ（SharedPreferences に保存された JSON マップ）から読み出す。
+     * - ヒットしない場合は null を返す。
+     *
+     * @param id URI/URL 等の識別子
+     * @return 保存済みの値。存在しない場合は null
+     */
     fun get(id: String): String? {
         val m = load()
         val e = m[id] ?: return null
@@ -38,6 +47,15 @@ class MetadataCache(context: Context) {
         return e.value
     }
 
+    /**
+     * 指定したキーに対応するメタデータ文字列を保存する。
+     *
+     * - 空白のみの値は無視。
+     * - 登録後、上限件数を超える場合は最終アクセス時刻（ts）の古い順に削除。
+     *
+     * @param id URI/URL 等の識別子
+     * @param value 保存する値（空白のみは保存しない）
+     */
     fun put(id: String, value: String) {
         if (value.isBlank()) return
         val m = load()

@@ -4,15 +4,20 @@ import android.text.Html
 import com.valoser.futaburakari.DetailContent
 import java.text.Normalizer
 
-// Build items list for a quote token like "> xxx" or ">> No.1234".
-// Strategy: extract the core text (without leading '>') and find Text items that have
-// a line exactly equal to it (after normalization). Include subsequent media until next Text/End.
+/**
+ * 引用トークン（"> xxx" や ">> No.1234" のような形式）に対応するアイテムを構築します。
+ *
+ * 方針:
+ * - 先頭の '>' を段数に関係なく取り除き、コア文字列を抽出。
+ * - 本文（正規化後）を行単位で比較し、コア文字列と完全一致する行を含む Text をヒットとする。
+ * - 各ヒット Text の直後に続く Image/Video を、次の Text/ThreadEndTime までまとめて返却します。
+ */
 internal fun buildQuoteItems(
     all: List<DetailContent>,
     token: String,
     plainTextOf: (DetailContent.Text) -> String = { t -> Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString() },
 ): List<DetailContent> {
-    // Normalize token: strip leading spaces, convert full-width variants to ASCII
+    // トークンを正規化（先頭の全角空白を半角へ、全角 ＞ 系を '>' へ、前方空白を除去）
     val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
     val level = t0.takeWhile { it == '>' }.length.coerceAtLeast(1)
     val core = t0.drop(level).trim()
@@ -52,10 +57,16 @@ internal fun buildQuoteItems(
 }
 
 /**
- * Build items for a quote token and also include back-references that quote the matched source posts.
- * 1) Find source Text items that contain a line exactly equal to the quote core
- * 2) Include each source Text and its following media
- * 3) Include posts that quote any of those source Texts (and their following media)
+ * 引用トークンに対応するアイテムを構築し、さらにその引用元を引用している被引用も含めます。
+ *
+ * 手順:
+ * 1) コア文字列と行単位で完全一致する Text を「引用元」として抽出。
+ * 2) 各引用元 Text と、その直後に続くメディアをまとめて追加。
+ * 3) 各引用元の本文を引用している投稿（被引用）を集計し、その直後メディアも含めて追加。
+ *    さらに、引用元の本文に No が含まれる場合は >>No による参照も被引用として併合します。
+ *
+ * 備考:
+ * - `threadTitle` とコアが一致する場合、スレOP（最初の Text）も引用元として扱います。
  */
 internal fun buildQuoteAndBackrefItems(
     all: List<DetailContent>,
@@ -63,7 +74,7 @@ internal fun buildQuoteAndBackrefItems(
     threadTitle: String?,
     plainTextOf: (DetailContent.Text) -> String = { t -> Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString() },
 ): List<DetailContent> {
-    // Normalize token: strip leading spaces, convert full-width variants to ASCII
+    // トークンを正規化（先頭の全角空白を半角へ、全角 ＞ 系を '>' へ、前方空白を除去）
     val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
     val level = t0.takeWhile { it == '>' }.length.coerceAtLeast(1)
     val core = t0.drop(level).trim()
@@ -76,21 +87,21 @@ internal fun buildQuoteAndBackrefItems(
 
     val needle = normalize(core)
 
-    // 1) find matching source Text indexes (line-level exact match)
+    // 1) 引用元 Text のインデックスを抽出（行単位の完全一致）
     val sourceIdxsMutable = all.withIndex().filter { (_, c) ->
         if (c !is DetailContent.Text) return@filter false
         val lines = plainTextOf(c).lines()
         lines.map { normalize(it) }.any { it.isNotBlank() && it == needle }
     }.map { it.index }
     val sourceIdxs = sourceIdxsMutable.toMutableSet()
-    // If the quote matches the thread title, treat OP (first Text) as a source as well
+    // スレタイと一致する場合は OP（最初の Text）も引用元扱いにする
     val titleNorm = threadTitle?.let { normalize(it) }
     val firstTextIdx = all.indexOfFirst { it is DetailContent.Text }
     val titleMatched = !titleNorm.isNullOrBlank() && titleNorm == needle && firstTextIdx >= 0
     if (titleMatched) sourceIdxs.add(firstTextIdx)
     if (sourceIdxs.isEmpty()) return emptyList()
 
-    // 2) Collect groups for sources
+    // 2) 引用元のグループを収集（Text + 直後のメディア）
     val groups = mutableListOf<List<DetailContent>>()
     val sourceTexts = mutableListOf<DetailContent.Text>()
     for (i in sourceIdxs) {
@@ -108,14 +119,14 @@ internal fun buildQuoteAndBackrefItems(
         groups += group
     }
 
-    // 3) For each source, include back-references (quote lines equal to any line of source body)
+    // 3) 各引用元に対し、本文を引用している被引用（およびその直後メディア）を追加
     for (src in sourceTexts) {
         val isOp = all.indexOf(src) == firstTextIdx
         val extra = if (titleMatched && isOp) setOf(needle) else emptySet()
-        // content-based backrefs
+        // 本文内容に基づく被引用
         val back = buildBackReferencesByContent(all, src, extraCandidates = extra, plainTextOf = plainTextOf)
         if (back.isNotEmpty()) {
-            // back is already flattened; regroup by first item to keep consistency
+            // back はフラット化済みなので、先頭要素単位で再グルーピングして整形
             val backGroups = mutableListOf<List<DetailContent>>()
             var k = 0
             while (k < back.size) {
@@ -131,7 +142,7 @@ internal fun buildQuoteAndBackrefItems(
             }
             groups += backGroups
         }
-        // number-based backrefs (>>No)
+        // No. に基づく被引用（>>No）
         run {
             val plain = plainTextOf(src)
             val rn = Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
@@ -156,7 +167,7 @@ internal fun buildQuoteAndBackrefItems(
         }
     }
 
-    // Deduplicate groups by first Text id and flatten; then deduplicate items by id preserving order
+    // 先頭 Text の id でグループを重複排除しフラット化。さらに要素も id で一意化（順序維持）。
     val uniqueGroups = groups.distinctBy { it.firstOrNull()?.id }
     val flat = uniqueGroups.flatten()
     val seen = HashSet<String>()

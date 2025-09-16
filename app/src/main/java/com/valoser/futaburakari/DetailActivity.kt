@@ -205,7 +205,7 @@ class DetailActivity : BaseActivity() {
                     showAds = showAds,
                     adUnitId = adUnitId,
                     onBottomPaddingChange = { h -> bottomOffsetFlowInternal.value = h },
-                    // Compose list scroll state persistence
+                    // Compose リストのスクロール状態を保存/復元
                     initialScrollIndex = initialScroll.first,
                     initialScrollOffset = initialScroll.second,
                     onSaveScroll = { pos, off ->
@@ -237,7 +237,7 @@ class DetailActivity : BaseActivity() {
                     onAddNgFromBody = { _ -> },
                     onThreadEndTimeClick = { reloadDetails() },
                     onImageLoaded = {
-                        // no-op; Compose handles scrolling alignment
+                        // 処理なし（スクロール整列は Compose 側で対応）
                     },
                     isRefreshingFlow = viewModel.isLoading,
                     onVisibleMaxOrdinal = { ord -> markViewedByOrdinal(ord) },
@@ -416,7 +416,7 @@ class DetailActivity : BaseActivity() {
 
     // ★ 変更点 4: 返信画面を起動する共通メソッド
     /**
-     * Launches the reply UI for the current thread with an optional quoted body.
+     * 現在のスレッドに対する返信UIを起動する（引用本文は任意）。
      */
     private fun launchReplyActivity(quote: String) {
         currentUrl?.let { url ->
