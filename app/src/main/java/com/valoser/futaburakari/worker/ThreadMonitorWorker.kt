@@ -1,3 +1,8 @@
+/**
+ * スレURLの監視・アーカイブを行うWorkManager Workerの実装ファイル。
+ * - 監視スケジュール、スナップショット取得、キャッシュ・履歴反映などを扱います。
+ * - 本変更は説明コメントの補足のみで、既存ロジックは一切変更しません。
+ */
 package com.valoser.futaburakari.worker
 
 import android.content.Context
@@ -171,7 +176,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
     companion object {
         private const val KEY_URL = "url"
         private const val KEY_ONE_SHOT = "one_shot"
-        // removed: background toggle prefs (always enabled)
+        // 以前のバックグラウンド監視トグル設定は廃止（常時有効）
 
         private fun uniqueName(url: String): String = "monitor-" + UrlNormalizer.threadKey(url)
         private fun uniqueNameLegacy(url: String): String = "monitor-" + UrlNormalizer.legacyThreadKey(url)
@@ -184,8 +189,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
          */
         fun schedule(context: Context, url: String) {
             val data = workDataOf(KEY_URL to url)
+            // 基本1分 + 小さなジッターで実行時刻を分散（波状実行を軽減）
+            val delayMillis = 60_000L + kotlin.random.Random.nextLong(0L, 30_000L)
             val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
-                .setInitialDelay(1, TimeUnit.MINUTES)
+                .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setInputData(data)
                 .setConstraints(
                     androidx.work.Constraints.Builder()
@@ -195,9 +202,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 .addTag("thread-monitor")
                 .build()
 
+            // 連続監視はユニークチェーンに順次追加し、実行中の Work を中断しない
             WorkManager.getInstance(context).enqueueUniqueWork(
                 uniqueName(url),
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.APPEND,
                 req
             )
         }
@@ -335,9 +343,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val f = fileFor(remoteUrl)
             if (f.exists() && f.length() > 0) return f.toURI().toString()
             return try {
-                val bytes = networkClient.fetchBytes(remoteUrl)
-                if (bytes == null) return null
-                f.outputStream().use { out -> out.write(bytes) }
+                f.outputStream().use { out ->
+                    val ok = networkClient.downloadTo(remoteUrl, out)
+                    if (!ok) return null
+                }
                 f.toURI().toString()
             } catch (_: Exception) {
                 null

@@ -53,10 +53,6 @@
                 android:name="androidx.work.WorkManagerInitializer"
                 tools:node="remove" />
 
-            <!-- OkHttp Public Suffix List の初期化 -->
-            <meta-data
-                android:name="com.valoser.futaburakari.init.OkHttpPublicSuffixInitializer"
-                android:value="androidx.startup" />
         </provider>
 
         <!-- ランチャー画面（トップ） -->

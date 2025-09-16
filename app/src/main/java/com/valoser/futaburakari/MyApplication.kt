@@ -1,23 +1,25 @@
 /*
  * アプリケーション全体の初期化を担う Application 実装。
- * - WorkManager構成、Coil ImageLoader、各種初期化（OkHttpウォームアップ等）を提供。
+ * - WorkManager 構成、Coil ImageLoader、各種初期化（OkHttp ウォームアップ等）を提供。
  */
 package com.valoser.futaburakari
 
 import android.app.Application
 import android.content.pm.ApplicationInfo
+import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import android.os.Build
-import coil.ImageLoader
-import coil.ImageLoaderFactory
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
-import coil.decode.GifDecoder
-import coil.decode.ImageDecoderDecoder
-import coil.decode.VideoFrameDecoder
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.memory.MemoryCache
+import coil3.util.DebugLogger
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import dagger.hilt.android.HiltAndroidApp
+import okhttp3.OkHttpClient
+import javax.inject.Named
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,19 +28,28 @@ import javax.inject.Inject
 import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import com.valoser.futaburakari.HistoryManager
+import okio.Path.Companion.toPath
 
 @HiltAndroidApp
 /**
  * アプリ全体の初期化を担う `Application` 実装。
  *
- * - WorkManager の設定（HiltWorkerFactory/ログレベル/プロセス名）を提供
- * - OkHttp の初期化を安全にウォームアップ（初回リクエストの遅延を軽減）
- * - Coil 用の ImageLoader を提供（GIF/動画フレームのデコードを有効化）
+ * - WorkManager の設定（HiltWorkerFactory/ログレベル/デフォルトプロセス名）
+ * - OkHttp の安全なウォームアップ（初回リクエストの遅延を軽減）
+ *   - DI の共有クライアントとは独立したダミー `OkHttpClient` を生成し、
+ *     内部コンポーネント（例: PublicSuffixDatabase）を初期化するのみ（実通信なし）
+ * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG のデコードを有効化）
+ *   - OkHttp クライアントは `@Named("coil")` の用途別クライアントを使用
+ *   - Dispatcher はユーザー設定値（AppPreferences）で制御、2chan 系は軽い遅延（約 2ms）
  */
-class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory {
+class MyApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    @Named("coil")
+    lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は 遅延）
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -50,7 +61,7 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
         initializeOkHttpSafely()
         // WorkManager の AutoInit はこの Configuration 経由で行われる
 
-        // Preferences migration: remove legacy color mode keys (no longer used)
+        // 互換目的のプリファレンス移行（旧カラー設定キーの削除。現在は未使用）
         try {
             val prefs = PreferenceManager.getDefaultSharedPreferences(this)
             val editor = prefs.edit()
@@ -75,6 +86,10 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
         }
     }
 
+    /**
+     * OkHttp の内部コンポーネント（例: PublicSuffixDatabase）を事前初期化する。
+     * 実通信は行わず、起動直後の初回アクセスで発生する遅延を低減する目的。
+     */
     private fun initializeOkHttpSafely() {
         // アプリケーションスコープのコルーチンで非同期に実行
         applicationScope.launch {
@@ -90,7 +105,10 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
         }
     }
 
-    // WorkManager 構成の提供（HiltWorkerFactory を設定し、ログレベル/プロセス名を指定）
+    /**
+     * WorkManager の構成を提供する。
+     * HiltWorkerFactory を設定し、ビルド種類に応じたログレベルとデフォルトのプロセス名を指定。
+     */
     override val workManagerConfiguration: Configuration
         get() {
             val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -101,32 +119,39 @@ class MyApplication : Application(), Configuration.Provider, ImageLoaderFactory 
                 .build()
         }
 
-    // Coil: GIF 再生と動画URLからの代表フレーム抽出を有効化
-    override fun newImageLoader(): ImageLoader {
-        return ImageLoader.Builder(this)
+    /**
+     * Coil の ImageLoader を構築して提供する。
+     * - GIF/動画フレーム/SVG のデコードを有効化
+     * - メモリ/ディスクキャッシュを調整し、再利用性を高める
+     * - デバッグロガーを有効化（失敗理由の追跡に有用）
+     */
+    override fun newImageLoader(context: Context): ImageLoader {
+        val isDebug = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        return ImageLoader.Builder(context)
             .components {
-                // アニメーションGIFのデコードを有効化
-                if (Build.VERSION.SDK_INT >= 28) {
-                    add(ImageDecoderDecoder.Factory())
-                } else {
-                    add(GifDecoder.Factory())
-                }
-                // 動画の代表フレームの抽出を有効化
-                add(VideoFrameDecoder.Factory())
+                // OkHttp を使用したネットワークフェッチャーを追加（Coil 3 では必須）
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = { coilOkHttpClient }
+                    )
+                )
+                // GIF / 動画 / SVG のデコーダは拡張モジュール（coil-gif / coil-video / coil-svg）
+                // を依存関係に追加すると自動登録されるため、手動追加は不要。
             }
             // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
             .memoryCache(
-                MemoryCache.Builder(this)
-                    .maxSizePercent(0.25) // メモリの25%まで
+                MemoryCache.Builder()
+                    .maxSizePercent(context, 0.25) // メモリの25%まで
                     .build()
             )
             .diskCache(
                 DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
+                    .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
                     .maxSizeBytes(256L * 1024L * 1024L) // 256MB
                     .build()
             )
-            .respectCacheHeaders(false) // サーバーのキャッシュヘッダが厳しい場合でも再利用
+            // デバッグビルド時のみ詳細ログを有効化
+            .apply { if (isDebug) logger(DebugLogger()) }
             .build()
     }
 }

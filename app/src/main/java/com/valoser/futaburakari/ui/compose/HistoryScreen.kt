@@ -54,7 +54,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.HistoryEntry
 import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedContent
@@ -78,7 +81,7 @@ enum class HistorySortMode { MIXED, UPDATED, VIEWED, UNREAD }
 /**
  * 閲覧履歴の一覧画面。
  * 未読のみ表示の切り替え、並び替え、全削除、スワイプによる削除を提供する。
- * （現状 Undo は未実装で、スワイプ確定時に即時削除する）
+ * 現状 Undo は未実装で、スワイプ確定時に即時削除する（UI 上はリストも即時反映）。
  *
  * パラメータ:
  * - `title`: 上部アプリバーのタイトル文言。
@@ -302,7 +305,21 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             Box(thumbModifier)
         } else {
             AsyncImage(
-                model = entry.thumbnailUrl,
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(entry.thumbnailUrl)
+                    .apply {
+                        val ref = entry.url
+                        if (!ref.isNullOrBlank()) {
+                            httpHeaders(
+                                NetworkHeaders.Builder()
+                                    .add("Referer", ref)
+                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                    .build()
+                            )
+                        }
+                    }
+                    .build(),
                 contentDescription = null,
                 modifier = thumbModifier
             )

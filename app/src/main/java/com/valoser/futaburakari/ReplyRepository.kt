@@ -3,6 +3,7 @@ package com.valoser.futaburakari
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,9 +15,11 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Cookie
+import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import java.io.IOException
 import java.nio.charset.Charset
+import okio.source
 
 /**
  * Futaba への投稿を担当するリポジトリ。
@@ -140,11 +143,18 @@ class ReplyRepository @Inject constructor(
                 val empty = ByteArray(0).toRequestBody("application/octet-stream".toMediaTypeOrNull())
                 bodyBuilder.addFormDataPart("upfile", "", empty)
             } else {
-                val fileName = guessFileName(context.contentResolver, upfileUri)
-                val mime = guessMimeType(context.contentResolver, upfileUri)
-                val fileRequest = context.contentResolver.openInputStream(upfileUri)?.use { input ->
-                    input.readBytes().toRequestBody(mime.toMediaTypeOrNull())
-                } ?: throw IOException("添付ファイルの読み込みに失敗: $upfileUri")
+                val cr = context.contentResolver
+                val fileName = guessFileName(cr, upfileUri)
+                val mime = guessMimeType(cr, upfileUri)
+
+                // ファイルサイズ検証（可能な場合）。上限は extra の MAX_FILE_SIZE を優先、既定は 8MB。
+                val maxBytes = extra["MAX_FILE_SIZE"]?.toLongOrNull() ?: 8_192_000L
+                val contentLen = getContentLength(cr, upfileUri)
+                if (contentLen != null && contentLen > maxBytes) {
+                    throw IOException("添付ファイルが大きすぎます（${contentLen} > ${maxBytes} bytes）")
+                }
+
+                val fileRequest = streamingRequestBody(cr, upfileUri, mime, contentLen)
                 bodyBuilder.addFormDataPart("upfile", fileName, fileRequest)
             }
 
@@ -204,7 +214,7 @@ class ReplyRepository @Inject constructor(
             if (!mergedCookie.isNullOrBlank()) rb.header("Cookie", mergedCookie)
             val req = rb.build()
 
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).executeAsync().use { resp ->
                 val raw = resp.body?.bytes() ?: ByteArray(0)
                 val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
                 //android.util.Log.d("ReplyRepo", "resp.head=${decoded.trim().take(200)}")
@@ -250,8 +260,14 @@ class ReplyRepository @Inject constructor(
     private suspend fun fetchHashFromThreadPage(threadUrl: String): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val req = Request.Builder().url(threadUrl).get().build()
-                httpClient.newCall(req).execute().use { resp ->
+            val req = Request.Builder()
+                .url(threadUrl)
+                .get()
+                .header("User-Agent", Ua.STRING)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                .build()
+                httpClient.newCall(req).executeAsync().use { resp ->
                     if (!resp.isSuccessful) {
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }
@@ -320,6 +336,46 @@ class ReplyRepository @Inject constructor(
         val path = uri.lastPathSegment ?: "upload.bin"
         val idx = path.lastIndexOf('/')
         return if (idx >= 0 && idx + 1 < path.length) path.substring(idx + 1) else path
+    }
+
+    /**
+     * 可能であれば URI のコンテンツ長を返す（不明な場合は null）。
+     */
+    private fun getContentLength(cr: ContentResolver, uri: Uri): Long? {
+        return try {
+            cr.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (idx >= 0 && cursor.moveToFirst()) {
+                    val size = cursor.getLong(idx)
+                    if (size >= 0) size else null
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * InputStream をそのまま Okio でシンクへ書き出すストリーミング RequestBody。
+     * contentLength が不明な場合は -1 を返してチャンクド送信に委ねる。
+     */
+    private fun streamingRequestBody(
+        cr: ContentResolver,
+        uri: Uri,
+        mime: String,
+        contentLen: Long?
+    ): RequestBody {
+        val mediaType = mime.toMediaTypeOrNull()
+        return object : RequestBody() {
+            override fun contentType() = mediaType
+            override fun contentLength(): Long = contentLen ?: -1L
+            override fun writeTo(sink: okio.BufferedSink) {
+                cr.openInputStream(uri)?.use { input ->
+                    val source = input.source()
+                    sink.writeAll(source)
+                } ?: throw IOException("添付ファイルの読み込みに失敗: $uri")
+            }
+        }
     }
 }
 

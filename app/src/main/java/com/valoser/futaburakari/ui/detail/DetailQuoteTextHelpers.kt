@@ -7,7 +7,11 @@ import java.text.Normalizer
 // Build items list for a quote token like "> xxx" or ">> No.1234".
 // Strategy: extract the core text (without leading '>') and find Text items that have
 // a line exactly equal to it (after normalization). Include subsequent media until next Text/End.
-internal fun buildQuoteItems(all: List<DetailContent>, token: String): List<DetailContent> {
+internal fun buildQuoteItems(
+    all: List<DetailContent>,
+    token: String,
+    plainTextOf: (DetailContent.Text) -> String = { t -> Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString() },
+): List<DetailContent> {
     // Normalize token: strip leading spaces, convert full-width variants to ASCII
     val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
     val level = t0.takeWhile { it == '>' }.length.coerceAtLeast(1)
@@ -24,7 +28,7 @@ internal fun buildQuoteItems(all: List<DetailContent>, token: String): List<Deta
     // 完全一致: プレーンテキストを行単位で正規化し、1行が needle と等しいもののみヒット
     val textIdx = all.withIndex().filter { (_, c) ->
         if (c !is DetailContent.Text) return@filter false
-        val plain = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+        val plain = plainTextOf(c)
         plain.lines()
             .map { normalize(it) }
             .any { it.isNotBlank() && it == needle }
@@ -53,7 +57,12 @@ internal fun buildQuoteItems(all: List<DetailContent>, token: String): List<Deta
  * 2) Include each source Text and its following media
  * 3) Include posts that quote any of those source Texts (and their following media)
  */
-internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String, threadTitle: String?): List<DetailContent> {
+internal fun buildQuoteAndBackrefItems(
+    all: List<DetailContent>,
+    token: String,
+    threadTitle: String?,
+    plainTextOf: (DetailContent.Text) -> String = { t -> Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString() },
+): List<DetailContent> {
     // Normalize token: strip leading spaces, convert full-width variants to ASCII
     val t0 = token.replace('\u3000', ' ').replace('＞', '>').replace('≫', '>').trimStart()
     val level = t0.takeWhile { it == '>' }.length.coerceAtLeast(1)
@@ -70,7 +79,7 @@ internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String, 
     // 1) find matching source Text indexes (line-level exact match)
     val sourceIdxsMutable = all.withIndex().filter { (_, c) ->
         if (c !is DetailContent.Text) return@filter false
-        val lines = Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString().lines()
+        val lines = plainTextOf(c).lines()
         lines.map { normalize(it) }.any { it.isNotBlank() && it == needle }
     }.map { it.index }
     val sourceIdxs = sourceIdxsMutable.toMutableSet()
@@ -104,7 +113,7 @@ internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String, 
         val isOp = all.indexOf(src) == firstTextIdx
         val extra = if (titleMatched && isOp) setOf(needle) else emptySet()
         // content-based backrefs
-        val back = buildBackReferencesByContent(all, src, extraCandidates = extra)
+        val back = buildBackReferencesByContent(all, src, extraCandidates = extra, plainTextOf = plainTextOf)
         if (back.isNotEmpty()) {
             // back is already flattened; regroup by first item to keep consistency
             val backGroups = mutableListOf<List<DetailContent>>()
@@ -124,11 +133,11 @@ internal fun buildQuoteAndBackrefItems(all: List<DetailContent>, token: String, 
         }
         // number-based backrefs (>>No)
         run {
-            val plain = Html.fromHtml(src.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+            val plain = plainTextOf(src)
             val rn = Regex("""(?i)(?:No|Ｎｏ)[\.\uFF0E]?\s*(\d+)""")
                 .find(plain)?.groupValues?.getOrNull(1)
             if (!rn.isNullOrBlank()) {
-                val byNum = buildResReferencesItems(all, rn)
+                val byNum = buildResReferencesItems(all, rn, plainTextOf = plainTextOf)
                 if (byNum.isNotEmpty()) {
                     var k = 0
                     while (k < byNum.size) {

@@ -42,6 +42,8 @@ class MediaViewActivity : BaseActivity() {
         const val EXTRA_URL = "EXTRA_URL"
         // テキスト表示用の内容（プロンプト等）
         const val EXTRA_TEXT = "EXTRA_TEXT"
+        // メディア取得時の Referer（通常はスレの res/*.htm）
+        const val EXTRA_REFERER = "EXTRA_REFERER"
         const val TYPE_IMAGE = "image"
         const val TYPE_VIDEO = "video"
         const val TYPE_TEXT = "text"
@@ -53,6 +55,7 @@ class MediaViewActivity : BaseActivity() {
         currentType = intent.getStringExtra(EXTRA_TYPE)
         currentUrl = intent.getStringExtra(EXTRA_URL)
         currentText = intent.getStringExtra(EXTRA_TEXT)
+        val referer = intent.getStringExtra(EXTRA_REFERER)
 
         // テーマ適用済みのコンテンツを構築（表現的なカラースキーム）
 
@@ -71,6 +74,7 @@ class MediaViewActivity : BaseActivity() {
                     url = currentUrl,
                     initialText = currentText,
                     networkClient = networkClient,
+                    referer = referer,
                     onBack = { onBackPressedDispatcher.onBackPressed() },
                     onSaveImage = if (currentType == TYPE_IMAGE) ({ saveImage() }) else null,
                     onSaveVideo = if (currentType == TYPE_VIDEO) ({ saveVideo() }) else null

@@ -13,8 +13,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import coil.imageLoader
-import coil.request.ImageRequest
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.network.httpHeaders
+import coil3.network.NetworkHeaders
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -47,13 +49,14 @@ import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.flow.collectLatest
 import android.view.Choreographer
 import kotlin.coroutines.resume
 import java.net.URL
 
 @AndroidEntryPoint
 /**
- * メイン画面（カタログ一覧）。
+ * メイン画面（カタログ一覧）アクティビティ。
  *
  * - ブックマーク選択・管理、設定/履歴/画像編集への遷移を提供。
  * - カタログ（画像リスト）を取得・表示し、アイテムタップで詳細画面へ遷移。
@@ -61,6 +64,10 @@ import java.net.URL
  * - Futaba の catset（カタログ表示設定）を板単位で適用し、3日間の TTL で再適用を抑制。
  * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応。
  * - TopBar: タイトルは表示せず、サブタイトル（選択中ブックマーク名）のみを大きめに表示する。
+ *
+ * 関連:
+ * - UI: `ui.compose.MainCatalogScreen`
+ * - データ取得/整形: `MainViewModel`
  */
 class MainActivity : BaseActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -87,7 +94,7 @@ class MainActivity : BaseActivity() {
             "ng_rules_json" -> {
                 ngRulesState.value = ngStore.getRules()
             }
-            // removed: color mode preference (always dynamic/default now)
+            // 旧カラー設定は廃止（現在はテーマ側で動的/既定に統合）
         }
     }
 
@@ -189,6 +196,12 @@ class MainActivity : BaseActivity() {
                     onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
                     onItemClick = { item -> handleItemClick(item) },
                     ngRules = ngRulesState.value,
+                    onImageLoadHttp404 = { item, failedUrl ->
+                        viewModel.fixImageIf404NoHtml(item.detailUrl, failedUrl)
+                    },
+                    onImageLoadSuccess = { item, loadedUrl ->
+                        viewModel.notifyFullImageSuccess(item.detailUrl, loadedUrl)
+                    },
                     )
 
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
@@ -253,7 +266,7 @@ class MainActivity : BaseActivity() {
         ngRulesState.value = ngStore.getRules()
     }
 
-    // no-op: 旧実装との互換のために残置（Compose移行で不要）
+    // 何もしない: 旧実装との互換のために残置（Compose 移行で不要）
     private fun configureSwipeRefreshIndicatorPosition() { }
     // RecyclerView時代の処理はComposeへ移行済み
     private fun cancelAutoUpdate() {
@@ -272,7 +285,12 @@ class MainActivity : BaseActivity() {
      */
     private fun handleItemClick(item: ImageItem) {
         val baseUrlString = currentSelectedUrl
-        val imageUrlString: String = item.fullImageUrl ?: item.previewUrl
+        val imageUrlString: String = when {
+            // カタログと同じ方針: フルは実描画成功が確認できた場合に優先
+            !item.fullImageUrl.isNullOrBlank() && item.hadFullSuccess -> item.fullImageUrl
+            !item.previewUnavailable -> item.previewUrl
+            else -> item.fullImageUrl ?: item.previewUrl
+        }
 
         if (!baseUrlString.isNullOrBlank() && !imageUrlString.isNullOrBlank()) {
             try {
@@ -283,7 +301,11 @@ class MainActivity : BaseActivity() {
                 val imageLoader = this.imageLoader
                 val request = ImageRequest.Builder(this)
                     .data(absoluteUrl)
-                    .lifecycle(lifecycle = null)
+                    .httpHeaders(
+                        NetworkHeaders.Builder()
+                            .add("Referer", item.detailUrl)
+                            .build()
+                    )
                     .build()
                 imageLoader.enqueue(request)
             } catch (e: Exception) {
@@ -411,9 +433,13 @@ class MainActivity : BaseActivity() {
             isLoadingState.value = isLoading
         }
 
-        viewModel.images.observe(this) { items ->
-            setAutoUpdateIndicator(false)
-            itemsState.value = items
+        // 差分更新: Map を購読し、順序を保ったリストへ変換
+        lifecycleScope.launch {
+            viewModel.imageMap.collectLatest { map ->
+                setAutoUpdateIndicator(false)
+                // LinkedHashMap ベースの順序を維持
+                itemsState.value = map.values.toList()
+            }
         }
 
         viewModel.error.observe(this) { _ ->

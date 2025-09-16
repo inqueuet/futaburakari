@@ -18,13 +18,15 @@ import com.valoser.futaburakari.DetailContent
  * - HTML は `Html.fromHtml(..., FROM_HTML_MODE_COMPACT)` でプレーンテキスト化して検索する。
  */
 // Build list: same-ID posts (Text + immediate following media until next Text/End)
-internal fun buildIdPostsItems(all: List<DetailContent>, id: String): List<DetailContent> {
+internal fun buildIdPostsItems(
+    all: List<DetailContent>,
+    id: String,
+    plainTextOf: (DetailContent.Text) -> String = { t -> Html.fromHtml(t.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString() },
+): List<DetailContent> {
     // 対象IDを含むテキスト要素のインデックスを抽出
     val textIndexes = all.withIndex().filter { (_, c) ->
         c is DetailContent.Text &&
-                Html.fromHtml(c.htmlContent, Html.FROM_HTML_MODE_COMPACT)
-                    .toString()
-                    .contains("ID:$id")
+                plainTextOf(c).contains("ID:$id")
     }.map { it.index }
     if (textIndexes.isEmpty()) return emptyList()
 
@@ -51,7 +53,7 @@ internal fun buildIdPostsItems(all: List<DetailContent>, id: String): List<Detai
             when (head) {
                 null -> Int.MAX_VALUE
                 is DetailContent.Text -> {
-                    val plain = Html.fromHtml(head.htmlContent, Html.FROM_HTML_MODE_COMPACT).toString()
+                    val plain = plainTextOf(head)
                     Regex("""No\.(\n|\r|.)*?(\d+)""")
                         .find(plain)?.groupValues?.lastOrNull()?.toIntOrNull() ?: Int.MAX_VALUE
                 }

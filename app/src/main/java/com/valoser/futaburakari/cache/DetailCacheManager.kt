@@ -85,8 +85,22 @@ class DetailCacheManager(private val context: Context) {
     fun saveDetails(url: String, details: List<DetailContent>) {
         val cacheFile = getCacheFile(url)
         val legacyFile = getLegacyCacheFile(url)
-        Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
+
         try {
+            // 既存内容と差分がなければスキップ（タイムスタンプの差だけで書き換えない）
+            if (cacheFile.exists()) {
+                runCatching {
+                    val existing = gson.fromJson(cacheFile.readText(), object : TypeToken<CachedDetails>() {}.type) as CachedDetails
+                    if (existing.details == details) {
+                        Log.d("DetailCacheManager", "Cache unchanged for $url; skipping write.")
+                        // レガシー名の掃除だけは行う
+                        runCatching { if (legacyFile.exists()) legacyFile.delete() }
+                        return
+                    }
+                }
+            }
+
+            Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
             val cachedData = CachedDetails(System.currentTimeMillis(), details)
             val jsonString = gson.toJson(cachedData)
             Log.d("DetailCacheManager", "JSON string length: ${jsonString.length}")
@@ -212,6 +226,18 @@ class DetailCacheManager(private val context: Context) {
     fun saveArchiveSnapshot(url: String, details: List<DetailContent>) {
         runCatching {
             val f = getArchiveSnapshotFile(url)
+
+            // 既存スナップショットと内容が同一なら書き換えをスキップ
+            if (f.exists()) {
+                runCatching {
+                    val existing: CachedDetails = gson.fromJson(f.readText(), object : TypeToken<CachedDetails>() {}.type)
+                    if (existing.details == details) {
+                        Log.d("DetailCacheManager", "Archive snapshot unchanged for $url; skipping write.")
+                        return
+                    }
+                }
+            }
+
             val json = gson.toJson(CachedDetails(System.currentTimeMillis(), details))
             f.writeText(json)
             Log.d("DetailCacheManager", "Saved archive snapshot: ${f.absolutePath}")
@@ -266,12 +292,28 @@ class DetailCacheManager(private val context: Context) {
                 .thenBy { if (it.lastUpdatedAt > 0) it.lastUpdatedAt else Long.MAX_VALUE }
         )
 
+        fun fileSize(f: File?): Long = if (f != null && f.exists()) f.length() else 0L
+        fun dirSizeQuick(d: File): Long {
+            if (!d.exists()) return 0L
+            var sum = 0L
+            d.walkTopDown().forEach { if (it.isFile) sum += it.length() }
+            return sum
+        }
+
         for (e in ordered) {
+            // 事前にこのスレ分のサイズを見積もる
+            val archiveDir = getArchiveDirForUrl(e.url)
+            val archiveBytes = dirSizeQuick(archiveDir)
+            val cacheFile = getCacheFile(e.url)
+            val cacheBytes = fileSize(cacheFile)
+
             // スレごとに媒体と詳細キャッシュを削除
             clearArchiveForUrl(e.url)
             invalidateCache(e.url)
             onEntryCleaned(e)
-            total = totalBytes()
+
+            // 全体サイズから差分で減算（全走査の繰り返しを避ける）
+            total -= (archiveBytes + cacheBytes)
             if (total <= target) break
         }
     }
