@@ -108,6 +108,8 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
     /**
      * WorkManager の構成を提供する。
      * HiltWorkerFactory を設定し、ビルド種類に応じたログレベルとデフォルトのプロセス名を指定。
+     *
+     * @return WorkManager のグローバル構成
      */
     override val workManagerConfiguration: Configuration
         get() {
@@ -124,6 +126,9 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
      * - GIF/動画フレーム/SVG のデコードを有効化
      * - メモリ/ディスクキャッシュを調整し、再利用性を高める
      * - デバッグロガーを有効化（失敗理由の追跡に有用）
+     *
+     * @param context アプリケーションコンテキスト
+     * @return 構成済みの `ImageLoader`
      */
     override fun newImageLoader(context: Context): ImageLoader {
         val isDebug = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0

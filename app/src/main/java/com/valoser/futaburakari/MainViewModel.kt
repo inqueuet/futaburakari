@@ -142,7 +142,11 @@ class MainViewModel @Inject constructor(
     // 拡張子バリアントの列挙・検証は廃止
 
     /**
-     * HTMLを用いずに404代替探索を行う版（新規）。
+     * HTML を取得せずに、個別 404 発生時の代替探索を行う。
+     *
+     * - `failedUrl` がフル画像系(`/src/`)の場合は失敗URLを記録し、スレ先頭の軽量スニッフで代替URLを試す
+     * - プレビュー系の場合は候補サムネイルの存在確認を軽量並列で行い、見つかれば置換
+     * - 規定回数を超える 404 は停止し、`preferPreviewOnly` または `previewUnavailable` を立てる
      */
     fun fixImageIf404NoHtml(detailUrl: String, failedUrl: String) {
         val guardKey = "$detailUrl|$failedUrl"
@@ -247,7 +251,13 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // スレ htm からの軽量スニッフ（12KB固定）。50〜60行のみを対象に href を抽出して絶対URLを返す。
+    /**
+     * スレッドHTMLの先頭付近から軽量に実画像URLをスニッフする。
+     *
+     * - 先頭12KBのみ取得し、1-based 50〜60行目に含まれる `href` を走査
+     * - `/src/` を含むリンク、または画像/動画拡張子を持つリンクを優先採用
+     * - 見つかった場合は `detailUrl` を基準に絶対URLへ解決して返す
+     */
     private suspend fun sniffFullUrlFromThreadHead(detailUrl: String): String? {
         val bytes = networkClient.fetchRange(detailUrl, 0, 12_288, referer = detailUrl, callTimeoutMs = 800)
             ?: return null
@@ -277,8 +287,8 @@ class MainViewModel @Inject constructor(
 
     /**
      * URL の存在確認を行う。
-     * - まず UA 付き HEAD で確認し、失敗した場合は GET Range(0-0) でフォールバック。
-     * - 一時的なネットワークエラーを考慮し、短い遅延を挟んで2回まで試行する。
+     * - まず UA 付き HEAD で確認し、失敗時は GET Range(0-0) にフォールバック
+     * - 一時的エラーを考慮し、短い遅延を挟みつつ既定2回まで試行
      */
     private suspend fun urlExists(
         url: String,
@@ -343,11 +353,11 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 指定URLからカタログを取得してすぐに表示し、その後に段階的な補正/補完をバックグラウンドで行う。
+     * 指定URLからカタログを取得して即時表示し、その後に段階的な補正/補完を行う。
      * 段階化:
-     *  1) まずプレビューのみで一覧を表示（HEADブロックなし）
+     *  1) プレビューのみで一覧をまず表示（HEADブロックなし）
      *  2) バックグラウンドでプレビューURLのHEAD検証・補正（必要時のみ差分更新）
-     *  3) さらにバックグラウンドでフル画像URLの推測/HEAD検証（差分更新）
+     *  3) バックグラウンドでフル画像URLの推測/HEAD検証（差分更新）
      */
     fun fetchImagesFromUrl(url: String) {
         // 専用 Dispatcher 上で実行し、LiveData の更新のみ Main に切り戻す
@@ -574,7 +584,8 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 実画像の描画成功をUIから通知する。成功時のみ previewOnly を解除し、404カウンタをクリア。
+     * 実画像の描画成功をUIから通知する。
+     * 成功時のみ `preferPreviewOnly` を解除し、404 カウンタをクリアする。
      */
     fun notifyFullImageSuccess(detailUrl: String, loadedUrl: String) {
         viewModelScope.launch {
@@ -594,6 +605,9 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 内部用: フル画像URLの更新を差分反映する。
+     */
     private fun updateFullImageUrl(detailUrl: String, url: String) {
         val item = _imageMap.value[detailUrl] ?: return
         val updated = item.copy(

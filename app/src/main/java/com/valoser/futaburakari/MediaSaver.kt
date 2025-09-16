@@ -23,6 +23,10 @@ import android.net.Uri
  */
 object MediaSaver {
 
+    /**
+     * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する。
+     * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はダウンロードして保存する。
+     */
     suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
         saveMedia(
             context = context,
@@ -35,6 +39,10 @@ object MediaSaver {
         )
     }
 
+    /**
+     * 指定した動画URLを MediaStore（Movies/Futaburakari）へ保存する。
+     * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はダウンロードして保存する。
+     */
     suspend fun saveVideo(context: Context, videoUrl: String, networkClient: NetworkClient) {
         saveMedia(
             context = context,
@@ -132,7 +140,7 @@ object MediaSaver {
         return guessed ?: defaultMime
     }
 
-    // 画像用のMediaStoreコンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）
+    // 画像用の MediaStore コンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）
     private fun imagesContentUri(): Uri {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -141,7 +149,7 @@ object MediaSaver {
         }
     }
 
-    // 動画用のMediaStoreコンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）
+    // 動画用の MediaStore コンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）
     private fun videosContentUri(): Uri {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)

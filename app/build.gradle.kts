@@ -28,12 +28,12 @@ kotlin {
 
 android {
     namespace = "com.valoser.futaburakari"
-    compileSdk = 36 // Android 14（Upside Down Cake）
+    compileSdk = 36 // Android API 36（ターゲットと同一）
 
     defaultConfig {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 36 // Android API 36
         versionCode = 52 // 内部バージョン（Play Console 配信管理で使用）
         versionName = "1.2" // 表示バージョン
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
