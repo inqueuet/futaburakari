@@ -132,9 +132,10 @@ private val headersCache = LruCache<String, NetworkHeaders>(100)
 private fun createImageRequest(
     context: android.content.Context,
     url: String,
-    referer: String?
+    referer: String?,
+    targetSizePx: Int? = null
 ): ImageRequest {
-    val cacheKey = "$url|$referer"
+    val cacheKey = "$url|$referer|$targetSizePx"
     return imageRequestCache.get(cacheKey) ?: run {
         val request = ImageRequest.Builder(context)
             .data(url)
@@ -145,6 +146,10 @@ private fun createImageRequest(
             .apply {
                 if (!referer.isNullOrBlank()) {
                     httpHeaders(createHeaders(referer))
+                }
+                if (targetSizePx != null) {
+                    size(Size(Dimension.Pixels(targetSizePx), Dimension.Pixels(targetSizePx)))
+                    scale(Scale.FIT)
                 }
             }
             .build()
@@ -273,29 +278,7 @@ fun DetailListCompose(
                     for (i in startAhead..endAhead) {
                         val url = urlFor(i) ?: continue
                         if (prefetched.add(url)) {
-                            val req = ImageRequest.Builder(ctx)
-                                .data(url)
-                                .apply {
-                                    val ref = threadUrl
-                                    if (!ref.isNullOrBlank()) {
-                                        httpHeaders(
-                                            NetworkHeaders.Builder()
-                                                .add("Referer", ref)
-                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                                .build()
-                                        )
-                                    }
-                                }
-                                .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
-                                .scale(Scale.FIT)
-                                .precision(Precision.INEXACT)
-                                .memoryCacheKey(ImageKeys.full(url))
-                                .placeholderMemoryCacheKey(ImageKeys.full(url))
-                                .diskCachePolicy(CachePolicy.ENABLED)
-                                .memoryCachePolicy(CachePolicy.ENABLED)
-                                .networkCachePolicy(CachePolicy.ENABLED)
-                                .build()
+                            val req = createImageRequest(ctx, url, threadUrl, screenWidthPx)
                             imageLoader.enqueue(req)
                         }
                     }
@@ -305,29 +288,7 @@ fun DetailListCompose(
                         for (i in startBack..endBack) {
                             val url = urlFor(i) ?: continue
                             if (prefetched.add(url)) {
-                                val req = ImageRequest.Builder(ctx)
-                                    .data(url)
-                                    .apply {
-                                        val ref = threadUrl
-                                        if (!ref.isNullOrBlank()) {
-                                            httpHeaders(
-                                                NetworkHeaders.Builder()
-                                                    .add("Referer", ref)
-                                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                                    .build()
-                                            )
-                                        }
-                                    }
-                                    .size(Size(Dimension.Pixels(screenWidthPx), Dimension.Pixels(screenWidthPx)))
-                                    .scale(Scale.FIT)
-                                    .precision(Precision.INEXACT)
-                                    .memoryCacheKey(ImageKeys.full(url))
-                                    .placeholderMemoryCacheKey(ImageKeys.full(url))
-                                    .diskCachePolicy(CachePolicy.ENABLED)
-                                    .memoryCachePolicy(CachePolicy.ENABLED)
-                                    .networkCachePolicy(CachePolicy.ENABLED)
-                                    .build()
+                                val req = createImageRequest(ctx, url, threadUrl, screenWidthPx)
                                 imageLoader.enqueue(req)
                             }
                         }
@@ -513,8 +474,13 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
+                        val config = androidx.compose.ui.platform.LocalConfiguration.current
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val screenWidthPx = remember(config.screenWidthDp, density) {
+                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+                        }
                         coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.imageUrl, threadUrl),
+                            model = createImageRequest(ctx, item.imageUrl, threadUrl, screenWidthPx),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -568,26 +534,13 @@ fun DetailListCompose(
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
+                        val config = androidx.compose.ui.platform.LocalConfiguration.current
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val screenWidthPx = remember(config.screenWidthDp, density) {
+                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
+                        }
                         coil3.compose.SubcomposeAsyncImage(
-                            model = ImageRequest.Builder(ctx)
-                                .data(item.videoUrl)
-                                .apply {
-                                    val ref = threadUrl
-                                    if (!ref.isNullOrBlank()) {
-                                        httpHeaders(
-                                            NetworkHeaders.Builder()
-                                                .add("Referer", ref)
-                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                                .build()
-                                        )
-                                    }
-                                }
-                                .memoryCacheKey(ImageKeys.full(item.videoUrl))
-                                .placeholderMemoryCacheKey(ImageKeys.full(item.videoUrl))
-                                .precision(coil3.size.Precision.EXACT)
-                                .transitionFactory(CrossfadeTransition.Factory())
-                                .build(),
+                            model = createImageRequest(ctx, item.videoUrl, threadUrl, screenWidthPx),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
