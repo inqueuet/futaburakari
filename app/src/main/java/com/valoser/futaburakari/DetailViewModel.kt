@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
+import androidx.collection.LruCache
 
 /**
  * スレ詳細用の ViewModel。
@@ -80,6 +81,66 @@ class DetailViewModel @Inject constructor(
     private var rawContent: List<DetailContent> = emptyList()
     private val ngStore by lazy { NgStore(appContext) }
 
+    // NGフィルタ結果のキャッシュ
+    private val ngFilterCache = LruCache<Pair<List<DetailContent>, List<NgRule>>, List<DetailContent>>(10)
+
+    // メモリ使用量監視
+    private var lastMemoryCheck = 0L
+    private val memoryCheckIntervalMs = 30000L // 30秒間隔
+
+    /** NGルールが変更された時にキャッシュをクリアする */
+    private fun clearNgFilterCache() {
+        ngFilterCache.evictAll()
+    }
+
+    /**
+     * メモリ使用量をチェックし、80%を超えた場合はキャッシュクリアなどの対応を行う
+     */
+    private fun checkMemoryUsage() {
+        val now = System.currentTimeMillis()
+        if (now - lastMemoryCheck < memoryCheckIntervalMs) return
+        lastMemoryCheck = now
+
+        val runtime = Runtime.getRuntime()
+        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+        val maxMemory = runtime.maxMemory()
+        val memoryUsageRatio = usedMemory.toFloat() / maxMemory.toFloat()
+
+        Log.d("DetailViewModel", "Memory usage: ${(memoryUsageRatio * 100).toInt()}% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)")
+
+        if (memoryUsageRatio > 0.8f) {
+            Log.w("DetailViewModel", "High memory usage detected (${(memoryUsageRatio * 100).toInt()}%), clearing caches")
+
+            // NGフィルタキャッシュをクリア
+            clearNgFilterCache()
+
+            // プレーンテキストキャッシュをクリア
+            _plainTextCache.value = emptyMap()
+
+            // Coilのメモリキャッシュをクリア
+            MyApplication.clearCoilImageCache(appContext)
+
+            // システムにGCを促す（保証されないが、メモリ逼迫時の救済措置）
+            System.gc()
+
+            Log.i("DetailViewModel", "Memory cleanup completed")
+        }
+    }
+
+    /**
+     * メモリ使用量を強制的にチェックして警告を表示する
+     */
+    fun forceMemoryCheck(): String {
+        val runtime = Runtime.getRuntime()
+        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+        val maxMemory = runtime.maxMemory()
+        val memoryUsageRatio = usedMemory.toFloat() / maxMemory.toFloat()
+
+        val coilInfo = MyApplication.getCoilCacheInfo(appContext)
+
+        return "Memory: ${(memoryUsageRatio * 100).toInt()}% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)\nCoil: $coilInfo"
+    }
+
     // ---- Search state (single source of truth) ----
     private var currentSearchQuery: String? = null
     private val _currentQueryFlow = MutableStateFlow<String?>(null)
@@ -119,6 +180,9 @@ class DetailViewModel @Inject constructor(
 
 
             try {
+                // メモリ使用量をチェック
+                checkMemoryUsage()
+
                 if (!forceRefresh) {
                     val cachedDetails = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
                     if (cachedDetails != null) {
@@ -287,35 +351,25 @@ class DetailViewModel @Inject constructor(
             // --- 1. テキストコンテンツの解析 ---
             val html: String
             if (isOp) {
-                // OPの場合、子要素の返信テーブルを除外したクローンを作成
-                val textSourceElement = block.clone().apply {
-                    select("table").remove()       // 返信テーブルを除去
-                    // <img> は一律削除せず、ALT等のテキストに置換して意味を残す
-                    select("img").forEach { img ->
-                        val alt = img.attr("alt").ifBlank { "img" }
-                        img.replaceWith(org.jsoup.nodes.TextNode("[$alt]"))
-                    }
-                    // <a href="..."> は残すのでそのまま
-                }
-
-                // メディアファイルへのリンクをテキストコンテンツから除外
-                //textSourceElement.select("a[target=_blank][href]")
-                //    .filter { a -> isMediaUrl(a.attr("href")) }
-                //    .forEach { it.remove() }
-
-                html = textSourceElement.html()
+                // OPの場合、子要素の返信テーブルを除外して処理
+                val originalHtml = block.html()
+                // テーブルタグを除去（正規表現で効率的に処理）
+                val withoutTables = originalHtml.replace(TABLE_REMOVAL_PATTERN, "")
+                // 画像タグをaltテキストに置換
+                html = withoutTables.replace(IMG_WITH_ALT_PATTERN) { match ->
+                    val alt = match.groupValues[1].ifBlank { "img" }
+                    "[$alt]"
+                }.replace(IMG_PATTERN, "[img]")
             } else {
                 // 返信の場合、.rtdセルからHTMLを取得
                 val rtd = block.selectFirst(".rtd")
                 if (rtd != null) {
-                    val textBlock = rtd.clone().apply {
-                        // <img> は一律削除せず、ALT等のテキストに置換して意味を残す
-                        select("img").forEach { img ->
-                            val alt = img.attr("alt").ifBlank { "img" }
-                            img.replaceWith(org.jsoup.nodes.TextNode("[$alt]"))
-                        }
-                    }
-                    html = textBlock.html()
+                    val rawHtml = rtd.html()
+                    // 画像タグをaltテキストに置換（正規表現で効率的に処理）
+                    html = rawHtml.replace(IMG_WITH_ALT_PATTERN) { match ->
+                        val alt = match.groupValues[1].ifBlank { "img" }
+                        "[$alt]"
+                    }.replace(IMG_PATTERN, "[img]")
                 } else {
                     html = ""
                 }
@@ -327,8 +381,8 @@ class DetailViewModel @Inject constructor(
                     url.substringAfterLast('/').substringBefore(".htm")
                 } else {
                     // Futaba系の "No."（または一部で「No」）に続く数値を安定抽出（改行や余分な空白を許容）
-                    Regex("""No\.?\s*(\n?\s*)?(\d+)""").find(html)?.groupValues?.getOrNull(2)
-                        ?: Regex("""No\.?\s*(\d+)""").find(html)?.groupValues?.getOrNull(1)
+                    NO_PATTERN.find(html)?.groupValues?.getOrNull(2)
+                        ?: NO_PATTERN_FALLBACK.find(html)?.groupValues?.getOrNull(1)
                 }
                 progressivelyLoadedContent.add(
                     DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html, resNum = resNum)
@@ -337,7 +391,7 @@ class DetailViewModel @Inject constructor(
 
             // --- 2. メディアコンテンツの解析 ---
             val mediaLinkNode = block.select("a[target=_blank][href]").firstOrNull { a ->
-                isMediaUrl(a.attr("href"))
+                MEDIA_URL_PATTERN.containsMatchIn(a.attr("href"))
             }
 
             // ループ先頭で isOp を見た後に、そのブロックの resNum を必ず計算しておく
@@ -346,8 +400,8 @@ class DetailViewModel @Inject constructor(
             } else {
                 val rtd = block.selectFirst(".rtd")
                 val htmlForRes = rtd?.html().orEmpty()
-                Regex("""No\.?\s*(\n?\s*)?(\d+)""").find(htmlForRes)?.groupValues?.getOrNull(2)
-                    ?: Regex("""No\.?\s*(\d+)""").find(htmlForRes)?.groupValues?.getOrNull(1)
+                NO_PATTERN.find(htmlForRes)?.groupValues?.getOrNull(2)
+                    ?: NO_PATTERN_FALLBACK.find(htmlForRes)?.groupValues?.getOrNull(1)
             }
 
             mediaLinkNode?.let { link ->
@@ -356,18 +410,18 @@ class DetailViewModel @Inject constructor(
                     val absoluteUrl = URL(URL(url), hrefAttr).toString()
                     val fileName = absoluteUrl.substringAfterLast('/')
 
-                    val lower = hrefAttr.lowercase()
+                    // 効率的な拡張子チェック
+                    val extension = hrefAttr.substringAfterLast('.', "").lowercase()
                     val mediaContent = when {
-                        lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg")
-                                || lower.endsWith(".gif") || lower.endsWith(".webp") -> {
+                        extension in IMAGE_EXTENSIONS -> {
                             DetailContent.Image(
-                                id = "$absoluteUrl#${blockResNum ?: index}", // ★一意化
+                                id = "$absoluteUrl#${blockResNum ?: index}",
                                 imageUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
                             )
                         }
-                        lower.endsWith(".webm") || lower.endsWith(".mp4") -> {
+                        extension in VIDEO_EXTENSIONS -> {
                             DetailContent.Video(
                                 id = "$absoluteUrl#${blockResNum ?: index}",
                                 videoUrl = absoluteUrl,
@@ -441,7 +495,7 @@ class DetailViewModel @Inject constructor(
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
                             /*  画像プロンプトの取得タイムアウト時間はここを変更  */
-                            withTimeoutOrNull(60000L) { MetadataExtractor.extract(appContext, content.imageUrl, networkClient) }
+                            withTimeoutOrNull(15000L) { MetadataExtractor.extract(appContext, content.imageUrl, networkClient) }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata task error for ${content.imageUrl}", e)
                             null
@@ -471,11 +525,11 @@ class DetailViewModel @Inject constructor(
             }
         }
 
-        // 受信・段階反映（250ms間隔でバッチ適用）
+        // 受信・段階反映（500ms間隔でバッチ適用）
         viewModelScope.launch(Dispatchers.Default) {
             val batch = mutableMapOf<String, String?>()
             var lastFlush = System.currentTimeMillis()
-            val flushIntervalMs = 250L
+            val flushIntervalMs = 500L
 
             suspend fun flush(force: Boolean = false) {
                 val now = System.currentTimeMillis()
@@ -539,8 +593,13 @@ class DetailViewModel @Inject constructor(
             // 受信ループ
             for (pair in updates) {
                 batch[pair.first] = pair.second
-                // 必要なら定期的に反映
-                flush(force = false)
+                // バッチサイズ制限: 一定数溜まったら強制反映
+                if (batch.size >= 10) {
+                    flush(force = true)
+                } else {
+                    // 必要なら定期的に反映
+                    flush(force = false)
+                }
             }
             // 終了時の最終反映
             flush(force = true)
@@ -669,21 +728,27 @@ class DetailViewModel @Inject constructor(
      * 解析対象の `<a href>` の抽出フィルタとして使用。
      */
     private fun isMediaUrl(rawHref: String): Boolean {
-        val h = rawHref.lowercase()
-        return h.endsWith(".png") || h.endsWith(".jpg") || h.endsWith(".jpeg") ||
-                h.endsWith(".gif") || h.endsWith(".webp") ||
-                h.endsWith(".webm") || h.endsWith(".mp4")
+        return MEDIA_URL_PATTERN.containsMatchIn(rawHref)
     }
     companion object {
         // プリコンパイル済み正規表現
         private val DOC_WRITE = Regex("""document\.write\s*\(\s*'(.*?)'\s*\)""")
         private val TIME = Regex("""<span id="contdisp">([^<]+)</span>""")
+        private val NO_PATTERN = Regex("""No\.?\s*(\n?\s*)?(\d+)""")
+        private val NO_PATTERN_FALLBACK = Regex("""No\.?\s*(\d+)""")
+        private val MEDIA_URL_PATTERN = Regex("""\.(jpg|jpeg|png|gif|webp|webm|mp4)$""", RegexOption.IGNORE_CASE)
+        private val TABLE_REMOVAL_PATTERN = Regex("<table[^>]*>.*?</table>", RegexOption.DOT_MATCHES_ALL)
+        private val IMG_WITH_ALT_PATTERN = Regex("<img[^>]*alt=[\"']([^\"']*)[\"'][^>]*>")
+        private val IMG_PATTERN = Regex("<img[^>]*>")
+        private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp")
+        private val VIDEO_EXTENSIONS = setOf("webm", "mp4")
     }
 
     // ===== NG フィルタリング =====
 
     /** 現在のNGルールでフィルタを再適用し、表示と検索状態を更新する。 */
     fun reapplyNgFilter() {
+        clearNgFilterCache() // NGルール変更時はキャッシュをクリア
         viewModelScope.launch {
             applyNgAndPostAsync()
         }
@@ -705,7 +770,7 @@ class DetailViewModel @Inject constructor(
             return
         }
 
-        val filtered = withContext(Dispatchers.Default) { filterByNgRules(rawContent, rules) }
+        val filtered = filterByNgRulesOptimized(rawContent, rules)
 
         withContext(Dispatchers.Main) {
             _detailContent.value = filtered
@@ -777,7 +842,68 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** NGルールに基づきテキストと直後のメディア列を間引いた一覧を返す。 */
+    /** NGルールに基づきテキストと直後のメディア列を間引いた一覧を返す（最適化版）。 */
+    private suspend fun filterByNgRulesOptimized(src: List<DetailContent>, rules: List<NgRule>): List<DetailContent> {
+        val cacheKey = src to rules
+        ngFilterCache.get(cacheKey)?.let { return it }
+
+        val result = if (src.size > 100) {
+            // 大きなリストは並列処理で最適化
+            withContext(Dispatchers.Default) {
+                src.chunked(100).map { chunk ->
+                    async {
+                        filterChunk(chunk, rules)
+                    }
+                }.awaitAll().flatten()
+            }
+        } else {
+            // 小さなリストは単一スレッドで処理
+            filterChunk(src, rules)
+        }
+
+        ngFilterCache.put(cacheKey, result)
+        return result
+    }
+
+    private fun filterChunk(src: List<DetailContent>, rules: List<NgRule>): List<DetailContent> {
+        if (src.isEmpty()) return src
+        val out = ArrayList<DetailContent>(src.size)
+        var skipping = false
+        for (item in src) {
+            when (item) {
+                is DetailContent.Text -> {
+                    if (isNgItem(item, rules)) {
+                        skipping = true
+                        continue
+                    } else {
+                        skipping = false
+                        out += item
+                    }
+                }
+                is DetailContent.Image, is DetailContent.Video -> {
+                    if (!skipping) out += item
+                }
+                is DetailContent.ThreadEndTime -> out += item
+            }
+        }
+        return out
+    }
+
+    private fun isNgItem(item: DetailContent.Text, rules: List<NgRule>): Boolean {
+        val id = extractIdFromHtml(item.htmlContent)
+        val body = extractPlainBodyFromPlain(plainTextOf(item))
+        return rules.any { r ->
+            when (r.type) {
+                RuleType.ID -> {
+                    if (id.isNullOrBlank()) false else match(id, r.pattern, r.match ?: MatchType.EXACT, ignoreCase = true)
+                }
+                RuleType.BODY -> match(body, r.pattern, r.match ?: MatchType.SUBSTRING, ignoreCase = true)
+                RuleType.TITLE -> false // タイトルNGはMainActivity側で適用
+            }
+        }
+    }
+
+    /** NGルールに基づきテキストと直後のメディア列を間引いた一覧を返す（従来版）。 */
     private fun filterByNgRules(src: List<DetailContent>, rules: List<NgRule>): List<DetailContent> {
         if (src.isEmpty()) return src
         val out = ArrayList<DetailContent>(src.size)

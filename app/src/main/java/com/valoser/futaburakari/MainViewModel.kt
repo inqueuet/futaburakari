@@ -41,6 +41,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
 import java.net.URL
 import javax.inject.Inject
+import android.util.LruCache
 
 @HiltViewModel
 /**
@@ -59,6 +60,16 @@ class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val networkClient: NetworkClient,
 ) : ViewModel() {
+
+    companion object {
+        // 正規表現をプリコンパイル
+        private val THUMB_PATTERN = Regex("(/thumb/|/cat/|/jun/)")
+        private val EXTENSION_PATTERN = Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
+        private val VALID_EXTENSION_PATTERN = Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
+    }
+
+    // URL推測結果をキャッシュ
+    private val urlGuessCache = LruCache<String, String?>(200)
 
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
@@ -116,6 +127,14 @@ class MainViewModel @Inject constructor(
      * 失敗時は `null` を返す。
      */
     private fun guessFullFromPreview(previewUrl: String): String? {
+        return urlGuessCache.get(previewUrl) ?: run {
+            val result = guessFullFromPreviewInternal(previewUrl)
+            urlGuessCache.put(previewUrl, result)
+            result
+        }
+    }
+
+    private fun guessFullFromPreviewInternal(previewUrl: String): String? {
         return try {
             var s = previewUrl
                 .replace("/thumb/", "/src/")
@@ -123,14 +142,11 @@ class MainViewModel @Inject constructor(
                 .replace("/jun/", "/src/")
 
             // 末尾の "s.ext" を通常の拡張子へ（例: 12345s.jpg -> 12345.jpg）
-            s = s.replace(
-                Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE),
-                ".$1"
-            )
+            s = s.replace(EXTENSION_PATTERN, ".$1")
 
             // 既に正しい拡張子形式ならそのまま、拡張子が無ければ .jpg を仮置き
             s = when {
-                s.contains(Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)) -> s
+                s.contains(VALID_EXTENSION_PATTERN) -> s
                 else -> "$s.jpg"
             }
             URL(s).toString()
@@ -233,7 +249,7 @@ class MainViewModel @Inject constructor(
                     }
                     val candidates = buildCatalogThumbCandidates(detailUrl).filter { it != target.previewUrl }
                     // 404検証の高速化: 直列→限定並列（最大2並列）で探索
-                    val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 2)
+                    val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 1)
                     if (!next.isNullOrBlank() && next != target.previewUrl) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
                         val updated = itemNow.copy(previewUrl = next, urlFixNote = "URL修正: サムネイル候補に置換", previewUnavailable = false)
@@ -293,7 +309,7 @@ class MainViewModel @Inject constructor(
     private suspend fun urlExists(
         url: String,
         referer: String? = null,
-        attempts: Int = 2,
+        attempts: Int = 1,
         callTimeoutMs: Long? = null,
     ): Boolean {
         Log.d("UrlExists", "ENTER urlExists for: $url")
@@ -344,7 +360,7 @@ class MainViewModel @Inject constructor(
             Log.w("UrlExists", "Attempt #${attempt}: Both HEAD and GET Range failed for $url.")
             // 次の試行まで短い遅延を挟む（スパイク回避）。
             if (attempt < attempts) {
-                val backoff = 150L + kotlin.random.Random.nextLong(0, 100)
+                val backoff = 50L + kotlin.random.Random.nextLong(0, 50)
                 delay(backoff)
             }
         }
@@ -520,7 +536,7 @@ class MainViewModel @Inject constructor(
     private suspend fun findFirstExistingUrlLimitedParallel(
         candidates: List<String>,
         referer: String,
-        maxParallel: Int = 2,
+        maxParallel: Int = 1,
     ): String? = coroutineScope {
         if (candidates.isEmpty()) return@coroutineScope null
         val parallel = maxParallel.coerceAtLeast(1)

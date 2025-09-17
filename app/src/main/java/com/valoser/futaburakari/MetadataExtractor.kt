@@ -49,7 +49,7 @@ object MetadataExtractor {
     private var currentPermits: Int = 1
     @Volatile
     private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
-    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 1 // 現仕様では最大4のため常に1
+    private fun permitsForLevel(level: Int): Int = minOf(level, 3) // 最大3並列
     private fun ensureSemaphore(context: Context) {
         val level = AppPreferences.getConcurrencyLevel(context)
         val desired = permitsForLevel(level)
@@ -66,8 +66,8 @@ object MetadataExtractor {
     private const val READ_TIMEOUT_MS = 10_000
 
     private const val FIRST_EXIF_BYTES = 128 * 1024
-    private const val PNG_WINDOW_BYTES = 128 * 1024
-    private const val GLOBAL_MAX_BYTES = 512 * 1024
+    private const val PNG_WINDOW_BYTES = 256 * 1024 // 256KB
+    private const val GLOBAL_MAX_BYTES = 1024 * 1024 // 1MB
 
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()

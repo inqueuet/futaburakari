@@ -54,6 +54,55 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // Coilのメモリキャッシュクリア機能を追加
+    companion object {
+        fun clearCoilImageCache(context: Context) {
+            try {
+                // Coilのシングルトンインスタンスを取得してメモリキャッシュをクリア
+                SingletonImageLoader.get(context).memoryCache?.clear()
+                Log.i("MyApplication", "Coil memory cache cleared")
+            } catch (e: Exception) {
+                Log.w("MyApplication", "Failed to clear Coil memory cache", e)
+            }
+        }
+
+        fun clearCoilDiskCache(context: Context) {
+            try {
+                // ディスクキャッシュも非同期でクリア
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    SingletonImageLoader.get(context).diskCache?.clear()
+                    Log.i("MyApplication", "Coil disk cache cleared")
+                }
+            } catch (e: Exception) {
+                Log.w("MyApplication", "Failed to clear Coil disk cache", e)
+            }
+        }
+
+        fun getCoilCacheInfo(context: Context): String {
+            return try {
+                val imageLoader = SingletonImageLoader.get(context)
+                val memCache = imageLoader.memoryCache
+                val diskCache = imageLoader.diskCache
+
+                val memInfo = if (memCache != null) {
+                    "Memory: ${memCache.size}/${memCache.maxSize} (${(memCache.size.toFloat() / memCache.maxSize * 100).toInt()}%)"
+                } else {
+                    "Memory: N/A"
+                }
+
+                val diskInfo = if (diskCache != null) {
+                    "Disk: ${diskCache.size / 1024 / 1024}MB/${diskCache.maxSize / 1024 / 1024}MB"
+                } else {
+                    "Disk: N/A"
+                }
+
+                "$memInfo, $diskInfo"
+            } catch (e: Exception) {
+                "Cache info unavailable: ${e.message}"
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
 

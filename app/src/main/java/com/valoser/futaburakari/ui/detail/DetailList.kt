@@ -65,6 +65,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -105,6 +106,7 @@ import android.net.Uri
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
+import androidx.collection.LruCache
 
 /**
  * スレ詳細のコンテンツを表示する Compose リスト。
@@ -123,6 +125,46 @@ import androidx.compose.foundation.layout.Column
  * - `listState`/`initialScrollIndex`/`initialScrollOffset`/`onSaveScroll`: スクロール状態の外部管理。
  * - `onVisibleMaxOrdinal`: 画面内で50%以上見えている本文の最大序数を通知。
  */
+
+private val imageRequestCache = LruCache<String, ImageRequest>(500)
+private val headersCache = LruCache<String, NetworkHeaders>(100)
+
+private fun createImageRequest(
+    context: android.content.Context,
+    url: String,
+    referer: String?
+): ImageRequest {
+    val cacheKey = "$url|$referer"
+    return imageRequestCache.get(cacheKey) ?: run {
+        val request = ImageRequest.Builder(context)
+            .data(url)
+            .memoryCacheKey(ImageKeys.full(url))
+            .placeholderMemoryCacheKey(ImageKeys.full(url))
+            .precision(Precision.INEXACT)
+            .transitionFactory(CrossfadeTransition.Factory())
+            .apply {
+                if (!referer.isNullOrBlank()) {
+                    httpHeaders(createHeaders(referer))
+                }
+            }
+            .build()
+        imageRequestCache.put(cacheKey, request)
+        request
+    }
+}
+
+private fun createHeaders(referer: String): NetworkHeaders {
+    return headersCache.get(referer) ?: run {
+        val headers = NetworkHeaders.Builder()
+            .add("Referer", referer)
+            .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .build()
+        headersCache.put(referer, headers)
+        headers
+    }
+}
+
 @Composable
 fun DetailListCompose(
     items: List<DetailContent>,
@@ -193,13 +235,14 @@ fun DetailListCompose(
         val ctx = LocalContext.current
         val imageLoader = ctx.imageLoader
         val prefetched = remember(items) { mutableSetOf<String>() }
+        val lastPrefetchTime = remember { mutableLongStateOf(0L) }
         val config = androidx.compose.ui.platform.LocalConfiguration.current
         val density = LocalDensity.current
         val screenWidthPx = remember(config.screenWidthDp, density) {
             with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
         }
-        val prefetchAhead = 6
-        val prefetchBack = 2
+        val prefetchAhead = 3
+        val prefetchBack = 1
 
         LaunchedEffect(items, internalState) {
             snapshotFlow { internalState.layoutInfo.visibleItemsInfo }
@@ -211,6 +254,10 @@ fun DetailListCompose(
                 .distinctUntilChanged()
                 .collectLatest { (first, last) ->
                     if (items.isEmpty()) return@collectLatest
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastPrefetchTime.value < 100) return@collectLatest
+                    lastPrefetchTime.value = now
                     val startAhead = (last + 1).coerceAtLeast(0)
                     val endAhead = (last + prefetchAhead).coerceAtMost(items.lastIndex)
                     val startBack = (first - prefetchBack).coerceAtLeast(0)
@@ -391,7 +438,7 @@ fun DetailListCompose(
                     // 表示用にトークン周りの空白を補正し、そうだねの楽観カウントを適用
                     val displayText = remember(plain, sodaneCounts.toList()) {
                         // 楽観表示の適用時、行内で No が見つからない場合は自投稿の No をフォールバック
-                        applySodaneDisplay(padTokensForSpacing(plain), sodaneCounts, selfResNum)
+                        applySodaneDisplay(padTokensForSpacingCached(plain), sodaneCounts, selfResNum)
                     }
                     // クリック可能領域（No./引用/ID/URL/ファイル名/そうだね/検索ハイライト）を付与
                     val annotated = remember(displayText, searchQuery, threadTitle) { buildAnnotatedFromText(displayText, searchQuery, threadTitle) }
@@ -467,26 +514,7 @@ fun DetailListCompose(
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
                         coil3.compose.SubcomposeAsyncImage(
-                            model = ImageRequest.Builder(ctx)
-                                .data(item.imageUrl)
-                                .apply {
-                                    val ref = threadUrl
-                                    if (!ref.isNullOrBlank()) {
-                                        httpHeaders(
-                                            NetworkHeaders.Builder()
-                                                .add("Referer", ref)
-                                                .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                                .build()
-                                        )
-                                    }
-                                }
-                                // まず一覧サムネのメモリを即時流用→フルにアップグレード
-                                .memoryCacheKey(ImageKeys.full(item.imageUrl))
-                                .placeholderMemoryCacheKey(ImageKeys.full(item.imageUrl))
-                                .precision(coil3.size.Precision.INEXACT)
-                                .transitionFactory(CrossfadeTransition.Factory())
-                                .build(),
+                            model = createImageRequest(ctx, item.imageUrl, threadUrl),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -917,10 +945,21 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     }
 }
 
+// 文字列処理結果をキャッシュ
+private val stringProcessingCache = LruCache<String, String>(100)
+
 /**
  * プレーンテキスト上で詰まりやすいトークン（ID／No／+／そうだね）の間に空白を補正し、
  * 非引用行で No. を含む行末に そうだね トークンが無ければ付与する。
  */
+private fun padTokensForSpacingCached(src: String): String {
+    return stringProcessingCache.get(src) ?: run {
+        val result = padTokensForSpacing(src)
+        stringProcessingCache.put(src, result)
+        result
+    }
+}
+
 private fun padTokensForSpacing(src: String): String {
     var t = src.replace("\u200B", "")
     // 表記ゆれ吸収: 全角→半角などを正規化し、半角スペースに統一
@@ -974,7 +1013,7 @@ private fun padTokensForSpacing(src: String): String {
  */
 private fun applySodaneDisplay(text: String, overrides: Map<String, Int>, selfResNum: String?): String {
     if (overrides.isEmpty()) return text
-    val sb = StringBuilder()
+    val sb = StringBuilder(text.length + 100) // 事前サイズ指定
     var start = 0
     while (start < text.length) {
         val nl = text.indexOf('\n', start)

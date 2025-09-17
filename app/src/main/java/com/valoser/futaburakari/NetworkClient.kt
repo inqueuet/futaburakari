@@ -205,10 +205,17 @@ class NetworkClient(
                 }
                 val code = resp.code
                 val body = resp.body ?: return@use null
+
+                // Content-Lengthをチェックして無駄な取得を避ける
+                val contentLength = resp.header("Content-Length")?.toLongOrNull()
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
+                if (contentLength != null && contentLength > maxToRead) {
+                    return@use null
+                }
+
                 val bytes = body.byteStream().use { input ->
                     val out = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(16 * 1024)
+                    val buffer = ByteArray(8 * 1024)
                     var remaining = maxToRead
                     while (remaining > 0) {
                         val read = input.read(buffer, 0, buffer.size.coerceAtMost(remaining.toInt()))
