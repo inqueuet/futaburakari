@@ -585,7 +585,7 @@ fun DetailListCompose(
                                 }
                                 .memoryCacheKey(ImageKeys.full(item.videoUrl))
                                 .placeholderMemoryCacheKey(ImageKeys.full(item.videoUrl))
-                                .precision(coil3.size.Precision.INEXACT)
+                                .precision(coil3.size.Precision.EXACT)
                                 .transitionFactory(CrossfadeTransition.Factory())
                                 .build(),
                             contentDescription = null,

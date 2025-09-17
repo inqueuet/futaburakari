@@ -75,7 +75,15 @@ class MainViewModel @Inject constructor(
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
-    private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(linkedMapOf())
+    // サイズ制限付きLinkedHashMapでメモリ使用量を制御
+    private val maxImageCacheSize = 1000
+    private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(
+        object : LinkedHashMap<String, ImageItem>(maxImageCacheSize, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageItem>?): Boolean {
+                return size > maxImageCacheSize
+            }
+        }
+    )
     val imageMap: StateFlow<Map<String, ImageItem>> = _imageMap.asStateFlow()
 
     private val _error = MutableLiveData<String>()
@@ -313,8 +321,8 @@ class MainViewModel @Inject constructor(
         callTimeoutMs: Long? = null,
     ): Boolean {
         Log.d("UrlExists", "ENTER urlExists for: $url")
-        for (attempt in 1..attempts) {
-            Log.d("UrlExists", "BEGIN Attempt #$attempt for: $url")
+        repeat(attempts) { attempt ->
+            Log.d("UrlExists", "BEGIN Attempt #${attempt + 1} for: $url")
             // 1) HEAD with UA
             val okHead = withContext(Dispatchers.IO) {
                 val req = Request.Builder()
@@ -385,35 +393,37 @@ class MainViewModel @Inject constructor(
                 val baseItems = parseItemsFromDocument(document, url)
                 // 既存一覧から detailUrl 単位で状態を引き継ぐ
                 val oldMap = _imageMap.value
-                val merged = baseItems.map { fresh ->
-                    val old = oldMap[fresh.detailUrl]
+                val merged = baseItems.chunked(100).flatMap { chunk ->
+                    chunk.map { fresh ->
+                        val old = oldMap[fresh.detailUrl]
 
-                    // 重要: 成功済みのフルURLがある場合は必ず保持
-                    val existingVerifiedFull = old?.lastVerifiedFullUrl
-                    val existingFull = old?.fullImageUrl
-                    val preferPreview = old?.preferPreviewOnly ?: false
-                    val hadFull = old?.hadFullSuccess ?: false
+                        // 重要: 成功済みのフルURLがある場合は必ず保持
+                        val existingVerifiedFull = old?.lastVerifiedFullUrl
+                        val existingFull = old?.fullImageUrl
+                        val preferPreview = old?.preferPreviewOnly ?: false
+                        val hadFull = old?.hadFullSuccess ?: false
 
-                    // フルURL決定ロジックの修正
-                    val determinedFullUrl = when {
-                        // 検証済みURLがあれば最優先
-                        !existingVerifiedFull.isNullOrBlank() -> existingVerifiedFull
-                        // 既存のフルURLがあれば引き継ぐ
-                        !existingFull.isNullOrBlank() -> existingFull
-                        // preferPreviewOnlyでなければ推測を試みる
-                        !preferPreview -> guessFullFromPreview(fresh.previewUrl)
-                        else -> null
+                        // フルURL決定ロジックの修正
+                        val determinedFullUrl = when {
+                            // 検証済みURLがあれば最優先
+                            !existingVerifiedFull.isNullOrBlank() -> existingVerifiedFull
+                            // 既存のフルURLがあれば引き継ぐ
+                            !existingFull.isNullOrBlank() -> existingFull
+                            // preferPreviewOnlyでなければ推測を試みる
+                            !preferPreview -> guessFullFromPreview(fresh.previewUrl)
+                            else -> null
+                        }
+
+                        fresh.copy(
+                            fullImageUrl = determinedFullUrl,
+                            preferPreviewOnly = preferPreview && existingVerifiedFull.isNullOrBlank(), // 検証済みURLがあればpreferPreviewを解除
+                            hadFullSuccess = hadFull || !existingVerifiedFull.isNullOrBlank(),
+                            urlFixNote = old?.urlFixNote,
+                            previewUnavailable = old?.previewUnavailable ?: false,
+                            lastVerifiedFullUrl = existingVerifiedFull,
+                            failedUrls = old?.failedUrls ?: emptySet()
+                        )
                     }
-
-                    fresh.copy(
-                        fullImageUrl = determinedFullUrl,
-                        preferPreviewOnly = preferPreview && existingVerifiedFull.isNullOrBlank(), // 検証済みURLがあればpreferPreviewを解除
-                        hadFullSuccess = hadFull || !existingVerifiedFull.isNullOrBlank(),
-                        urlFixNote = old?.urlFixNote,
-                        previewUnavailable = old?.previewUnavailable ?: false,
-                        lastVerifiedFullUrl = existingVerifiedFull,
-                        failedUrls = old?.failedUrls ?: emptySet()
-                    )
                 }
                 // 並び順を保ったままマップを差し替え
                 val newMap = LinkedHashMap<String, ImageItem>(merged.size)
@@ -544,16 +554,23 @@ class MainViewModel @Inject constructor(
         while (idx < candidates.size) {
             val end = (idx + parallel).coerceAtMost(candidates.size)
             val batch = candidates.subList(idx, end)
-            val results = batch.map { url ->
+            val results = batch.mapIndexed { batchIndex, url ->
                 async {
                     val ok = runCatching { urlExistsTwoStage(url, referer) }.getOrDefault(false)
-                    ok to url
+                    Triple(ok, url, batchIndex)
                 }
             }.awaitAll()
             // バッチ内の元順で最初の成功を採用
-            val hit = results.firstOrNull { it.first }?.second
+            val hit = results
+                .filter { it.first }
+                .minByOrNull { it.third }
+                ?.second
             if (!hit.isNullOrBlank()) return@coroutineScope hit
             idx = end
+            // CPU負荷軽減のため短時間スリープ
+            if (idx < candidates.size) {
+                kotlinx.coroutines.delay(10L)
+            }
         }
         null
     }

@@ -107,7 +107,9 @@ object MediaSaver {
                             resolver.delete(uri, null, null)
                             return@withContext
                         }
-                        src.use { input -> input.copyTo(outputStream) }
+                        src.use { input ->
+                            input.copyTo(outputStream, bufferSize = 64 * 1024) // 64KBバッファでストリーミング
+                        }
                     } else {
                         val ok = networkClient.downloadTo(url, outputStream)
                         if (!ok) {

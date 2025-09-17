@@ -105,7 +105,7 @@ object MetadataExtractor {
     )
 
     // ===== 結果キャッシュ（陽性のみ保存） =====
-    private const val CACHE_MAX = 256
+    private const val CACHE_MAX = 128 // キャッシュサイズを削減
     private val resultCache: java.util.LinkedHashMap<String, String> = object : java.util.LinkedHashMap<String, String>(CACHE_MAX, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > CACHE_MAX
     }
@@ -530,7 +530,9 @@ object MetadataExtractor {
             }
         }
         val decompressed = try {
-            InflaterInputStream(ByteArrayInputStream(idat.toByteArray())).use { it.readBytes(Int.MAX_VALUE) }
+            InflaterInputStream(ByteArrayInputStream(idat.toByteArray())).use {
+                it.readBytes(limit = 10 * 1024 * 1024) // 10MBに制限
+            }
         } catch (_: Exception) { return null }
 
         val rowSize = ihdr.width * bpp

@@ -269,7 +269,27 @@ class ImageEditActivity : BaseActivity() {
             try {
                 val bmp = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(imageUri!!).use { inputStream ->
-                        BitmapFactory.decodeStream(inputStream)
+                        val options = BitmapFactory.Options().apply {
+                            // メモリ使用量削減のため、まずサイズを取得
+                            inJustDecodeBounds = true
+                        }
+                        BitmapFactory.decodeStream(inputStream, null, options)
+
+                        // 大きすぎる画像はスケールダウン
+                        val maxSize = 2048
+                        val scale = maxOf(
+                            options.outWidth / maxSize,
+                            options.outHeight / maxSize
+                        ).coerceAtLeast(1)
+
+                        contentResolver.openInputStream(imageUri!!).use { inputStream2 ->
+                            options.apply {
+                                inJustDecodeBounds = false
+                                inSampleSize = scale
+                                inPreferredConfig = Bitmap.Config.RGB_565 // メモリ使用量を半分に
+                            }
+                            BitmapFactory.decodeStream(inputStream2, null, options)
+                        }
                     } ?: throw Exception("ビットマップのデコードに失敗")
                 }
 
