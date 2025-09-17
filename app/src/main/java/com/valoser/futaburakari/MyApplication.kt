@@ -195,13 +195,13 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
             .memoryCache(
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.25) // メモリの25%まで
+                    .maxSizePercent(context, 0.35) // メモリの35%まで
                     .build()
             )
             .diskCache(
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
-                    .maxSizeBytes(256L * 1024L * 1024L) // 256MB
+                    .maxSizeBytes(1024L * 1024L * 1024L) // 1GB
                     .build()
             )
             // デバッグビルド時のみ詳細ログを有効化

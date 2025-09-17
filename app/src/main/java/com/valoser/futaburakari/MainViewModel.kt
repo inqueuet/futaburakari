@@ -76,7 +76,7 @@ class MainViewModel @Inject constructor(
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
     // サイズ制限付きLinkedHashMapでメモリ使用量を制御
-    private val maxImageCacheSize = 1000
+    private val maxImageCacheSize = 5000
     private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(
         object : LinkedHashMap<String, ImageItem>(maxImageCacheSize, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageItem>?): Boolean {
