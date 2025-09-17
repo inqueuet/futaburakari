@@ -828,12 +828,44 @@ private fun extractBodyOnlyPlain(plain: String): String {
  */
 private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle: String?): AnnotatedString = buildAnnotatedString {
     append(text)
+
+    // ヘッダー行を識別（日付時刻パターンを含む行のみ、または数字+無念+Name等のメタデータを含む最初の行のみ）
+    fun isHeaderLine(line: String, lineIndex: Int): Boolean {
+        val trimmed = line.trim()
+
+        // 日付時刻パターンがある場合は確実にヘッダー行
+        val hasDateTime = Regex("""\d{2}/\d{2}/\d{2}\(\S+\)\d{2}:\d{2}:\d{2}""").containsMatchIn(trimmed)
+        if (hasDateTime) return true
+
+        // 最初の行で、投稿番号+無念+Name+としあき のようなメタデータパターンがある場合のみ
+        if (lineIndex == 0) {
+            val hasPostNumber = Regex("""^\d+""").containsMatchIn(trimmed)
+            val hasName = Regex("""(?:無念|Name|としあき)""").containsMatchIn(trimmed)
+            val hasNo = Regex("""(?i)No[.\uFF0E]?\s*\d+""").containsMatchIn(trimmed)
+            return hasPostNumber && hasName && hasNo
+        }
+
+        return false
+    }
+
     // No.1234 pattern（ドット任意・全角ドット・空白許容）
     val resRegex = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""")
     resRegex.findAll(text).forEach { m ->
-        val num = m.groupValues[1]
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
-        addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
+        // マッチした位置が含まれる行を特定
+        val matchStart = m.range.first
+        val lineStart = text.lastIndexOf('\n', matchStart).let { if (it < 0) 0 else it + 1 }
+        val lineEnd = text.indexOf('\n', matchStart).let { if (it < 0) text.length else it }
+        val line = text.substring(lineStart, lineEnd)
+
+        // 行インデックスを計算
+        val lineIndex = text.substring(0, lineStart).count { it == '\n' }
+
+        // ヘッダー行内のNo.のみをクリック可能にする
+        if (isHeaderLine(line, lineIndex)) {
+            val num = m.groupValues[1]
+            addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+            addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
+        }
     }
     // 引用行: 行頭の空白や全角＞を許容し、タグには正規化したトークンを渡す
     val lineRegex = Regex("^(?:[\\t \\u3000])*[>＞]+[^\\n]*", RegexOption.MULTILINE)
@@ -901,9 +933,10 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
             addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
         }
     }
-    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— 引用行を除き、No.の直後のみ対象（IDより前のみ）
+    // そうだねトークン（+ / ＋ / そうだね / そうだねxN）— ヘッダー行のみ、引用行を除き、No.の直後のみ対象（IDより前のみ）
     val sodaneRegex = Regex("""(?:そうだねx\d+|そうだね|[+＋])""")
     var start = 0
+    var lineIndex = 0
     while (start <= text.length) {
         val nl = text.indexOf('\n', start)
         val end = if (nl < 0) text.length else nl
@@ -912,15 +945,13 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val trimmed = line.trimStart()
         val isQuote = trimmed.startsWith(">")
 
-        if (!isQuote) {
+        // ヘッダー行で引用でない場合のみ処理
+        if (!isQuote && isHeaderLine(line, lineIndex)) {
             // No.パターンを検出（行頭限定を解除）
             val noRegex = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""")
 
             // 行内の全てのNo.パターンを検出
             noRegex.findAll(line).forEach { noMatch ->
-                // No.の終了位置（行全体に対する位置）
-                val noEnd = lineStart + noMatch.range.last + 1
-
                 // No.の後、次のトークン（ID:など）までの範囲を確認
                 val afterNoStartInLine = noMatch.range.last + 1
                 if (afterNoStartInLine < line.length) {
@@ -941,7 +972,7 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
                 }
             }
         }
-        if (nl < 0) break else start = nl + 1
+        if (nl < 0) break else { start = nl + 1; lineIndex++ }
     }
 }
 
@@ -976,9 +1007,30 @@ private fun padTokensForSpacing(src: String): String {
     t = Regex("""(No[.\uFF0E]?\s*\d+)(?=(?:[+＋]|そうだね))""").replace(t, "$1 ")
     // 複数の空白を1つに正規化
     t = Regex("[ ]{2,}").replace(t, " ")
+    // ヘッダー行を識別する関数（buildAnnotatedFromTextと同じ）
+    fun isHeaderLine(line: String, lineIndex: Int): Boolean {
+        val trimmed = line.trim()
+
+        // 日付時刻パターンがある場合は確実にヘッダー行
+        val hasDateTime = Regex("""\d{2}/\d{2}/\d{2}\(\S+\)\d{2}:\d{2}:\d{2}""").containsMatchIn(trimmed)
+        if (hasDateTime) return true
+
+        // 最初の行で、投稿番号+無念+Name+としあき のようなメタデータパターンがある場合のみ
+        if (lineIndex == 0) {
+            val hasPostNumber = Regex("""^\d+""").containsMatchIn(trimmed)
+            val hasName = Regex("""(?:無念|Name|としあき)""").containsMatchIn(trimmed)
+            val hasNo = Regex("""(?i)No[.\uFF0E]?\s*\d+""").containsMatchIn(trimmed)
+            return hasPostNumber && hasName && hasNo
+        }
+
+        return false
+    }
+
     // No. を含む非引用行の末尾に そうだね トークンが無ければ付与（IDより前の位置のみチェック）
+    // ただし、ヘッダー行のみに適用する
     val sb = StringBuilder()
     var start = 0
+    var lineIndex = 0
     while (start < t.length) {
         val nl = t.indexOf('\n', start)
         val end = if (nl < 0) t.length else nl
@@ -987,21 +1039,33 @@ private fun padTokensForSpacing(src: String): String {
         val isQuote = trimmed.startsWith(">")
         // No. を行内どこでも許容（行頭限定を解除）
         val hasNo = Regex("""(?i)\bNo[.\uFF0E]?\s*\d+\b""").containsMatchIn(trimmed)
-        if (!isQuote && hasNo) {
-            // ID がある場合は、その前の範囲のみをチェックして挿入位置を調整
-            val idMatch = Regex("ID[:：]").find(line)
-            val idIdx = idMatch?.range?.first ?: -1
-            val checkRange = if (idIdx > 0) line.substring(0, idIdx) else line
-            if (!Regex("(?:[+＋]|そうだね(?:x\\d+)?)").containsMatchIn(checkRange)) {
-                if (idIdx > 0) {
-                    sb.append(line.substring(0, idIdx)).append(" そうだね ").append(line.substring(idIdx))
+
+        // ヘッダー行で、引用でなくNo.を含む場合に「そうだね」を追加
+        if (isHeaderLine(line, lineIndex) && !isQuote && hasNo) {
+            // No.の直後に「そうだね」を挿入する
+            val noPattern = Regex("""(?i)(No[.\uFF0E]?\s*\d+)""")
+            val noMatch = noPattern.find(line)
+
+            if (noMatch != null) {
+                val beforeNo = line.substring(0, noMatch.range.first)
+                val noText = noMatch.value
+                val afterNo = line.substring(noMatch.range.last + 1)
+
+                // No.の後に既にそうだねがあるかチェック
+                if (!Regex("""^\s*(?:[+＋]|そうだね(?:x\d+)?)""").containsMatchIn(afterNo)) {
+                    // No.の直後に「そうだね」を挿入
+                    sb.append(beforeNo).append(noText).append(" そうだね").append(afterNo)
                 } else {
-                    sb.append(line).append(" そうだね")
+                    sb.append(line)
                 }
-            } else sb.append(line)
+            } else {
+                sb.append(line)
+            }
         } else sb.append(line)
+
         if (nl >= 0) sb.append('\n')
         start = if (nl < 0) t.length else nl + 1
+        lineIndex++
     }
     return sb.toString()
 }
@@ -1010,25 +1074,53 @@ private fun padTokensForSpacing(src: String): String {
  * 「そうだね」の楽観表示を適用してテキストを上書きする。
  * - そうだねトークン（+／＋／そうだね／そうだねxN）を「そうだねxN」に置換。
  * - 行内から No を抽出できない場合は selfResNum をフォールバックとして使用。
+ * - ヘッダー行のみに適用する。
  */
 private fun applySodaneDisplay(text: String, overrides: Map<String, Int>, selfResNum: String?): String {
     if (overrides.isEmpty()) return text
+
+    // ヘッダー行を識別する関数（buildAnnotatedFromTextと同じ）
+    fun isHeaderLine(line: String, lineIndex: Int): Boolean {
+        val trimmed = line.trim()
+
+        // 日付時刻パターンがある場合は確実にヘッダー行
+        val hasDateTime = Regex("""\d{2}/\d{2}/\d{2}\(\S+\)\d{2}:\d{2}:\d{2}""").containsMatchIn(trimmed)
+        if (hasDateTime) return true
+
+        // 最初の行で、投稿番号+無念+Name+としあき のようなメタデータパターンがある場合のみ
+        if (lineIndex == 0) {
+            val hasPostNumber = Regex("""^\d+""").containsMatchIn(trimmed)
+            val hasName = Regex("""(?:無念|Name|としあき)""").containsMatchIn(trimmed)
+            val hasNo = Regex("""(?i)No[.\uFF0E]?\s*\d+""").containsMatchIn(trimmed)
+            return hasPostNumber && hasName && hasNo
+        }
+
+        return false
+    }
+
     val sb = StringBuilder(text.length + 100) // 事前サイズ指定
     var start = 0
+    var lineIndex = 0
     while (start < text.length) {
         val nl = text.indexOf('\n', start)
         val end = if (nl < 0) text.length else nl
         var line = text.substring(start, end)
-        // No の抽出も寛容に（ドット任意・全角許容・空白改行許容）
-        val m = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""").find(line)
-        val rn = m?.groupValues?.getOrNull(1) ?: selfResNum
-        val cnt = rn?.let { overrides[it] }
-        if (cnt != null && cnt > 0) {
-            line = line.replace(Regex("(?:そうだねx\\d+|そうだね|[+＋])"), "そうだねx$cnt")
+
+        // ヘッダー行のみに楽観表示を適用
+        if (isHeaderLine(line, lineIndex)) {
+            // No の抽出も寛容に（ドット任意・全角許容・空白改行許容）
+            val m = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""").find(line)
+            val rn = m?.groupValues?.getOrNull(1) ?: selfResNum
+            val cnt = rn?.let { overrides[it] }
+            if (cnt != null && cnt > 0) {
+                line = line.replace(Regex("(?:そうだねx\\d+|そうだね|[+＋])"), "そうだねx$cnt")
+            }
         }
+
         sb.append(line)
         if (nl >= 0) sb.append('\n')
         start = if (nl < 0) text.length else nl + 1
+        lineIndex++
     }
     return sb.toString()
 }
