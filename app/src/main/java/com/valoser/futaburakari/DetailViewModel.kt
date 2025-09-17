@@ -995,4 +995,12 @@ class DetailViewModel @Inject constructor(
         val total = searchResultPositions.size
         _searchState.value = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)
     }
+
+    fun downloadImages(urls: List<String>) {
+        viewModelScope.launch {
+            urls.forEach { url ->
+                MediaSaver.saveImage(appContext, url, networkClient)
+            }
+        }
+    }
 }
