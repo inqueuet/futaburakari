@@ -340,6 +340,16 @@ class DetailViewModel @Inject constructor(
                 isMediaUrl(a.attr("href"))
             }
 
+            // ループ先頭で isOp を見た後に、そのブロックの resNum を必ず計算しておく
+            val blockResNum: String? = if (isOp) {
+                url.substringAfterLast('/').substringBefore(".htm")
+            } else {
+                val rtd = block.selectFirst(".rtd")
+                val htmlForRes = rtd?.html().orEmpty()
+                Regex("""No\.?\s*(\n?\s*)?(\d+)""").find(htmlForRes)?.groupValues?.getOrNull(2)
+                    ?: Regex("""No\.?\s*(\d+)""").find(htmlForRes)?.groupValues?.getOrNull(1)
+            }
+
             mediaLinkNode?.let { link ->
                 val hrefAttr = link.attr("href")
                 try {
@@ -351,7 +361,7 @@ class DetailViewModel @Inject constructor(
                         lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg")
                                 || lower.endsWith(".gif") || lower.endsWith(".webp") -> {
                             DetailContent.Image(
-                                id = absoluteUrl,
+                                id = "$absoluteUrl#${blockResNum ?: index}", // ★一意化
                                 imageUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
@@ -359,7 +369,7 @@ class DetailViewModel @Inject constructor(
                         }
                         lower.endsWith(".webm") || lower.endsWith(".mp4") -> {
                             DetailContent.Video(
-                                id = absoluteUrl,
+                                id = "$absoluteUrl#${blockResNum ?: index}",
                                 videoUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
