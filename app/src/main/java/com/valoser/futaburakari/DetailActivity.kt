@@ -253,7 +253,8 @@ class DetailActivity : BaseActivity() {
                         viewModel.checkForUpdates(url, postCount) { _ ->
                             isRequestingMore = false
                         }
-                    }
+                    },
+                    onDownloadImages = { urls -> viewModel.downloadImages(urls) }
                 )
             }
         }

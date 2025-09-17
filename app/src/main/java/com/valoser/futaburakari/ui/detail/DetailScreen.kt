@@ -19,6 +19,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Download
+
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -51,6 +58,7 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.DetailContent
@@ -164,6 +172,7 @@ fun DetailScreenScaffold(
     onVisibleMaxOrdinal: ((Int) -> Unit)? = null,
     // 末尾近辺に到達したときに呼ばれる（無限スクロール用）
     onNearListEnd: (() -> Unit)? = null,
+    onDownloadImages: ((List<String>) -> Unit)? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
 ) {
@@ -184,6 +193,9 @@ fun DetailScreenScaffold(
             // NG追加（Compose）用の状態
             var pendingNgId by remember { mutableStateOf<String?>(null) }
             var pendingNgBody by remember { mutableStateOf<String?>(null) }
+
+            var selectionMode by remember { mutableStateOf(false) }
+            val selectedImages = remember { mutableStateListOf<String>() }
 
     Scaffold(
         topBar = {
@@ -659,16 +671,41 @@ fun DetailScreenScaffold(
                         onDismissRequest = { openMediaSheet = false },
                         sheetState = sheetState
                     ) {
+                        if (selectionMode) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(onClick = {
+                                    selectionMode = false
+                                    selectedImages.clear()
+                                }) {
+                                    Icon(Icons.Rounded.Close, contentDescription = "Cancel Selection")
+                                }
+                                Text(
+                                    text = "${selectedImages.size}件選択中",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                IconButton(onClick = {
+                                    onDownloadImages?.invoke(selectedImages.toList())
+                                    selectionMode = false
+                                    selectedImages.clear()
+                                }) {
+                                    Icon(Icons.Rounded.Download, contentDescription = "Download Selected")
+                                }
+                            }
+                        }
                         // Compose 標準のグリッドで表示
                         val images = remember(items) {
-                            data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String)
+                            data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String, val prompt: String?)
                             var lastTextIdx = -1
                             val out = ArrayList<Entry>()
                             for (i in items.indices) {
                                 when (val c = items[i]) {
                                     is com.valoser.futaburakari.DetailContent.Text -> lastTextIdx = i
-                                    is com.valoser.futaburakari.DetailContent.Image -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.imageUrl)
-                                    is com.valoser.futaburakari.DetailContent.Video -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.videoUrl)
+                                    is com.valoser.futaburakari.DetailContent.Image -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.imageUrl, c.prompt)
+                                    is com.valoser.futaburakari.DetailContent.Video -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.videoUrl, c.prompt)
                                     else -> {}
                                 }
                             }
@@ -812,32 +849,80 @@ fun DetailScreenScaffold(
                                 .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .build()
 
-                            coil3.compose.SubcomposeAsyncImage(
-                                model = request,
-                                imageLoader = ctx.imageLoader,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .padding(LocalSpacing.current.xs)
-                                    .fillMaxWidth()
-                                    .height(110.dp)
-                                    .clickable {
-                                        scope.launch { listState.scrollToItem(e.parentTextIdx) }
-                                        openMediaSheet = false
-                                    },
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                loading = {
-                                    androidx.compose.foundation.layout.Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(110.dp)
-                                    ) {
-                                        androidx.compose.material3.CircularProgressIndicator(
+                            val isSelected = selectedImages.contains(e.url)
+
+                            Box(modifier = Modifier.padding(LocalSpacing.current.xs)
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onLongPress = {
+                                            selectionMode = true
+                                            selectedImages.add(e.url)
+                                        },
+                                        onTap = {
+                                            if (selectionMode) {
+                                                if (isSelected) {
+                                                    selectedImages.remove(e.url)
+                                                } else {
+                                                    selectedImages.add(e.url)
+                                                }
+                                            } else {
+                                                scope.launch { listState.scrollToItem(e.parentTextIdx) }
+                                                openMediaSheet = false
+                                            }
+                                        }
+                                    )
+                                }
+                            ) {
+                                coil3.compose.SubcomposeAsyncImage(
+                                    model = request,
+                                    imageLoader = ctx.imageLoader,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(110.dp),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    loading = {
+                                        androidx.compose.foundation.layout.Box(
                                             modifier = Modifier
-                                                .align(androidx.compose.ui.Alignment.Center)
+                                                .fillMaxWidth()
+                                                .height(110.dp)
+                                        ) {
+                                            androidx.compose.material3.CircularProgressIndicator(
+                                                modifier = Modifier
+                                                    .align(androidx.compose.ui.Alignment.Center)
+                                            )
+                                        }
+                                    }
+                                )
+                                if (!e.prompt.isNullOrBlank()) {
+                                    Text(
+                                        text = "AI",
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .background(
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                                                shape = RoundedCornerShape(bottomStart = 4.dp)
+                                            )
+                                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.align(Alignment.Center)
                                         )
                                     }
                                 }
-                            )
+                            }
                         }
                     }
                 }
@@ -972,26 +1057,33 @@ fun DetailScreenScaffold(
                     )
                 }
                 // タイトルクリック要求: items が利用可能なタイミングで処理し、成功時にだけフラグを落とす
-                if (titleClickPending) {
-                    val firstIdx = items.indexOfFirst { it is DetailContent.Text }
-                    if (firstIdx >= 0) {
-                        val src = items[firstIdx] as DetailContent.Text
-                        // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
-                        val byContent = buildSelfAndBackrefItems(items, src, extraCandidates = setOf(title), plainTextOf = plainOfProvider)
-                        // 2) OP の No. を使った引用先（>>No など番号参照）
-                        val rn = src.resNum
-                        val byNumber = if (!rn.isNullOrBlank()) buildResReferencesItems(items, rn, plainTextOf = plainOfProvider) else emptyList()
-                        // 3) 結合 + 重複排除（表示順は byContent → byNumber）
-                        if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
-                            val seen = HashSet<String>()
-                            val merged = ArrayList<DetailContent>(byContent.size + byNumber.size)
-                            for (c in byContent + byNumber) if (seen.add(c.id)) merged += c
-                            resRefItems = merged
+                LaunchedEffect(titleClickPending, items) {
+                    if (titleClickPending) {
+                        val firstIdx = items.indexOfFirst { it is DetailContent.Text }
+                        if (firstIdx >= 0) {
+                            val src = items[firstIdx] as DetailContent.Text
+                            val snapshot = items
+                            // 1) OP（引用元）＋タイトル内容での引用先（内容一致）
+                            val byContent = withContext(Dispatchers.Default) {
+                                buildSelfAndBackrefItems(snapshot, src, extraCandidates = setOf(title), plainTextOf = plainOfProvider)
+                            }
+                            // 2) OP の No. を使った引用先（>>No など番号参照）
+                            val rn = src.resNum
+                            val byNumber = if (!rn.isNullOrBlank()) {
+                                withContext(Dispatchers.Default) {
+                                    buildResReferencesItems(snapshot, rn, plainTextOf = plainOfProvider)
+                                }
+                            } else emptyList()
+                            // 3) 結合 + 重複排除（表示順は byContent → byNumber）
+                            if (byContent.isNotEmpty() || byNumber.isNotEmpty()) {
+                                val seen = HashSet<String>()
+                                val merged = ArrayList<DetailContent>(byContent.size + byNumber.size)
+                                for (c in byContent + byNumber) if (seen.add(c.id)) merged += c
+                                resRefItems = merged
+                            }
                             titleClickPending = false
                         }
-                        // ヒットしなければフラグは保持
                     }
-                    // items がまだ空の場合もフラグ保持
                 }
             }
         }

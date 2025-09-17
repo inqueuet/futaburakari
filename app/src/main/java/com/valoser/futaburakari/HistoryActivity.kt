@@ -60,7 +60,9 @@ class HistoryActivity : BaseActivity() {
 
                 // 履歴を取得し、必要に応じてクリーンアップ/フィルタ/ソートして `entries` を更新する
                 suspend fun computeAndSet() {
-                    val base = HistoryManager.getAll(this@HistoryActivity)
+                    val base = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        HistoryManager.getAll(this@HistoryActivity)
+                    }
                     // 自動クリーンアップ: ユーザー設定の上限(MB)を超えないよう、
                     // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
                     runCatching {
