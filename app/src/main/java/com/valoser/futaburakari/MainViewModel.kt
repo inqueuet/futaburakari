@@ -68,8 +68,8 @@ class MainViewModel @Inject constructor(
         private val VALID_EXTENSION_PATTERN = Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
     }
 
-    // URL推測結果をキャッシュ
-    private val urlGuessCache = LruCache<String, String?>(200)
+    // URL推測結果をキャッシュ（サイズを拡大）
+    private val urlGuessCache = LruCache<String, String?>(500)
 
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)

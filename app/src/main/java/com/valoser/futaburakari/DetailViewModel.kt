@@ -81,12 +81,13 @@ class DetailViewModel @Inject constructor(
     private var rawContent: List<DetailContent> = emptyList()
     private val ngStore by lazy { NgStore(appContext) }
 
-    // NGフィルタ結果のキャッシュ
-    private val ngFilterCache = LruCache<Pair<List<DetailContent>, List<NgRule>>, List<DetailContent>>(10)
+    // NGフィルタ結果のキャッシュ（サイズを大幅に拡大）
+    private val ngFilterCache = LruCache<Pair<List<DetailContent>, List<NgRule>>, List<DetailContent>>(50)
 
-    // メモリ使用量監視
+    // 適応的メモリ監視
     private var lastMemoryCheck = 0L
-    private val memoryCheckIntervalMs = 30000L // 30秒間隔
+    private var memoryCheckIntervalMs = 30000L // 初期値30秒、使用率に応じて調整
+    private var consecutiveHighMemoryCount = 0
 
     /** NGルールが変更された時にキャッシュをクリアする */
     private fun clearNgFilterCache() {
@@ -94,7 +95,9 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * メモリ使用量をチェックし、80%を超えた場合はキャッシュクリアなどの対応を行う
+     * 適応的メモリ使用量監視
+     * - メモリ使用率に応じて監視間隔を動的調整
+     * - 段階的なクリーンアップ処理
      */
     private fun checkMemoryUsage() {
         val now = System.currentTimeMillis()
@@ -108,22 +111,46 @@ class DetailViewModel @Inject constructor(
 
         Log.d("DetailViewModel", "Memory usage: ${(memoryUsageRatio * 100).toInt()}% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)")
 
-        if (memoryUsageRatio > 0.8f) {
-            Log.w("DetailViewModel", "High memory usage detected (${(memoryUsageRatio * 100).toInt()}%), clearing caches")
+        // 使用率に応じて監視間隔を調整
+        memoryCheckIntervalMs = when {
+            memoryUsageRatio > 0.85f -> 10000L  // 85%超: 10秒間隔
+            memoryUsageRatio > 0.70f -> 20000L  // 70%超: 20秒間隔
+            else -> 30000L                      // 通常: 30秒間隔
+        }
 
-            // NGフィルタキャッシュをクリア
-            clearNgFilterCache()
+        when {
+            memoryUsageRatio > 0.85f -> {
+                Log.w("DetailViewModel", "Critical memory usage (${(memoryUsageRatio * 100).toInt()}%), performing aggressive cleanup")
+                consecutiveHighMemoryCount++
 
-            // プレーンテキストキャッシュをクリア
-            _plainTextCache.value = emptyMap()
+                // アグレッシブクリーンアップ
+                clearNgFilterCache()
+                _plainTextCache.value = emptyMap()
+                MyApplication.clearCoilImageCache(appContext)
 
-            // Coilのメモリキャッシュをクリア
-            MyApplication.clearCoilImageCache(appContext)
+                // 連続して高メモリ状態が続く場合はさらに強力な対策
+                if (consecutiveHighMemoryCount >= 3) {
+                    Log.w("DetailViewModel", "Persistent high memory usage, forcing garbage collection")
+                    System.gc()
+                    consecutiveHighMemoryCount = 0
+                }
+            }
+            memoryUsageRatio > 0.75f -> {
+                Log.w("DetailViewModel", "High memory usage (${(memoryUsageRatio * 100).toInt()}%), performing selective cleanup")
+                consecutiveHighMemoryCount++
 
-            // システムにGCを促す（保証されないが、メモリ逼迫時の救済措置）
-            System.gc()
-
-            Log.i("DetailViewModel", "Memory cleanup completed")
+                // 選択的クリーンアップ：半分のキャッシュをクリア
+                clearNgFilterCache()
+                val currentPlainCache = _plainTextCache.value
+                if (currentPlainCache.size > 20) {
+                    val reducedCache = currentPlainCache.toList().takeLast(10).toMap()
+                    _plainTextCache.value = reducedCache
+                }
+            }
+            else -> {
+                // メモリ使用量が正常範囲に戻った
+                consecutiveHighMemoryCount = 0
+            }
         }
     }
 

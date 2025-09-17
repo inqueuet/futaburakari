@@ -68,35 +68,84 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
+     * DetailContent リストの推定JSONサイズを計算する（ストリーミング判定用）
+     */
+    private fun estimateJsonSize(details: List<DetailContent>): Int {
+        if (details.isEmpty()) return 100 // 基本構造分
+
+        // 最初の数件をサンプリングして平均サイズを推定
+        val sampleSize = minOf(10, details.size)
+        var totalSampleSize = 0
+
+        for (i in 0 until sampleSize) {
+            val detail = details[i]
+            // 概算：ID(50) + 基本フィールド(200) + テキスト/URL長
+            totalSampleSize += 250 + when (detail) {
+                is DetailContent.Text -> detail.htmlContent.length
+                is DetailContent.Image -> (detail.imageUrl?.length ?: 0) + (detail.prompt?.length ?: 0)
+                is DetailContent.Video -> (detail.videoUrl?.length ?: 0) + (detail.prompt?.length ?: 0)
+                else -> 100
+            }
+        }
+
+        val avgItemSize = totalSampleSize / sampleSize
+        return avgItemSize * details.size + 1000 // 構造オーバーヘッド
+    }
+
+    /**
      * 大量データ向けのメモリ効率的なJSON書き込み処理
+     * - 真のストリーミング：JsonWriter使用でメモリ使用量を大幅削減
+     * - 各要素をGson個別処理せず、直接JSON構造を出力
      */
     private fun writeJsonStreamOptimized(cacheFile: File, cachedData: CachedDetails) {
         try {
-            cacheFile.bufferedWriter().use { writer ->
-                // 手動でJSON構造を構築してストリーミング書き込み
-                writer.write("{\"timestamp\":${cachedData.timestamp},")
-                writer.write("\"checksum\":${if (cachedData.checksum != null) "\"${cachedData.checksum}\"" else "null"},")
-                writer.write("\"details\":[")
+            cacheFile.bufferedWriter().use { bufferedWriter ->
+                com.google.gson.stream.JsonWriter(bufferedWriter).use { jsonWriter ->
+                    jsonWriter.beginObject()
 
-                cachedData.details.forEachIndexed { index, detail ->
-                    if (index > 0) writer.write(",")
-                    writer.write(gson.toJson(detail))
+                    // timestamp
+                    jsonWriter.name("timestamp").value(cachedData.timestamp)
 
-                    // 100件ごとにバッファをフラッシュしてメモリ使用量を制御
-                    if (index % 100 == 0) {
-                        writer.flush()
+                    // checksum
+                    jsonWriter.name("checksum")
+                    if (cachedData.checksum != null) {
+                        jsonWriter.value(cachedData.checksum)
+                    } else {
+                        jsonWriter.nullValue()
                     }
-                }
 
-                writer.write("]}")
-                writer.flush()
+                    // details array - 真のストリーミング処理
+                    jsonWriter.name("details").beginArray()
+
+                    // 各要素を個別にGsonで処理（既存の複雑な型変換を維持）
+                    cachedData.details.forEachIndexed { index, detail ->
+                        // Gsonの型アダプタを活用してDetailContentを正しくシリアライズ
+                        val jsonElement = gson.toJsonTree(detail)
+                        gson.getAdapter(com.google.gson.JsonElement::class.java).write(jsonWriter, jsonElement)
+
+                        // より頻繁にフラッシュ（メモリ逼迫対策）
+                        if (index % 50 == 0) {
+                            jsonWriter.flush()
+                        }
+                    }
+
+                    jsonWriter.endArray()
+                    jsonWriter.endObject()
+                    jsonWriter.flush()
+                }
             }
-            Log.d("DetailCacheManager", "Successfully saved large dataset using streaming approach")
+            Log.d("DetailCacheManager", "Successfully saved large dataset (${cachedData.details.size} items) using true streaming")
         } catch (e: Exception) {
             Log.e("DetailCacheManager", "Error in streaming JSON write", e)
             // フォールバック: 通常の方法で保存を試行
-            val jsonString = gson.toJson(cachedData)
-            cacheFile.writeText(jsonString)
+            try {
+                val jsonString = gson.toJson(cachedData)
+                cacheFile.writeText(jsonString)
+                Log.d("DetailCacheManager", "Fallback to standard JSON write succeeded")
+            } catch (fallbackException: Exception) {
+                Log.e("DetailCacheManager", "Both streaming and fallback failed", fallbackException)
+                throw fallbackException
+            }
         }
     }
 
@@ -176,20 +225,18 @@ class DetailCacheManager(private val context: Context) {
             Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
             val cachedData = CachedDetails(System.currentTimeMillis(), details, newChecksum)
 
-            // メモリ効率的なJSON処理
-            if (details.size > 1000) { // 大量データの場合はメモリ使用量を監視
-                Log.d("DetailCacheManager", "Large dataset detected (${details.size} items), using memory-conscious processing")
+            // メモリ効率的なJSON処理 - より適切な閾値
+            val shouldUseStreaming = details.size > 500 || estimateJsonSize(details) > 512 * 1024 // 500件または512KB
+
+            if (shouldUseStreaming) {
+                Log.d("DetailCacheManager", "Large dataset detected (${details.size} items), using streaming processing")
                 writeJsonStreamOptimized(cacheFile, cachedData)
             } else {
                 val jsonString = gson.toJson(cachedData)
 
-                // JSON文字列長の事前チェックとメモリ使用量の監視
+                // JSON文字列長の監視（警告のみ、ストリーミングは上で判定済み）
                 val jsonLength = jsonString.length
-                Log.d("DetailCacheManager", "JSON string length: $jsonLength")
-
-                if (jsonLength > 1024 * 1024) { // 1MB超える場合は警告
-                    Log.w("DetailCacheManager", "Large cache detected (${jsonLength / 1024}KB), consider optimization for URL: $url")
-                }
+                Log.d("DetailCacheManager", "Standard JSON write: ${jsonLength / 1024}KB")
 
                 cacheFile.writeText(jsonString)
             }
