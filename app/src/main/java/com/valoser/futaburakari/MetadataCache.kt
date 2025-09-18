@@ -6,6 +6,13 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import androidx.collection.LruCache
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.jvm.Volatile
 
 /**
  * メタデータ抽出結果の永続キャッシュ（uriOrUrl -> prompt）。
@@ -26,6 +33,11 @@ class MetadataCache(context: Context) {
     private var isDirty = false
     private var lastSaveTime = 0L
     private val saveDelayMs = 5000L // 5秒間の遅延書き込み
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
+    private var pendingMap: MutableMap<String, Entry>? = null
+    @Volatile
+    private var saveJob: Job? = null
 
     private data class Entry(val value: String, val ts: Long)
 
@@ -40,16 +52,36 @@ class MetadataCache(context: Context) {
         }
     }
 
+    @Synchronized
     private fun saveDelayed(map: MutableMap<String, Entry>) {
         isDirty = true
         val now = System.currentTimeMillis()
+        pendingMap = map
 
-        // 遅延書き込み：連続するput()をバッチ処理
-        if (now - lastSaveTime > saveDelayMs) {
-            save(map)
-            isDirty = false
-            lastSaveTime = now
+        if (now - lastSaveTime >= saveDelayMs) {
+            savePendingNow()
+        } else {
+            scheduleSave()
         }
+    }
+
+    @Synchronized
+    private fun scheduleSave() {
+        saveJob?.cancel()
+        saveJob = scope.launch {
+            delay(saveDelayMs)
+            savePendingNow()
+        }
+    }
+
+    @Synchronized
+    private fun savePendingNow() {
+        val map = pendingMap ?: return
+        save(map)
+        pendingMap = null
+        saveJob = null
+        isDirty = false
+        lastSaveTime = System.currentTimeMillis()
     }
 
     private fun save(map: MutableMap<String, Entry>) {
@@ -64,14 +96,10 @@ class MetadataCache(context: Context) {
     /**
      * 強制的に保留中の変更をディスクに保存する
      */
+    @Synchronized
     fun flush() {
-        if (isDirty) {
-            val map = load()
-            // メモリキャッシュの内容をディスクマップに反映
-            map.putAll(memoryCache.snapshot())
-            save(map)
-            isDirty = false
-        }
+        saveJob?.cancel()
+        savePendingNow()
     }
 
     /**
@@ -136,4 +164,3 @@ class MetadataCache(context: Context) {
         saveDelayed(diskMap)
     }
 }
-
