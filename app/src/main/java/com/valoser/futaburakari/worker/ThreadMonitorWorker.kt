@@ -343,12 +343,16 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val f = fileFor(remoteUrl)
             if (f.exists() && f.length() > 0) return f.toURI().toString()
             return try {
-                f.outputStream().use { out ->
+                f.outputStream().buffered(64 * 1024).use { out ->
                     val ok = networkClient.downloadTo(remoteUrl, out)
                     if (!ok) return null
                 }
                 f.toURI().toString()
             } catch (_: Exception) {
+                // ダウンロード失敗時は部分ファイルを削除
+                if (f.exists()) {
+                    f.delete()
+                }
                 null
             }
         }

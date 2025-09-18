@@ -9,6 +9,8 @@ import com.google.gson.reflect.TypeToken
 // DetailContentTypeAdapterFactory が同一パッケージ or 適切にインポートされていることを前提に使用します。
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import java.security.MessageDigest
 import com.valoser.futaburakari.UrlNormalizer
 
 /**
@@ -17,7 +19,8 @@ import com.valoser.futaburakari.UrlNormalizer
  */
 data class CachedDetails(
     val timestamp: Long,
-    val details: List<DetailContent>
+    val details: List<DetailContent>,
+    val checksum: String? = null
 )
 
 /**
@@ -29,6 +32,11 @@ data class CachedDetails(
 class DetailCacheManager(private val context: Context) {
 
     private val gson: Gson // ★ 初期化を init ブロックに移動
+    private val writeExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DetailCacheManager-Writer").apply {
+            isDaemon = true // デーモンスレッドとして設定
+        }
+    }
     private val cacheDir: File by lazy {
         File(context.cacheDir, "details_cache").apply { mkdirs() }
     }
@@ -44,6 +52,105 @@ class DetailCacheManager(private val context: Context) {
             .registerTypeAdapterFactory(DetailContentTypeAdapterFactory()) // Factory を登録
             // .serializeNulls() // 必要であれば null も JSON に出力する設定
             .create()
+    }
+
+    /**
+     * 詳細リストのチェックサムを計算する（差分更新用）
+     */
+    private fun calculateChecksum(details: List<DetailContent>): String {
+        // より効率的なハッシュ計算（メモリ使用量とGC負荷を削減）
+        val digest = MessageDigest.getInstance("MD5")
+
+        // StringBuilder使用でメモリ確保回数を削減
+        val content = StringBuilder()
+        details.forEachIndexed { index, detail ->
+            if (index > 0) content.append("|")
+            content.append(detail.id).append(":").append(detail.hashCode())
+        }
+
+        return digest.digest(content.toString().toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * DetailContent リストの推定JSONサイズを計算する（ストリーミング判定用）
+     */
+    private fun estimateJsonSize(details: List<DetailContent>): Int {
+        if (details.isEmpty()) return 100 // 基本構造分
+
+        // 最初の数件をサンプリングして平均サイズを推定
+        val sampleSize = minOf(10, details.size)
+        var totalSampleSize = 0
+
+        for (i in 0 until sampleSize) {
+            val detail = details[i]
+            // 概算：ID(50) + 基本フィールド(200) + テキスト/URL長
+            totalSampleSize += 250 + when (detail) {
+                is DetailContent.Text -> detail.htmlContent.length
+                is DetailContent.Image -> (detail.imageUrl?.length ?: 0) + (detail.prompt?.length ?: 0)
+                is DetailContent.Video -> (detail.videoUrl?.length ?: 0) + (detail.prompt?.length ?: 0)
+                else -> 100
+            }
+        }
+
+        val avgItemSize = totalSampleSize / sampleSize
+        return avgItemSize * details.size + 1000 // 構造オーバーヘッド
+    }
+
+    /**
+     * 大量データ向けのメモリ効率的なJSON書き込み処理
+     * - 真のストリーミング：JsonWriter使用でメモリ使用量を大幅削減
+     * - 各要素をGson個別処理せず、直接JSON構造を出力
+     */
+    private fun writeJsonStreamOptimized(cacheFile: File, cachedData: CachedDetails) {
+        try {
+            cacheFile.bufferedWriter().use { bufferedWriter ->
+                com.google.gson.stream.JsonWriter(bufferedWriter).use { jsonWriter ->
+                    jsonWriter.beginObject()
+
+                    // timestamp
+                    jsonWriter.name("timestamp").value(cachedData.timestamp)
+
+                    // checksum
+                    jsonWriter.name("checksum")
+                    if (cachedData.checksum != null) {
+                        jsonWriter.value(cachedData.checksum)
+                    } else {
+                        jsonWriter.nullValue()
+                    }
+
+                    // details array - 真のストリーミング処理
+                    jsonWriter.name("details").beginArray()
+
+                    // 各要素を個別にGsonで処理（既存の複雑な型変換を維持）
+                    cachedData.details.forEachIndexed { index, detail ->
+                        // Gsonの型アダプタを活用してDetailContentを正しくシリアライズ
+                        val jsonElement = gson.toJsonTree(detail)
+                        gson.getAdapter(com.google.gson.JsonElement::class.java).write(jsonWriter, jsonElement)
+
+                        // より頻繁にフラッシュ（メモリ逼迫対策）
+                        if (index % 50 == 0) {
+                            jsonWriter.flush()
+                        }
+                    }
+
+                    jsonWriter.endArray()
+                    jsonWriter.endObject()
+                    jsonWriter.flush()
+                }
+            }
+            Log.d("DetailCacheManager", "Successfully saved large dataset (${cachedData.details.size} items) using true streaming")
+        } catch (e: Exception) {
+            Log.e("DetailCacheManager", "Error in streaming JSON write", e)
+            // フォールバック: 通常の方法で保存を試行
+            try {
+                val jsonString = gson.toJson(cachedData)
+                cacheFile.writeText(jsonString)
+                Log.d("DetailCacheManager", "Fallback to standard JSON write succeeded")
+            } catch (fallbackException: Exception) {
+                Log.e("DetailCacheManager", "Both streaming and fallback failed", fallbackException)
+                throw fallbackException
+            }
+        }
     }
 
     /**
@@ -81,32 +188,74 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * スレ詳細をキャッシュファイルへ保存し、レガシー名のファイルがあれば削除する。
+     * スレ詳細をキャッシュファイルへ非同期保存し、レガシー名のファイルがあれば削除する。
+     * 既存内容と同一（details が変化なし）の場合は書き換えをスキップする。
+     */
+    fun saveDetailsAsync(url: String, details: List<DetailContent>) {
+        writeExecutor.execute {
+            saveDetailsInternal(url, details)
+        }
+    }
+
+    /**
+     * スレ詳細をキャッシュファイルへ同期保存し、レガシー名のファイルがあれば削除する。
      * 既存内容と同一（details が変化なし）の場合は書き換えをスキップする。
      */
     fun saveDetails(url: String, details: List<DetailContent>) {
+        saveDetailsInternal(url, details)
+    }
+
+    private fun saveDetailsInternal(url: String, details: List<DetailContent>) {
         val cacheFile = getCacheFile(url)
         val legacyFile = getLegacyCacheFile(url)
+        val newChecksum = calculateChecksum(details)
 
         try {
-            // 既存内容と差分がなければスキップ（タイムスタンプの差だけで書き換えない）
+            // 既存内容と差分がなければスキップ（チェックサムで高速比較）
             if (cacheFile.exists()) {
                 runCatching {
                     val existing = gson.fromJson(cacheFile.readText(), object : TypeToken<CachedDetails>() {}.type) as CachedDetails
-                    if (existing.details == details) {
-                        Log.d("DetailCacheManager", "Cache unchanged for $url; skipping write.")
+                    if (existing.checksum == newChecksum) {
+                        Log.d("DetailCacheManager", "Cache unchanged for $url (checksum match); skipping write.")
                         // レガシー名の掃除だけは行う
                         runCatching { if (legacyFile.exists()) legacyFile.delete() }
                         return
                     }
+                }.onFailure {
+                    Log.w("DetailCacheManager", "Failed to read existing cache for checksum comparison, proceeding with write")
                 }
             }
 
             Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
-            val cachedData = CachedDetails(System.currentTimeMillis(), details)
-            val jsonString = gson.toJson(cachedData)
-            Log.d("DetailCacheManager", "JSON string length: ${jsonString.length}")
-            cacheFile.writeText(jsonString)
+            val cachedData = CachedDetails(System.currentTimeMillis(), details, newChecksum)
+
+            // デバイス性能に応じた動的閾値設定
+            val runtime = Runtime.getRuntime()
+            val availableMemory = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+            val memoryMB = availableMemory / 1024 / 1024
+
+            // デバイス性能に応じて閾値を調整
+            val (sizeThreshold, memoryThreshold) = when {
+                memoryMB < 256 -> Pair(200, 256 * 1024) // 低メモリ端末
+                memoryMB < 512 -> Pair(350, 384 * 1024) // 中程度メモリ端末
+                memoryMB < 1024 -> Pair(500, 512 * 1024) // 標準メモリ端末
+                else -> Pair(750, 768 * 1024) // 高メモリ端末
+            }
+
+            val shouldUseStreaming = details.size > sizeThreshold || estimateJsonSize(details) > memoryThreshold
+
+            if (shouldUseStreaming) {
+                Log.d("DetailCacheManager", "Large dataset detected (${details.size} items), using streaming processing")
+                writeJsonStreamOptimized(cacheFile, cachedData)
+            } else {
+                val jsonString = gson.toJson(cachedData)
+
+                // JSON文字列長の監視（警告のみ、ストリーミングは上で判定済み）
+                val jsonLength = jsonString.length
+                Log.d("DetailCacheManager", "Standard JSON write: ${jsonLength / 1024}KB")
+
+                cacheFile.writeText(jsonString)
+            }
             // 旧ファイルが残っていれば削除（容量節約）
             runCatching { if (legacyFile.exists()) legacyFile.delete() }
             Log.d("DetailCacheManager", "Successfully saved cache for $url")
@@ -147,10 +296,32 @@ class DetailCacheManager(private val context: Context) {
             val jsonString = cacheFile.readText()
             Log.d("DetailCacheManager", "JSON string loaded, length: ${jsonString.length}")
 
-            val cachedData: CachedDetails = gson.fromJson(jsonString, object : TypeToken<CachedDetails>() {}.type)
-            Log.d("DetailCacheManager", "Successfully parsed JSON for $url")
+            // 基本的なJSONフォーマットチェック
+            if (jsonString.isBlank() || !jsonString.trim().startsWith("{")) {
+                Log.w("DetailCacheManager", "Invalid JSON format in cache file for $url")
+                cacheFile.delete()
+                return null
+            }
 
-            // 期限切れによる削除は行わない（アーカイブ閲覧を優先）
+            val cachedData: CachedDetails = gson.fromJson(jsonString, object : TypeToken<CachedDetails>() {}.type)
+
+            // データ整合性チェック
+            if (cachedData.details.isEmpty()) {
+                Log.w("DetailCacheManager", "Empty details in cache for $url")
+                return null
+            }
+
+            // チェックサムがあれば検証
+            cachedData.checksum?.let { savedChecksum ->
+                val currentChecksum = calculateChecksum(cachedData.details)
+                if (savedChecksum != currentChecksum) {
+                    Log.w("DetailCacheManager", "Checksum mismatch for cached data $url. Data may be corrupted.")
+                    cacheFile.delete()
+                    return null
+                }
+            }
+
+            Log.d("DetailCacheManager", "Successfully validated cache for $url")
             Log.d("DetailCacheManager", "Cache hit for $url. Returning ${cachedData.details.size} items.")
             cachedData.details
         } catch (e: Exception) {
@@ -344,6 +515,36 @@ class DetailCacheManager(private val context: Context) {
             }
             archiveRoot.mkdirs()
         }
+    }
+
+    /**
+     * リソースのクリーンアップ（アプリ終了時などに呼び出す）
+     */
+    fun cleanup() {
+        if (!writeExecutor.isShutdown) {
+            writeExecutor.shutdown()
+            try {
+                if (!writeExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    Log.w("DetailCacheManager", "Executor did not terminate gracefully, forcing shutdown")
+                    writeExecutor.shutdownNow()
+                    // 再度終了を待機
+                    if (!writeExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                        Log.e("DetailCacheManager", "Executor did not terminate after forced shutdown")
+                    }
+                }
+            } catch (e: InterruptedException) {
+                Log.w("DetailCacheManager", "Interrupted while waiting for executor termination")
+                Thread.currentThread().interrupt()
+                writeExecutor.shutdownNow()
+            }
+        }
+    }
+
+    /**
+     * ファイナライザ：GC時の安全策としてリソースクリーンアップ
+     */
+    protected fun finalize() {
+        cleanup()
     }
 
     /** 文字列の SHA-256 ハッシュ（小文字16進）を返す。 */

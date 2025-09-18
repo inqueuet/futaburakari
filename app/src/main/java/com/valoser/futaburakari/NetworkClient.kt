@@ -32,15 +32,60 @@ class NetworkClient(
     // ===== Cookie ユーティリティ =====
     // "k=v; k2=v2" 形式のCookie文字列をMapへ分解
     private fun parseCookieString(s: String?): Map<String, String> =
-        s?.split(";")?.mapNotNull {
-            val i = it.indexOf('=')
-            if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+        s?.split(";")?.mapNotNull { segment ->
+            val trimmed = segment.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+
+            val i = trimmed.indexOf('=')
+            if (i < 0) {
+                // '='がない場合は値なしのCookieとして扱う（空文字列値）
+                trimmed to ""
+            } else if (i == 0) {
+                // '='が先頭にある場合は無効なCookieとして無視
+                null
+            } else {
+                // 通常のkey=value形式
+                val key = trimmed.substring(0, i).trim()
+                val value = if (i + 1 < trimmed.length) {
+                    trimmed.substring(i + 1).trim()
+                } else {
+                    "" // '='の後に何もない場合は空文字列
+                }
+                if (key.isEmpty()) null else key to value
+            }
         }?.toMap() ?: emptyMap()
 
-    // 複数ソースのCookie文字列をマージ（同名は後勝ち）
+    // 複数ソースのCookie文字列を安全にマージ
     private fun mergeCookies(vararg cookieStrs: String?): String? {
-        val merged = cookieStrs.fold(emptyMap<String, String>()) { acc, s -> acc + parseCookieString(s) }
-        return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
+        // セキュリティクリティカルなCookieキー（認証系）
+        val criticalKeys = setOf("session", "sessionid", "auth", "token", "csrf", "xsrf", "jwt")
+
+        val merged = mutableMapOf<String, String>()
+        val criticalCookies = mutableMapOf<String, String>()
+
+        // 各Cookie文字列を処理（左から右へ、後勝ち）
+        cookieStrs.forEach { cookieStr ->
+            val parsed = parseCookieString(cookieStr)
+            parsed.forEach { (key, value) ->
+                val normalizedKey = key.lowercase()
+                if (criticalKeys.any { normalizedKey.contains(it) }) {
+                    // クリティカルなCookieは別途管理
+                    criticalCookies[key] = value
+                } else {
+                    // 通常のCookieは単純に後勝ち
+                    merged[key] = value
+                }
+            }
+        }
+
+        // クリティカルなCookieを最後に追加（優先度を保証）
+        merged.putAll(criticalCookies)
+
+        return if (merged.isEmpty()) {
+            null
+        } else {
+            merged.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        }
     }
 
     /**
@@ -70,10 +115,15 @@ class NetworkClient(
             .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
-            val call = httpClient.newCall(req).apply {
-                if (callTimeoutMs != null) {
-                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
-                }
+            val call = if (callTimeoutMs != null) {
+                // タイムアウト指定がある場合は専用クライアントを作成
+                val timeoutClient = httpClient.newBuilder()
+                    .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+                    .build()
+                timeoutClient.newCall(req)
+            } else {
+                // デフォルトクライアントを使用
+                httpClient.newCall(req)
             }
             call.executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use false
@@ -83,7 +133,8 @@ class NetworkClient(
                 }
                 true
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Download failed for URL: $url", e)
             false
         }
     }
@@ -133,7 +184,8 @@ class NetworkClient(
                 if (!resp.isSuccessful) return@use null
                 resp.body?.bytes()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Failed to fetch bytes for URL: $url", e)
             null
         }
     }
@@ -157,7 +209,8 @@ class NetworkClient(
                 if (!resp.isSuccessful) return@use null
                 resp.header("Content-Length")?.toLongOrNull()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Failed to get content length for URL: $url", e)
             null
         }
     }
@@ -194,10 +247,15 @@ class NetworkClient(
             .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
-            val call = httpClient.newCall(req).apply {
-                if (callTimeoutMs != null) {
-                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
-                }
+            val call = if (callTimeoutMs != null) {
+                // タイムアウト指定がある場合は専用クライアントを作成
+                val timeoutClient = httpClient.newBuilder()
+                    .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+                    .build()
+                timeoutClient.newCall(req)
+            } else {
+                // デフォルトクライアントを使用
+                httpClient.newCall(req)
             }
             call.executeAsync().use { resp ->
                 if (!resp.isSuccessful) {
@@ -205,10 +263,17 @@ class NetworkClient(
                 }
                 val code = resp.code
                 val body = resp.body ?: return@use null
+
+                // Content-Lengthをチェックして無駄な取得を避ける
+                val contentLength = resp.header("Content-Length")?.toLongOrNull()
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
+                if (contentLength != null && contentLength > maxToRead) {
+                    return@use null
+                }
+
                 val bytes = body.byteStream().use { input ->
                     val out = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(16 * 1024)
+                    val buffer = ByteArray(8 * 1024)
                     var remaining = maxToRead
                     while (remaining > 0) {
                         val read = input.read(buffer, 0, buffer.size.coerceAtMost(remaining.toInt()))
@@ -227,7 +292,8 @@ class NetworkClient(
                 }
                 return@use bytes
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Failed to fetch range for URL: $url", e)
             null
         }
     }

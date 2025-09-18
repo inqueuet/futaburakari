@@ -49,7 +49,7 @@ object MetadataExtractor {
     private var currentPermits: Int = 1
     @Volatile
     private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
-    private fun permitsForLevel(level: Int): Int = if (level <= 4) 1 else 1 // 現仕様では最大4のため常に1
+    private fun permitsForLevel(level: Int): Int = minOf(level, 3) // 最大3並列
     private fun ensureSemaphore(context: Context) {
         val level = AppPreferences.getConcurrencyLevel(context)
         val desired = permitsForLevel(level)
@@ -66,8 +66,8 @@ object MetadataExtractor {
     private const val READ_TIMEOUT_MS = 10_000
 
     private const val FIRST_EXIF_BYTES = 128 * 1024
-    private const val PNG_WINDOW_BYTES = 128 * 1024
-    private const val GLOBAL_MAX_BYTES = 512 * 1024
+    private const val PNG_WINDOW_BYTES = 256 * 1024 // 256KB
+    private const val GLOBAL_MAX_BYTES = 1024 * 1024 // 1MB
 
     private val PROMPT_KEYS = setOf("parameters", "Description", "Comment", "prompt")
     private val GSON = Gson()
@@ -105,7 +105,7 @@ object MetadataExtractor {
     )
 
     // ===== 結果キャッシュ（陽性のみ保存） =====
-    private const val CACHE_MAX = 256
+    private const val CACHE_MAX = 128 // キャッシュサイズを削減
     private val resultCache: java.util.LinkedHashMap<String, String> = object : java.util.LinkedHashMap<String, String>(CACHE_MAX, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > CACHE_MAX
     }
@@ -530,7 +530,9 @@ object MetadataExtractor {
             }
         }
         val decompressed = try {
-            InflaterInputStream(ByteArrayInputStream(idat.toByteArray())).use { it.readBytes(Int.MAX_VALUE) }
+            InflaterInputStream(ByteArrayInputStream(idat.toByteArray())).use {
+                it.readBytes(limit = 10 * 1024 * 1024) // 10MBに制限
+            }
         } catch (_: Exception) { return null }
 
         val rowSize = ihdr.width * bpp
