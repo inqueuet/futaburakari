@@ -8,10 +8,11 @@ import androidx.collection.LruCache
 import android.util.Log
 
 /**
- * Persistent cache for metadata extraction results: (uriOrUrl -> prompt).
- * - Backed by SharedPreferences as a JSON map of key -> Entry(value, ts).
- * - Simple LRU-ish eviction by timestamp when exceeding max entries.
- * - Added in-memory LRU cache to avoid frequent SharedPreferences access.
+ * メタデータ抽出結果の永続キャッシュ（uriOrUrl -> prompt）。
+ *
+ * - SharedPreferences を利用し JSON 形式で key -> Entry(value, ts) を管理
+ * - 最大エントリ数を超過時はタイムスタンプベースの LRU 削除を実行
+ * - 頻繁な SharedPreferences アクセスを避けるためインメモリ LRU キャッシュを併用
  */
 class MetadataCache(context: Context) {
     private val prefs: SharedPreferences =
