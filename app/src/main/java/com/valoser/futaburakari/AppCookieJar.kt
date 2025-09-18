@@ -61,13 +61,25 @@ object AppCookieJar : CookieJar {
         val storedCookies = cookieStore[host]?.toMutableList() ?: mutableListOf()
 
         val iterator = storedCookies.iterator()
+        var removedAny = false
         while (iterator.hasNext()) {
             val cookie = iterator.next()
             if (cookie.expiresAt <= System.currentTimeMillis()) {
                 iterator.remove()
+                removedAny = true
                 Log.d("AppCookieJar", "Removed expired cookie for $host: ${cookie.name}")
             }
         }
+
+        // 期限切れCookieを削除した場合、cookieStoreを更新
+        if (removedAny) {
+            if (storedCookies.isEmpty()) {
+                cookieStore.remove(host)
+            } else {
+                cookieStore[host] = storedCookies
+            }
+        }
+
         Log.d("AppCookieJar", "Loading cookies for $host (found ${storedCookies.size}): ${storedCookies.map { it.name + "=" + it.value }}")
         return storedCookies
     }
