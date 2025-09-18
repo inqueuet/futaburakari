@@ -182,9 +182,27 @@ class ReplyRepository @Inject constructor(
             val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
 
             fun parseCookieString(s: String?): Map<String, String> =
-                s?.split(";")?.mapNotNull {
-                    val i = it.indexOf('=')
-                    if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+                s?.split(";")?.mapNotNull { segment ->
+                    val trimmed = segment.trim()
+                    if (trimmed.isEmpty()) return@mapNotNull null
+
+                    val i = trimmed.indexOf('=')
+                    if (i < 0) {
+                        // '='がない場合は値なしのCookieとして扱う（空文字列値）
+                        trimmed to ""
+                    } else if (i == 0) {
+                        // '='が先頭にある場合は無効なCookieとして無視
+                        null
+                    } else {
+                        // 通常のkey=value形式
+                        val key = trimmed.substring(0, i).trim()
+                        val value = if (i + 1 < trimmed.length) {
+                            trimmed.substring(i + 1).trim()
+                        } else {
+                            "" // '='の後に何もない場合は空文字列
+                        }
+                        if (key.isEmpty()) null else key to value
+                    }
                 }?.toMap() ?: emptyMap()
 
             // 同名キーは WebView を優先

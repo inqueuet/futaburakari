@@ -32,15 +32,60 @@ class NetworkClient(
     // ===== Cookie ユーティリティ =====
     // "k=v; k2=v2" 形式のCookie文字列をMapへ分解
     private fun parseCookieString(s: String?): Map<String, String> =
-        s?.split(";")?.mapNotNull {
-            val i = it.indexOf('=')
-            if (i < 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+        s?.split(";")?.mapNotNull { segment ->
+            val trimmed = segment.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+
+            val i = trimmed.indexOf('=')
+            if (i < 0) {
+                // '='がない場合は値なしのCookieとして扱う（空文字列値）
+                trimmed to ""
+            } else if (i == 0) {
+                // '='が先頭にある場合は無効なCookieとして無視
+                null
+            } else {
+                // 通常のkey=value形式
+                val key = trimmed.substring(0, i).trim()
+                val value = if (i + 1 < trimmed.length) {
+                    trimmed.substring(i + 1).trim()
+                } else {
+                    "" // '='の後に何もない場合は空文字列
+                }
+                if (key.isEmpty()) null else key to value
+            }
         }?.toMap() ?: emptyMap()
 
-    // 複数ソースのCookie文字列をマージ（同名は後勝ち）
+    // 複数ソースのCookie文字列を安全にマージ
     private fun mergeCookies(vararg cookieStrs: String?): String? {
-        val merged = cookieStrs.fold(emptyMap<String, String>()) { acc, s -> acc + parseCookieString(s) }
-        return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }.ifBlank { null }
+        // セキュリティクリティカルなCookieキー（認証系）
+        val criticalKeys = setOf("session", "sessionid", "auth", "token", "csrf", "xsrf", "jwt")
+
+        val merged = mutableMapOf<String, String>()
+        val criticalCookies = mutableMapOf<String, String>()
+
+        // 各Cookie文字列を処理（左から右へ、後勝ち）
+        cookieStrs.forEach { cookieStr ->
+            val parsed = parseCookieString(cookieStr)
+            parsed.forEach { (key, value) ->
+                val normalizedKey = key.lowercase()
+                if (criticalKeys.any { normalizedKey.contains(it) }) {
+                    // クリティカルなCookieは別途管理
+                    criticalCookies[key] = value
+                } else {
+                    // 通常のCookieは単純に後勝ち
+                    merged[key] = value
+                }
+            }
+        }
+
+        // クリティカルなCookieを最後に追加（優先度を保証）
+        merged.putAll(criticalCookies)
+
+        return if (merged.isEmpty()) {
+            null
+        } else {
+            merged.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        }
     }
 
     /**
@@ -70,14 +115,15 @@ class NetworkClient(
             .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
-            val call = httpClient.newCall(req).apply {
-                if (callTimeoutMs != null) {
-                    try {
-                        timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS)
-                    } catch (e: Exception) {
-                        Log.w("NetworkClient", "Failed to set timeout: ${e.message}")
-                    }
-                }
+            val call = if (callTimeoutMs != null) {
+                // タイムアウト指定がある場合は専用クライアントを作成
+                val timeoutClient = httpClient.newBuilder()
+                    .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+                    .build()
+                timeoutClient.newCall(req)
+            } else {
+                // デフォルトクライアントを使用
+                httpClient.newCall(req)
             }
             call.executeAsync().use { resp ->
                 if (!resp.isSuccessful) return@use false
@@ -198,14 +244,15 @@ class NetworkClient(
             .apply { if (!referer.isNullOrBlank()) header("Referer", referer) }
             .build()
         return@withContext try {
-            val call = httpClient.newCall(req).apply {
-                if (callTimeoutMs != null) {
-                    try {
-                        timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS)
-                    } catch (e: Exception) {
-                        Log.w("NetworkClient", "Failed to set timeout: ${e.message}")
-                    }
-                }
+            val call = if (callTimeoutMs != null) {
+                // タイムアウト指定がある場合は専用クライアントを作成
+                val timeoutClient = httpClient.newBuilder()
+                    .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+                    .build()
+                timeoutClient.newCall(req)
+            } else {
+                // デフォルトクライアントを使用
+                httpClient.newCall(req)
             }
             call.executeAsync().use { resp ->
                 if (!resp.isSuccessful) {
