@@ -12,11 +12,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * ブックマーク管理画面のViewModel（Hilt DI 対応）。
+ * BookmarkManager を介してブックマークのCRUD操作を行い、UI状態をフローで公開する。
+ */
 @HiltViewModel
 class BookmarkViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
+    /** UI表示用のブックマークリスト（StateFlow で購読可能）。*/
     private val _bookmarks = MutableStateFlow<List<Bookmark>>(emptyList())
     val bookmarks: StateFlow<List<Bookmark>> = _bookmarks.asStateFlow()
 
@@ -24,12 +29,14 @@ class BookmarkViewModel @Inject constructor(
         loadBookmarks()
     }
 
+    /** ストレージからブックマーク一覧を読み込み、UI状態を更新する。 */
     private fun loadBookmarks() {
         viewModelScope.launch(Dispatchers.IO) {
             _bookmarks.value = BookmarkManager.getBookmarks(context)
         }
     }
 
+    /** 新しいブックマークをストレージに追加し、UI状態を再読み込みする。 */
     fun addBookmark(bookmark: Bookmark) {
         viewModelScope.launch(Dispatchers.IO) {
             BookmarkManager.addBookmark(context, bookmark)
@@ -37,6 +44,10 @@ class BookmarkViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 既存ブックマークを更新し、UI状態を再読み込みする。
+     * 編集対象が現在選択中のブックマークの場合は、選択URLも同時に更新する。
+     */
     fun updateBookmark(oldUrl: String, newBookmark: Bookmark) {
         viewModelScope.launch(Dispatchers.IO) {
             BookmarkManager.updateBookmark(context, oldUrl, newBookmark)
@@ -47,6 +58,10 @@ class BookmarkViewModel @Inject constructor(
         }
     }
 
+    /**
+     * ブックマークをストレージから削除し、UI状態を再読み込みする。
+     * 削除対象が現在選択中のブックマークの場合は、選択状態もクリアする。
+     */
     fun deleteBookmark(bookmark: Bookmark) {
         viewModelScope.launch(Dispatchers.IO) {
             BookmarkManager.deleteBookmark(context, bookmark)
@@ -57,6 +72,7 @@ class BookmarkViewModel @Inject constructor(
         }
     }
 
+    /** 現在選択中のブックマークURLを保存する（メイン画面での利用用）。 */
     fun saveSelectedBookmarkUrl(url: String?) {
         viewModelScope.launch(Dispatchers.IO) {
             BookmarkManager.saveSelectedBookmarkUrl(context, url)

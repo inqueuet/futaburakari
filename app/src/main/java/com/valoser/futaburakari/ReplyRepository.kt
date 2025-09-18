@@ -182,9 +182,27 @@ class ReplyRepository @Inject constructor(
             val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
 
             fun parseCookieString(s: String?): Map<String, String> =
-                s?.split(";")?.mapNotNull {
-                    val i = it.indexOf('=')
-                    if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+                s?.split(";")?.mapNotNull { segment ->
+                    val trimmed = segment.trim()
+                    if (trimmed.isEmpty()) return@mapNotNull null
+
+                    val i = trimmed.indexOf('=')
+                    if (i < 0) {
+                        // '='がない場合は値なしのCookieとして扱う（空文字列値）
+                        trimmed to ""
+                    } else if (i == 0) {
+                        // '='が先頭にある場合は無効なCookieとして無視
+                        null
+                    } else {
+                        // 通常のkey=value形式
+                        val key = trimmed.substring(0, i).trim()
+                        val value = if (i + 1 < trimmed.length) {
+                            trimmed.substring(i + 1).trim()
+                        } else {
+                            "" // '='の後に何もない場合は空文字列
+                        }
+                        if (key.isEmpty()) null else key to value
+                    }
                 }?.toMap() ?: emptyMap()
 
             // 同名キーは WebView を優先
@@ -215,13 +233,15 @@ class ReplyRepository @Inject constructor(
             val req = rb.build()
 
             httpClient.newCall(req).executeAsync().use { resp ->
-                val raw = resp.body?.bytes() ?: ByteArray(0)
-                val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
-                //android.util.Log.d("ReplyRepo", "resp.head=${decoded.trim().take(200)}")
                 if (!resp.isSuccessful) {
-                    //android.util.Log.w("ReplyRepo", "HTTP ${resp.code} ${resp.message}")
+                    val raw = resp.body?.bytes() ?: ByteArray(0)
+                    val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
                     throw IOException("HTTP ${resp.code} ${resp.message}\n$decoded")
                 }
+
+                val body = resp.body ?: throw IOException("Empty response body")
+                val raw = body.bytes()
+                val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
 
                  val trimmed = decoded.trim()
                 // 1) JSON なら thisno を抜いて返す（例: {"status":"ok","thisno":1345629398,...}）
@@ -271,8 +291,11 @@ class ReplyRepository @Inject constructor(
                     if (!resp.isSuccessful) {
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }
-                    val body = resp.body?.bytes() ?: ByteArray(0)
-                    val html = EncodingUtils.decode(body, resp.header("Content-Type"))
+                    val body = resp.body ?: throw IOException("Empty response body")
+                    val html = body.byteStream().use { inputStream ->
+                        val raw = inputStream.readBytes()
+                        EncodingUtils.decode(raw, resp.header("Content-Type"))
+                    }
                     val doc = Jsoup.parse(html, threadUrl)
                     val fm = doc.selectFirst("form#fm") ?: doc.selectFirst("form")
                     val hash = fm?.selectFirst("input[name=hash]")?.attr("value").orEmpty()
@@ -283,16 +306,37 @@ class ReplyRepository @Inject constructor(
         }
 
     /**
-     * 代表的なエラーワードを含むかどうかの簡易判定。
+     * エラー判定の精度向上：HTMLタグを除去してからマッチング、文脈を考慮した判定
      */
     private fun looksLikeError(html: String): Boolean {
-        val t = html
-        // 代表的な失敗キーワードを簡易判定（必要に応じて追加）
-        val words = listOf(
-            "エラー", "error", "連投", "本文なし", "不正", "ブロック", "拒否", "失敗",
-            "NG", "荒らし", "規制", "拒絶", "同一内容", "時間をおいて", "Cookie", "IP", "環境変数"
+        // HTMLタグを除去してプレーンテキストで判定
+        val plainText = try {
+            org.jsoup.Jsoup.parse(html).text()
+        } catch (e: Exception) {
+            html.replace(Regex("<[^>]+>"), "")
+        }
+
+        // より正確なエラーパターン判定
+        val errorPatterns = listOf(
+            Regex("エラー.*発生", RegexOption.IGNORE_CASE),
+            Regex("書.*込.*失敗|投稿.*失敗", RegexOption.IGNORE_CASE),
+            Regex("連続.*投稿|連投", RegexOption.IGNORE_CASE),
+            Regex("本文.*必要|本文.*なし", RegexOption.IGNORE_CASE),
+            Regex("規制.*中|ブロック.*中", RegexOption.IGNORE_CASE),
+            Regex("時間.*おいて|しばらく.*待", RegexOption.IGNORE_CASE),
+            Regex("Cookie.*無効|セッション.*切れ", RegexOption.IGNORE_CASE)
         )
-        return words.any { t.contains(it, ignoreCase = true) }
+
+        // 成功を示すキーワードがある場合は成功として扱う
+        val successPatterns = listOf(
+            Regex("書.*込.*まし|送信.*完了|投稿.*完了", RegexOption.IGNORE_CASE),
+            Regex("No\\.?\\s*\\d{6,}", RegexOption.IGNORE_CASE)
+        )
+
+        val hasSuccessPattern = successPatterns.any { it.containsMatchIn(plainText) }
+        if (hasSuccessPattern) return false
+
+        return errorPatterns.any { it.containsMatchIn(plainText) }
     }
 
     /**

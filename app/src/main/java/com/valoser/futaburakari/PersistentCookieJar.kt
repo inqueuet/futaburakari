@@ -263,10 +263,17 @@ object PersistentCookieJar : CookieJar {
     }
 
     /**
-     * Cookie のパス属性がリクエストパスに適合するかを判定します（前方一致）。
+     * Cookie のパス属性がリクエストパスに適合するかを判定します（RFC6265準拠）。
      */
     private fun pathMatches(cookiePath: String, requestPath: String): Boolean {
-        return requestPath.startsWith(cookiePath)
+        // RFC6265 Section 5.1.4 に従った実装
+        if (cookiePath == requestPath) return true
+        if (requestPath.startsWith(cookiePath)) {
+            if (cookiePath.endsWith("/")) return true
+            val nextCharIndex = cookiePath.length
+            if (nextCharIndex < requestPath.length && requestPath[nextCharIndex] == '/') return true
+        }
+        return false
     }
 
     /**

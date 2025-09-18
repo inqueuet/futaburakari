@@ -52,7 +52,60 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
     lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は 遅延）
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val supervisorJob = SupervisorJob()
+    private val applicationScope = CoroutineScope(supervisorJob + Dispatchers.Default)
+
+    // グローバルリソース管理
+    private val cacheManager by lazy { com.valoser.futaburakari.cache.DetailCacheManager(this) }
+
+    // Coilのメモリキャッシュクリア機能を追加
+    companion object {
+        fun clearCoilImageCache(context: Context) {
+            try {
+                // Coilのシングルトンインスタンスを取得してメモリキャッシュをクリア
+                SingletonImageLoader.get(context).memoryCache?.clear()
+                Log.i("MyApplication", "Coil memory cache cleared")
+            } catch (e: Exception) {
+                Log.w("MyApplication", "Failed to clear Coil memory cache", e)
+            }
+        }
+
+        fun clearCoilDiskCache(context: Context) {
+            try {
+                // ディスクキャッシュも非同期でクリア
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    SingletonImageLoader.get(context).diskCache?.clear()
+                    Log.i("MyApplication", "Coil disk cache cleared")
+                }
+            } catch (e: Exception) {
+                Log.w("MyApplication", "Failed to clear Coil disk cache", e)
+            }
+        }
+
+        fun getCoilCacheInfo(context: Context): String {
+            return try {
+                val imageLoader = SingletonImageLoader.get(context)
+                val memCache = imageLoader.memoryCache
+                val diskCache = imageLoader.diskCache
+
+                val memInfo = if (memCache != null) {
+                    "Memory: ${memCache.size}/${memCache.maxSize} (${(memCache.size.toFloat() / memCache.maxSize * 100).toInt()}%)"
+                } else {
+                    "Memory: N/A"
+                }
+
+                val diskInfo = if (diskCache != null) {
+                    "Disk: ${diskCache.size / 1024 / 1024}MB/${diskCache.maxSize / 1024 / 1024}MB"
+                } else {
+                    "Disk: N/A"
+                }
+
+                "$memInfo, $diskInfo"
+            } catch (e: Exception) {
+                "Cache info unavailable: ${e.message}"
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -146,17 +199,51 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
             .memoryCache(
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.25) // メモリの25%まで
+                    .maxSizePercent(context, 0.35) // メモリの35%まで
                     .build()
             )
             .diskCache(
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
-                    .maxSizeBytes(256L * 1024L * 1024L) // 256MB
+                    .maxSizeBytes(5L * 1024L * 1024L * 1024L) // 5GB
                     .build()
             )
             // デバッグビルド時のみ詳細ログを有効化
             .apply { if (isDebug) logger(DebugLogger()) }
             .build()
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        // アプリケーション終了時にリソースクリーンアップ
+        try {
+            cacheManager.cleanup()
+            supervisorJob.cancel()
+        } catch (e: Exception) {
+            Log.w("MyApplication", "Error during resource cleanup", e)
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        // メモリ不足時にキャッシュクリア
+        clearCoilImageCache(this)
+        clearCoilDiskCache(this)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // メモリトリムレベルに応じてキャッシュクリア
+        when (level) {
+            TRIM_MEMORY_RUNNING_CRITICAL,
+            TRIM_MEMORY_COMPLETE -> {
+                clearCoilImageCache(this)
+                clearCoilDiskCache(this)
+            }
+            TRIM_MEMORY_RUNNING_LOW,
+            TRIM_MEMORY_MODERATE -> {
+                clearCoilImageCache(this)
+            }
+        }
     }
 }

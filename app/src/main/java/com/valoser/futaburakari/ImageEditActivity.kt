@@ -48,6 +48,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.valoser.futaburakari.ui.compose.ImageEditorCanvas
+import android.util.Log
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -269,7 +270,27 @@ class ImageEditActivity : BaseActivity() {
             try {
                 val bmp = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(imageUri!!).use { inputStream ->
-                        BitmapFactory.decodeStream(inputStream)
+                        val options = BitmapFactory.Options().apply {
+                            // メモリ使用量削減のため、まずサイズを取得
+                            inJustDecodeBounds = true
+                        }
+                        BitmapFactory.decodeStream(inputStream, null, options)
+
+                        // 大きすぎる画像はスケールダウン
+                        val maxSize = 2048
+                        val scale = maxOf(
+                            options.outWidth / maxSize,
+                            options.outHeight / maxSize
+                        ).coerceAtLeast(1)
+
+                        contentResolver.openInputStream(imageUri!!).use { inputStream2 ->
+                            options.apply {
+                                inJustDecodeBounds = false
+                                inSampleSize = scale
+                                inPreferredConfig = Bitmap.Config.RGB_565 // メモリ使用量を半分に
+                            }
+                            BitmapFactory.decodeStream(inputStream2, null, options)
+                        }
                     } ?: throw Exception("ビットマップのデコードに失敗")
                 }
 
@@ -284,7 +305,14 @@ class ImageEditActivity : BaseActivity() {
                     // ImageEditorCanvas はこのBitmapとEngineを直接参照して描画する
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("ImageEditActivity", "Failed to load image", e)
+                val userMessage = when (e) {
+                    is SecurityException -> "画像へのアクセス権限がありません"
+                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
+                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
+                    else -> "画像の読み込みに失敗しました"
+                }
+                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
                 Toast.makeText(this@ImageEditActivity, "画像の読み込みに失敗: ${e.message}", Toast.LENGTH_LONG).show()
                 finish()
             }
@@ -333,7 +361,14 @@ class ImageEditActivity : BaseActivity() {
                 prompt = try {
                     MetadataExtractor.extract(this@ImageEditActivity, imageUri.toString(), networkClient)
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.e("ImageEditActivity", "Failed to load image", e)
+                val userMessage = when (e) {
+                    is SecurityException -> "画像へのアクセス権限がありません"
+                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
+                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
+                    else -> "画像の読み込みに失敗しました"
+                }
+                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
                     null
                 }
             }
@@ -379,14 +414,28 @@ class ImageEditActivity : BaseActivity() {
                                 exif.saveAttributes()
                             }
                         } catch (e: Exception) {
-                            e.printStackTrace()
+                            Log.e("ImageEditActivity", "Failed to load image", e)
+                val userMessage = when (e) {
+                    is SecurityException -> "画像へのアクセス権限がありません"
+                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
+                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
+                    else -> "画像の読み込みに失敗しました"
+                }
+                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
                         }
                     }
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@ImageEditActivity, getString(R.string.save_success), Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.e("ImageEditActivity", "Failed to load image", e)
+                val userMessage = when (e) {
+                    is SecurityException -> "画像へのアクセス権限がありません"
+                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
+                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
+                    else -> "画像の読み込みに失敗しました"
+                }
+                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@ImageEditActivity, "${getString(R.string.save_failed)}: ${e.message}", Toast.LENGTH_LONG).show()
                     }

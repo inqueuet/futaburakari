@@ -2,6 +2,7 @@ package com.valoser.futaburakari
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.security.SecureRandom
 
 /**
  * アプリ共通の設定値にアクセスするユーティリティ（`SharedPreferences` バックエンド）。
@@ -93,9 +94,10 @@ object AppPreferences {
     }
 
     /**
-     * 8 桁のランダムな数値文字列を生成（簡易用途。暗号論的強度は持たない）。
+     * 8 桁のランダムな数値文字列を生成（暗号論的に安全な乱数を使用）。
      */
     fun generateNewPwd(): String {
-        return (10000000..99999999).random().toString()
+        val secureRandom = SecureRandom()
+        return (10000000 + secureRandom.nextInt(90000000)).toString()
     }
 }

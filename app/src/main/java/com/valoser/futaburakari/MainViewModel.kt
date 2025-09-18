@@ -41,6 +41,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
 import java.net.URL
 import javax.inject.Inject
+import android.util.LruCache
 
 @HiltViewModel
 /**
@@ -60,11 +61,43 @@ class MainViewModel @Inject constructor(
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
+    /** デバイスメモリに基づいた最適な画像キャッシュサイズを計算 */
+    private fun calculateMaxImageCacheSize(): Int {
+        val runtime = Runtime.getRuntime()
+        val maxMemory = runtime.maxMemory()
+        // 利用可能メモリに基づいて動的調整（最小1000、最大10000）
+        val memoryMB = maxMemory / 1024 / 1024
+        return when {
+            memoryMB < 512 -> 1000
+            memoryMB < 1024 -> 2000
+            memoryMB < 2048 -> 5000
+            else -> 10000
+        }
+    }
+
+    companion object {
+        // 正規表現をプリコンパイル
+        private val THUMB_PATTERN = Regex("(/thumb/|/cat/|/jun/)")
+        private val EXTENSION_PATTERN = Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
+        private val VALID_EXTENSION_PATTERN = Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
+    }
+
+    // URL推測結果をキャッシュ（サイズを拡大）
+    private val urlGuessCache = LruCache<String, String?>(500)
+
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
-    private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(linkedMapOf())
+    // 動的サイズ制限付きLinkedHashMapでメモリ使用量を制御
+    private val maxImageCacheSize = calculateMaxImageCacheSize()
+    private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(
+        object : LinkedHashMap<String, ImageItem>(maxImageCacheSize, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageItem>?): Boolean {
+                return size > maxImageCacheSize
+            }
+        }
+    )
     val imageMap: StateFlow<Map<String, ImageItem>> = _imageMap.asStateFlow()
 
     private val _error = MutableLiveData<String>()
@@ -79,9 +112,9 @@ class MainViewModel @Inject constructor(
     // 404修正の同時多発を抑制するためのガード
     // detailUrl 単位だとプレビュー404対応中にフル画像404の修正が潰れることがあるため、
     // 失敗URL単位（detailUrl|failedUrl）で抑制する。
-    private val fixing404 = mutableSetOf<String>()
+    private val fixing404 = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     // 404回数制限（detailUrl + failedUrl 単位でカウント）
-    private val http404Counts = mutableMapOf<String, Int>()
+    private val http404Counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val MAX_404_RETRY = 3
     // 再確認ディレイ（ミリ秒）のジッター範囲（スパイク緩和用）
     // プレビューの瞬間未反映対策の再確認待ちを短縮（体感のキビキビ感を優先）
@@ -94,19 +127,15 @@ class MainViewModel @Inject constructor(
     // UI のローカル404ガード解除用に、同一メッセージでも値変化を起こせる短いノンス付き注記を生成
     private fun okNote(): String = "URL修正: /src/存在確認OK#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
 
-    private fun inc404(detailUrl: String, failedUrl: String): Int = synchronized(http404Counts) {
+    private fun inc404(detailUrl: String, failedUrl: String): Int {
         val key = "$detailUrl|$failedUrl"
-        val next = (http404Counts[key] ?: 0) + 1
-        http404Counts[key] = next
-        next
+        return http404Counts.compute(key) { _, current -> (current ?: 0) + 1 } ?: 1
     }
 
-    private fun clear404ForDetail(detailUrl: String) = synchronized(http404Counts) {
+    private fun clear404ForDetail(detailUrl: String) {
         val prefix = "$detailUrl|"
-        val it = http404Counts.keys.iterator()
-        while (it.hasNext()) {
-            if (it.next().startsWith(prefix)) it.remove()
-        }
+        val keysToRemove = http404Counts.keys.filter { it.startsWith(prefix) }
+        keysToRemove.forEach { http404Counts.remove(it) }
     }
 
     /**
@@ -116,6 +145,14 @@ class MainViewModel @Inject constructor(
      * 失敗時は `null` を返す。
      */
     private fun guessFullFromPreview(previewUrl: String): String? {
+        return urlGuessCache.get(previewUrl) ?: run {
+            val result = guessFullFromPreviewInternal(previewUrl)
+            urlGuessCache.put(previewUrl, result)
+            result
+        }
+    }
+
+    private fun guessFullFromPreviewInternal(previewUrl: String): String? {
         return try {
             var s = previewUrl
                 .replace("/thumb/", "/src/")
@@ -123,14 +160,11 @@ class MainViewModel @Inject constructor(
                 .replace("/jun/", "/src/")
 
             // 末尾の "s.ext" を通常の拡張子へ（例: 12345s.jpg -> 12345.jpg）
-            s = s.replace(
-                Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE),
-                ".$1"
-            )
+            s = s.replace(EXTENSION_PATTERN, ".$1")
 
             // 既に正しい拡張子形式ならそのまま、拡張子が無ければ .jpg を仮置き
             s = when {
-                s.contains(Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)) -> s
+                s.contains(VALID_EXTENSION_PATTERN) -> s
                 else -> "$s.jpg"
             }
             URL(s).toString()
@@ -150,7 +184,7 @@ class MainViewModel @Inject constructor(
      */
     fun fixImageIf404NoHtml(detailUrl: String, failedUrl: String) {
         val guardKey = "$detailUrl|$failedUrl"
-        synchronized(fixing404) { if (!fixing404.add(guardKey)) return }
+        if (!fixing404.add(guardKey)) return
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 val currentMap = _imageMap.value
@@ -233,7 +267,7 @@ class MainViewModel @Inject constructor(
                     }
                     val candidates = buildCatalogThumbCandidates(detailUrl).filter { it != target.previewUrl }
                     // 404検証の高速化: 直列→限定並列（最大2並列）で探索
-                    val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 2)
+                    val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 1)
                     if (!next.isNullOrBlank() && next != target.previewUrl) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
                         val updated = itemNow.copy(previewUrl = next, urlFixNote = "URL修正: サムネイル候補に置換", previewUnavailable = false)
@@ -246,7 +280,7 @@ class MainViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("VM404", "fixImageIf404NoHtml failed detail=$detailUrl url=$failedUrl", e)
             } finally {
-                synchronized(fixing404) { fixing404.remove(guardKey) }
+                fixing404.remove(guardKey)
             }
         }
     }
@@ -293,12 +327,12 @@ class MainViewModel @Inject constructor(
     private suspend fun urlExists(
         url: String,
         referer: String? = null,
-        attempts: Int = 2,
+        attempts: Int = 1,
         callTimeoutMs: Long? = null,
     ): Boolean {
         Log.d("UrlExists", "ENTER urlExists for: $url")
-        for (attempt in 1..attempts) {
-            Log.d("UrlExists", "BEGIN Attempt #$attempt for: $url")
+        repeat(attempts) { attempt ->
+            Log.d("UrlExists", "BEGIN Attempt #${attempt + 1} for: $url")
             // 1) HEAD with UA
             val okHead = withContext(Dispatchers.IO) {
                 val req = Request.Builder()
@@ -344,7 +378,7 @@ class MainViewModel @Inject constructor(
             Log.w("UrlExists", "Attempt #${attempt}: Both HEAD and GET Range failed for $url.")
             // 次の試行まで短い遅延を挟む（スパイク回避）。
             if (attempt < attempts) {
-                val backoff = 150L + kotlin.random.Random.nextLong(0, 100)
+                val backoff = 50L + kotlin.random.Random.nextLong(0, 50)
                 delay(backoff)
             }
         }
@@ -369,35 +403,37 @@ class MainViewModel @Inject constructor(
                 val baseItems = parseItemsFromDocument(document, url)
                 // 既存一覧から detailUrl 単位で状態を引き継ぐ
                 val oldMap = _imageMap.value
-                val merged = baseItems.map { fresh ->
-                    val old = oldMap[fresh.detailUrl]
+                val merged = baseItems.chunked(100).flatMap { chunk ->
+                    chunk.map { fresh ->
+                        val old = oldMap[fresh.detailUrl]
 
-                    // 重要: 成功済みのフルURLがある場合は必ず保持
-                    val existingVerifiedFull = old?.lastVerifiedFullUrl
-                    val existingFull = old?.fullImageUrl
-                    val preferPreview = old?.preferPreviewOnly ?: false
-                    val hadFull = old?.hadFullSuccess ?: false
+                        // 重要: 成功済みのフルURLがある場合は必ず保持
+                        val existingVerifiedFull = old?.lastVerifiedFullUrl
+                        val existingFull = old?.fullImageUrl
+                        val preferPreview = old?.preferPreviewOnly ?: false
+                        val hadFull = old?.hadFullSuccess ?: false
 
-                    // フルURL決定ロジックの修正
-                    val determinedFullUrl = when {
-                        // 検証済みURLがあれば最優先
-                        !existingVerifiedFull.isNullOrBlank() -> existingVerifiedFull
-                        // 既存のフルURLがあれば引き継ぐ
-                        !existingFull.isNullOrBlank() -> existingFull
-                        // preferPreviewOnlyでなければ推測を試みる
-                        !preferPreview -> guessFullFromPreview(fresh.previewUrl)
-                        else -> null
+                        // フルURL決定ロジックの修正
+                        val determinedFullUrl = when {
+                            // 検証済みURLがあれば最優先
+                            !existingVerifiedFull.isNullOrBlank() -> existingVerifiedFull
+                            // 既存のフルURLがあれば引き継ぐ
+                            !existingFull.isNullOrBlank() -> existingFull
+                            // preferPreviewOnlyでなければ推測を試みる
+                            !preferPreview -> guessFullFromPreview(fresh.previewUrl)
+                            else -> null
+                        }
+
+                        fresh.copy(
+                            fullImageUrl = determinedFullUrl,
+                            preferPreviewOnly = preferPreview && existingVerifiedFull.isNullOrBlank(), // 検証済みURLがあればpreferPreviewを解除
+                            hadFullSuccess = hadFull || !existingVerifiedFull.isNullOrBlank(),
+                            urlFixNote = old?.urlFixNote,
+                            previewUnavailable = old?.previewUnavailable ?: false,
+                            lastVerifiedFullUrl = existingVerifiedFull,
+                            failedUrls = old?.failedUrls ?: emptySet()
+                        )
                     }
-
-                    fresh.copy(
-                        fullImageUrl = determinedFullUrl,
-                        preferPreviewOnly = preferPreview && existingVerifiedFull.isNullOrBlank(), // 検証済みURLがあればpreferPreviewを解除
-                        hadFullSuccess = hadFull || !existingVerifiedFull.isNullOrBlank(),
-                        urlFixNote = old?.urlFixNote,
-                        previewUnavailable = old?.previewUnavailable ?: false,
-                        lastVerifiedFullUrl = existingVerifiedFull,
-                        failedUrls = old?.failedUrls ?: emptySet()
-                    )
                 }
                 // 並び順を保ったままマップを差し替え
                 val newMap = LinkedHashMap<String, ImageItem>(merged.size)
@@ -520,7 +556,7 @@ class MainViewModel @Inject constructor(
     private suspend fun findFirstExistingUrlLimitedParallel(
         candidates: List<String>,
         referer: String,
-        maxParallel: Int = 2,
+        maxParallel: Int = 1,
     ): String? = coroutineScope {
         if (candidates.isEmpty()) return@coroutineScope null
         val parallel = maxParallel.coerceAtLeast(1)
@@ -528,16 +564,23 @@ class MainViewModel @Inject constructor(
         while (idx < candidates.size) {
             val end = (idx + parallel).coerceAtMost(candidates.size)
             val batch = candidates.subList(idx, end)
-            val results = batch.map { url ->
+            val results = batch.mapIndexed { batchIndex, url ->
                 async {
                     val ok = runCatching { urlExistsTwoStage(url, referer) }.getOrDefault(false)
-                    ok to url
+                    Triple(ok, url, batchIndex)
                 }
             }.awaitAll()
             // バッチ内の元順で最初の成功を採用
-            val hit = results.firstOrNull { it.first }?.second
+            val hit = results
+                .filter { it.first }
+                .minByOrNull { it.third }
+                ?.second
             if (!hit.isNullOrBlank()) return@coroutineScope hit
             idx = end
+            // CPU負荷軽減のため短時間スリープ
+            if (idx < candidates.size) {
+                kotlinx.coroutines.delay(10L)
+            }
         }
         null
     }

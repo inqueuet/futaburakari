@@ -77,6 +77,7 @@ import com.valoser.futaburakari.cache.DetailCacheManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.valoser.futaburakari.MyApplication
 
 /**
  * アプリの設定画面コンポーザブル。
@@ -245,27 +246,104 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "キャッシュ設定") }
+            item { SectionHeader(text = "キャッシュ管理") }
+
+            // メモリ使用量情報の表示
             item {
+                var memoryInfo by remember { mutableStateOf("メモリ情報を取得中...") }
                 val scope = rememberCoroutineScope()
-                // 画像（Coil Memory/Disk）とスレッド詳細のキャッシュを全削除
-                ListRow(title = "キャッシュを削除", summary = "画像とスレッド内容のキャッシュをすべて削除します。") {
-                    if (clearingCache) return@ListRow
-                    clearingCache = true
-                    val imageLoader = ctx.imageLoader
+
+                LaunchedEffect(Unit) {
                     scope.launch(Dispatchers.IO) {
-                        runCatching { imageLoader.memoryCache?.clear() }
-                        runCatching { imageLoader.diskCache?.clear() }
-                        runCatching { DetailCacheManager(ctx).clearAllCache() }
+                        val runtime = Runtime.getRuntime()
+                        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+                        val maxMemory = runtime.maxMemory()
+                        val memoryUsageRatio = usedMemory.toFloat() / maxMemory.toFloat()
+                        val coilInfo = MyApplication.getCoilCacheInfo(ctx)
+
                         withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(ctx, "すべてのキャッシュを削除しました", android.widget.Toast.LENGTH_SHORT).show()
-                            clearingCache = false
+                            memoryInfo = "システムメモリ: ${(memoryUsageRatio * 100).toInt()}% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)\n画像キャッシュ: $coilInfo"
+                        }
+                    }
+                }
+
+                ListRow(
+                    title = "使用状況",
+                    summary = memoryInfo
+                ) {
+                    scope.launch(Dispatchers.IO) {
+                        val runtime = Runtime.getRuntime()
+                        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+                        val maxMemory = runtime.maxMemory()
+                        val memoryUsageRatio = usedMemory.toFloat() / maxMemory.toFloat()
+                        val coilInfo = MyApplication.getCoilCacheInfo(ctx)
+
+                        withContext(Dispatchers.Main) {
+                            memoryInfo = "システムメモリ: ${(memoryUsageRatio * 100).toInt()}% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)\n画像キャッシュ: $coilInfo"
                         }
                     }
                 }
             }
+
+            // 画像メモリキャッシュのクリア
             item {
-                // 自動クリーンアップで保持するキャッシュの上限（MB）。0は無効
+                val scope = rememberCoroutineScope()
+                ListRow(
+                    title = "画像メモリキャッシュをクリア",
+                    summary = "メモリ上の画像キャッシュのみを削除します（すぐに反映）"
+                ) {
+                    scope.launch(Dispatchers.IO) {
+                        MyApplication.clearCoilImageCache(ctx)
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(ctx, "画像メモリキャッシュをクリアしました", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
+            // 全キャッシュの削除（確認ダイアログ付き）
+            item {
+                val scope = rememberCoroutineScope()
+                var showClearDialog by remember { mutableStateOf(false) }
+
+                ListRow(
+                    title = "すべてのキャッシュを削除",
+                    summary = "画像キャッシュ（メモリ・ディスク）とスレッド詳細キャッシュをすべて削除します"
+                ) {
+                    showClearDialog = true
+                }
+
+                if (showClearDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showClearDialog = false },
+                        title = { Text("キャッシュ削除の確認") },
+                        text = { Text("すべてのキャッシュを削除しますか？\n\n・画像キャッシュ（メモリ・ディスク）\n・スレッド詳細キャッシュ\n\nこの操作は取り消せません。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showClearDialog = false
+                                if (clearingCache) return@TextButton
+                                clearingCache = true
+                                val imageLoader = ctx.imageLoader
+                                scope.launch(Dispatchers.IO) {
+                                    runCatching { imageLoader.memoryCache?.clear() }
+                                    runCatching { imageLoader.diskCache?.clear() }
+                                    runCatching { DetailCacheManager(ctx).clearAllCache() }
+                                    withContext(Dispatchers.Main) {
+                                        android.widget.Toast.makeText(ctx, "すべてのキャッシュを削除しました", android.widget.Toast.LENGTH_SHORT).show()
+                                        clearingCache = false
+                                    }
+                                }
+                            }) { Text("削除") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showClearDialog = false }) { Text("キャンセル") }
+                        }
+                    )
+                }
+            }
+
+            // 自動クリーンアップ設定
+            item {
                 DropdownPreferenceRow(
                     title = "自動クリーンアップ上限",
                     entries = cleanupEntries,

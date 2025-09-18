@@ -28,6 +28,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
  
 import androidx.preference.PreferenceManager
  
@@ -462,11 +463,11 @@ class DetailActivity : BaseActivity() {
      */
     private fun markViewedByOrdinal(maxOrdinal: Int) {
         if (maxOrdinal <= 0) return
-        markViewedRunnable?.let { mainHandler.removeCallbacks(it) }
-        val r = Runnable {
-            markViewedJob?.cancel()
-            markViewedJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val url = currentUrl ?: return@launch
+        markViewedJob?.cancel()
+        markViewedJob = lifecycleScope.launch {
+            kotlinx.coroutines.delay(300L)
+            withContext(Dispatchers.IO) {
+                val url = currentUrl ?: return@withContext
                 val current = HistoryManager.getAll(this@DetailActivity).firstOrNull { it.url == url }
                 val curViewed = current?.lastViewedReplyNo ?: 0
                 if (maxOrdinal > curViewed) {
@@ -474,8 +475,6 @@ class DetailActivity : BaseActivity() {
                 }
             }
         }
-        markViewedRunnable = r
-        mainHandler.postDelayed(r, 300L)
     }
 
     // 既読更新（Compose版）は onVisibleMaxOrdinal -> markViewedByOrdinal に統一
@@ -536,7 +535,9 @@ class DetailActivity : BaseActivity() {
     }
 
     private fun showToastOnUiThread(message: String, duration: Int) {
-        runOnUiThread { Toast.makeText(this, message, duration).show() }
+        lifecycleScope.launch(Dispatchers.Main) {
+            Toast.makeText(this@DetailActivity, message, duration).show()
+        }
     }
 
     // 削除確認ダイアログはCompose側に統一

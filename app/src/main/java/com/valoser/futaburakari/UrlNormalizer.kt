@@ -33,7 +33,6 @@ object UrlNormalizer {
     fun legacyThreadKey(url: String): String = try {
         val threadId = url.substringAfterLast("/").substringBefore(".htm")
         val boardPath = url.substringAfter("://")
-            .substringAfter("/")
             .substringBeforeLast("/")
         "$boardPath#$threadId"
     } catch (e: Exception) {
