@@ -34,7 +34,7 @@ class NetworkClient(
     private fun parseCookieString(s: String?): Map<String, String> =
         s?.split(";")?.mapNotNull {
             val i = it.indexOf('=')
-            if (i <= 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
+            if (i < 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
         }?.toMap() ?: emptyMap()
 
     // 複数ソースのCookie文字列をマージ（同名は後勝ち）
@@ -72,7 +72,11 @@ class NetworkClient(
         return@withContext try {
             val call = httpClient.newCall(req).apply {
                 if (callTimeoutMs != null) {
-                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                    try {
+                        timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+                    } catch (e: Exception) {
+                        Log.w("NetworkClient", "Failed to set timeout: ${e.message}")
+                    }
                 }
             }
             call.executeAsync().use { resp ->
@@ -196,7 +200,11 @@ class NetworkClient(
         return@withContext try {
             val call = httpClient.newCall(req).apply {
                 if (callTimeoutMs != null) {
-                    try { timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
+                    try {
+                        timeout().timeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+                    } catch (e: Exception) {
+                        Log.w("NetworkClient", "Failed to set timeout: ${e.message}")
+                    }
                 }
             }
             call.executeAsync().use { resp ->

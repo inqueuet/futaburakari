@@ -95,27 +95,41 @@ object MediaSaver {
                 }
 
                 // 実体を書き出す：file/content はローカルコピー、http(s) はダウンロード
-                resolver.openOutputStream(uri).use { outputStream ->
-                    if (outputStream == null) {
-                        showToast(context, "ファイルの保存に失敗しました。")
-                        return@withContext
+                var downloadSuccess = false
+                try {
+                    resolver.openOutputStream(uri).use { outputStream ->
+                        if (outputStream == null) {
+                            showToast(context, "ファイルの保存に失敗しました。")
+                            return@withContext
+                        }
+                        if (url.startsWith("file://") || url.startsWith("content://")) {
+                            val src = context.contentResolver.openInputStream(Uri.parse(url))
+                            if (src == null) {
+                                showToast(context, "ファイルの読み込みに失敗しました。")
+                                return@withContext
+                            }
+                            src.use { input ->
+                                input.copyTo(outputStream, bufferSize = 64 * 1024) // 64KBバッファでストリーミング
+                            }
+                        } else {
+                            val ok = networkClient.downloadTo(url, outputStream)
+                            if (!ok) {
+                                showToast(context, "ファイルのダウンロードに失敗しました。")
+                                return@withContext
+                            }
+                        }
+                        downloadSuccess = true
                     }
-                    if (url.startsWith("file://") || url.startsWith("content://")) {
-                        val src = context.contentResolver.openInputStream(Uri.parse(url))
-                        if (src == null) {
-                            showToast(context, "ファイルの読み込みに失敗しました。")
+                } catch (e: Exception) {
+                    showToast(context, "ファイルの保存中にエラーが発生しました: ${e.message}")
+                    return@withContext
+                } finally {
+                    if (!downloadSuccess) {
+                        // 失敗時のクリーンアップ
+                        try {
                             resolver.delete(uri, null, null)
-                            return@withContext
-                        }
-                        src.use { input ->
-                            input.copyTo(outputStream, bufferSize = 64 * 1024) // 64KBバッファでストリーミング
-                        }
-                    } else {
-                        val ok = networkClient.downloadTo(url, outputStream)
-                        if (!ok) {
-                            showToast(context, "ファイルのダウンロードに失敗しました。")
-                            resolver.delete(uri, null, null)
-                            return@withContext
+                        } catch (e: Exception) {
+                            // 削除失敗は無視（既に削除されている可能性）
                         }
                     }
                 }

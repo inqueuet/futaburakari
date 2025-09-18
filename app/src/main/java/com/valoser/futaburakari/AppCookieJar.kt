@@ -23,7 +23,7 @@ object AppCookieJar : CookieJar {
      *
      * 実装上の仕様:
      * - 既存の同名 Cookie を「パスやドメインを無視して」除去してから追加
-     * - 追加対象は「期限が未来」もしくは「persistent が true」の Cookie のみ
+     * - 追加対象は「期限が未来」の Cookie のみ
      * - 受け取った Cookie 文字列をそのまま WebView に setCookie し、flush する
      */
     @Synchronized
@@ -34,7 +34,7 @@ object AppCookieJar : CookieJar {
         cookies.forEach { newCookie ->
             currentCookies.removeAll { it.name == newCookie.name }
         }
-        currentCookies.addAll(cookies.filter { it.expiresAt > System.currentTimeMillis() || it.persistent })
+        currentCookies.addAll(cookies.filter { it.expiresAt > System.currentTimeMillis() })
 
         Log.d("AppCookieJar", "Saved cookies for $host: ${cookieStore[host]?.map { it.name + "=" + it.value }}")
 
@@ -52,8 +52,7 @@ object AppCookieJar : CookieJar {
      *
      * 実装上の仕様:
      * - 保持しているのは「要求ホストと完全一致」するエントリのみ（サブドメイン/ドメイン一致はしない）
-     * - 期限切れのセッション Cookie（persistent=false かつ expiresAt<=now）のみ削除
-     *   ※ 永続 Cookie は expiresAt に関わらず保持される（一般的な仕様と異なる点）
+     * - 期限切れの Cookie（expiresAt<=now）は削除される
      * - ドメイン/パス/セキュア属性のチェックは行わない
      */
     @Synchronized
@@ -64,7 +63,7 @@ object AppCookieJar : CookieJar {
         val iterator = storedCookies.iterator()
         while (iterator.hasNext()) {
             val cookie = iterator.next()
-            if (cookie.expiresAt <= System.currentTimeMillis() && !cookie.persistent) {
+            if (cookie.expiresAt <= System.currentTimeMillis()) {
                 iterator.remove()
                 Log.d("AppCookieJar", "Removed expired cookie for $host: ${cookie.name}")
             }

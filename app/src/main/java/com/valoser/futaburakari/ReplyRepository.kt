@@ -215,13 +215,15 @@ class ReplyRepository @Inject constructor(
             val req = rb.build()
 
             httpClient.newCall(req).executeAsync().use { resp ->
-                val raw = resp.body?.bytes() ?: ByteArray(0)
-                val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
-                //android.util.Log.d("ReplyRepo", "resp.head=${decoded.trim().take(200)}")
                 if (!resp.isSuccessful) {
-                    //android.util.Log.w("ReplyRepo", "HTTP ${resp.code} ${resp.message}")
+                    val raw = resp.body?.bytes() ?: ByteArray(0)
+                    val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
                     throw IOException("HTTP ${resp.code} ${resp.message}\n$decoded")
                 }
+
+                val body = resp.body ?: throw IOException("Empty response body")
+                val raw = body.bytes()
+                val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
 
                  val trimmed = decoded.trim()
                 // 1) JSON なら thisno を抜いて返す（例: {"status":"ok","thisno":1345629398,...}）
@@ -271,8 +273,11 @@ class ReplyRepository @Inject constructor(
                     if (!resp.isSuccessful) {
                         throw IOException("thread load failed: ${resp.code} ${resp.message}")
                     }
-                    val body = resp.body?.bytes() ?: ByteArray(0)
-                    val html = EncodingUtils.decode(body, resp.header("Content-Type"))
+                    val body = resp.body ?: throw IOException("Empty response body")
+                    val html = body.byteStream().use { inputStream ->
+                        val raw = inputStream.readBytes()
+                        EncodingUtils.decode(raw, resp.header("Content-Type"))
+                    }
                     val doc = Jsoup.parse(html, threadUrl)
                     val fm = doc.selectFirst("form#fm") ?: doc.selectFirst("form")
                     val hash = fm?.selectFirst("input[name=hash]")?.attr("value").orEmpty()
