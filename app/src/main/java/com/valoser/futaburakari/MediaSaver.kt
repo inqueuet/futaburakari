@@ -143,8 +143,14 @@ object MediaSaver {
                 showToast(context, "ファイルを保存しました: $fileName")
 
             } catch (e: Exception) {
-                e.printStackTrace()
-                showToast(context, "エラーが発生しました: ${e.message}")
+                // プロダクション環境では詳細なエラー情報をログに記録し、ユーザーには安全なメッセージを表示
+                android.util.Log.e("MediaSaver", "Failed to save media", e)
+                val userMessage = when (e) {
+                    is java.io.IOException -> "ファイルの保存に失敗しました。ストレージの空き容量を確認してください。"
+                    is SecurityException -> "ファイルの保存に必要な権限がありません。"
+                    else -> "保存中にエラーが発生しました。"
+                }
+                showToast(context, userMessage)
             }
         }
     }

@@ -133,7 +133,8 @@ class NetworkClient(
                 }
                 true
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Download failed for URL: $url", e)
             false
         }
     }
@@ -183,7 +184,8 @@ class NetworkClient(
                 if (!resp.isSuccessful) return@use null
                 resp.body?.bytes()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Failed to fetch bytes for URL: $url", e)
             null
         }
     }
@@ -207,7 +209,8 @@ class NetworkClient(
                 if (!resp.isSuccessful) return@use null
                 resp.header("Content-Length")?.toLongOrNull()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Failed to get content length for URL: $url", e)
             null
         }
     }
@@ -289,7 +292,8 @@ class NetworkClient(
                 }
                 return@use bytes
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("NetworkClient", "Failed to fetch range for URL: $url", e)
             null
         }
     }

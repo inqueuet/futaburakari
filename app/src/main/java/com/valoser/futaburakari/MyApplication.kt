@@ -52,7 +52,11 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
     lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は 遅延）
 
     // アプリケーションスコープ（初期化の非同期実行に使用）
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val supervisorJob = SupervisorJob()
+    private val applicationScope = CoroutineScope(supervisorJob + Dispatchers.Default)
+
+    // グローバルリソース管理
+    private val cacheManager by lazy { com.valoser.futaburakari.cache.DetailCacheManager(this) }
 
     // Coilのメモリキャッシュクリア機能を追加
     companion object {
@@ -207,5 +211,39 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             // デバッグビルド時のみ詳細ログを有効化
             .apply { if (isDebug) logger(DebugLogger()) }
             .build()
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        // アプリケーション終了時にリソースクリーンアップ
+        try {
+            cacheManager.cleanup()
+            supervisorJob.cancel()
+        } catch (e: Exception) {
+            Log.w("MyApplication", "Error during resource cleanup", e)
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        // メモリ不足時にキャッシュクリア
+        clearCoilImageCache(this)
+        clearCoilDiskCache(this)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // メモリトリムレベルに応じてキャッシュクリア
+        when (level) {
+            TRIM_MEMORY_RUNNING_CRITICAL,
+            TRIM_MEMORY_COMPLETE -> {
+                clearCoilImageCache(this)
+                clearCoilDiskCache(this)
+            }
+            TRIM_MEMORY_RUNNING_LOW,
+            TRIM_MEMORY_MODERATE -> {
+                clearCoilImageCache(this)
+            }
+        }
     }
 }

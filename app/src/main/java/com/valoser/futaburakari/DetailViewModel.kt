@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
 import androidx.collection.LruCache
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * スレ詳細用の ViewModel。
@@ -81,13 +83,27 @@ class DetailViewModel @Inject constructor(
     private var rawContent: List<DetailContent> = emptyList()
     private val ngStore by lazy { NgStore(appContext) }
 
-    // NGフィルタ結果のキャッシュ（サイズを大幅に拡大）
-    private val ngFilterCache = LruCache<Pair<List<DetailContent>, List<NgRule>>, List<DetailContent>>(50)
+    // NGフィルタ結果のキャッシュ（動的サイズ調整）
+    private val ngFilterCache = LruCache<Pair<List<DetailContent>, List<NgRule>>, List<DetailContent>>(
+        calculateOptimalCacheSize()
+    )
 
     // 適応的メモリ監視
     private var lastMemoryCheck = 0L
     private var memoryCheckIntervalMs = 30000L // 初期値30秒、使用率に応じて調整
     private var consecutiveHighMemoryCount = 0
+
+    // データ整合性管理用のアトミックカウンタ
+    private val contentUpdateCounter = AtomicLong(0)
+    private val metadataUpdateCounter = AtomicInteger(0)
+
+    /** デバイスメモリに基づいた最適なキャッシュサイズを計算 */
+    private fun calculateOptimalCacheSize(): Int {
+        val runtime = Runtime.getRuntime()
+        val maxMemory = runtime.maxMemory()
+        // 最大メモリの1%をキャッシュに割り当て、最小20、最大200
+        return ((maxMemory / 1024 / 1024 / 100).toInt()).coerceIn(20, 200)
+    }
 
     /** NGルールが変更された時にキャッシュをクリアする */
     private fun clearNgFilterCache() {
@@ -95,8 +111,9 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * 適応的メモリ使用量監視
+     * 適応的メモリ使用量監視の改善
      * - メモリ使用率に応じて監視間隔を動的調整
+     * - 高負荷時はキャッシュサイズも縮小
      * - 段階的なクリーンアップ処理
      */
     private fun checkMemoryUsage() {
@@ -109,7 +126,36 @@ class DetailViewModel @Inject constructor(
         val maxMemory = runtime.maxMemory()
         val memoryUsageRatio = usedMemory.toFloat() / maxMemory.toFloat()
 
-        Log.d("DetailViewModel", "Memory usage: ${(memoryUsageRatio * 100).toInt()}% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)")
+        val memoryUsagePercent = (memoryUsageRatio * 100).toInt()
+        Log.d("DetailViewModel", "Memory usage: $memoryUsagePercent% (${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB)")
+
+        // 段階的メモリ管理
+        when {
+            memoryUsagePercent > 90 -> {
+                // 極度の高負荷：即座にアクション
+                Log.w("DetailViewModel", "Critical memory usage detected, immediate cleanup")
+                clearNgFilterCache()
+                memoryCheckIntervalMs = 5000L
+                consecutiveHighMemoryCount++
+            }
+            memoryUsagePercent > 75 -> {
+                consecutiveHighMemoryCount++
+                memoryCheckIntervalMs = 10000L
+                if (consecutiveHighMemoryCount >= 2) {
+                    Log.w("DetailViewModel", "High memory usage sustained, clearing caches")
+                    clearNgFilterCache()
+                    consecutiveHighMemoryCount = 0
+                }
+            }
+            memoryUsagePercent > 60 -> {
+                memoryCheckIntervalMs = 20000L
+                consecutiveHighMemoryCount = 0
+            }
+            else -> {
+                memoryCheckIntervalMs = 30000L
+                consecutiveHighMemoryCount = 0
+            }
+        }
 
         // 使用率に応じて監視間隔を調整
         memoryCheckIntervalMs = when {
@@ -193,7 +239,14 @@ class DetailViewModel @Inject constructor(
      */
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
+        val updateId = contentUpdateCounter.incrementAndGet()
         viewModelScope.launch {
+            // データ整合性チェック：更新中の競合状態を防ぐ
+            if (contentUpdateCounter.get() != updateId) {
+                Log.d("DetailViewModel", "Newer update detected, canceling this fetch")
+                return@launch
+            }
+
             // スレ移動時に「そうだね」状態を正しくリセットするため、
             // 代入前のURLと比較してページ遷移を判定する。
             val isNewPage = this@DetailViewModel.currentUrl != url
@@ -512,7 +565,9 @@ class DetailViewModel @Inject constructor(
      */
     private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
         // 段階反映: 各ジョブ完了ごとにチャンネルへ送り、一定間隔でまとめて適用
-        val updates = Channel<Pair<String, String?>>(Channel.UNLIMITED)
+        // バッファサイズを制限してメモリ使用量を制御
+        val maxBufferSize = maxOf(100, contentList.size / 10) // 最小100、最大でアイテム数の10%
+        val updates = Channel<Pair<String, String?>>(maxBufferSize)
         val sendJobs = mutableListOf<Deferred<Unit>>()
 
         contentList.forEach { content ->
@@ -884,9 +939,13 @@ class DetailViewModel @Inject constructor(
         ngFilterCache.get(cacheKey)?.let { return it }
 
         val result = if (src.size > 100) {
-            // 大きなリストは並列処理で最適化
+            // CPU性能とリストサイズに応じて動的に並列処理を最適化
             withContext(Dispatchers.Default) {
-                src.chunked(100).map { chunk ->
+                val cpuCount = Runtime.getRuntime().availableProcessors()
+                val optimalChunkSize = maxOf(50, src.size / (cpuCount * 2)) // CPU数の2倍のチャンクに分割
+                val actualChunkSize = minOf(optimalChunkSize, 200) // 最大200件で制限
+
+                src.chunked(actualChunkSize).map { chunk ->
                     async {
                         filterChunk(chunk, rules)
                     }

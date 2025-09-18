@@ -32,7 +32,11 @@ data class CachedDetails(
 class DetailCacheManager(private val context: Context) {
 
     private val gson: Gson // ★ 初期化を init ブロックに移動
-    private val writeExecutor = Executors.newSingleThreadExecutor()
+    private val writeExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DetailCacheManager-Writer").apply {
+            isDaemon = true // デーモンスレッドとして設定
+        }
+    }
     private val cacheDir: File by lazy {
         File(context.cacheDir, "details_cache").apply { mkdirs() }
     }
@@ -225,8 +229,20 @@ class DetailCacheManager(private val context: Context) {
             Log.d("DetailCacheManager", "Saving to cache file: ${cacheFile.absolutePath}")
             val cachedData = CachedDetails(System.currentTimeMillis(), details, newChecksum)
 
-            // メモリ効率的なJSON処理 - より適切な閾値
-            val shouldUseStreaming = details.size > 500 || estimateJsonSize(details) > 512 * 1024 // 500件または512KB
+            // デバイス性能に応じた動的閾値設定
+            val runtime = Runtime.getRuntime()
+            val availableMemory = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+            val memoryMB = availableMemory / 1024 / 1024
+
+            // デバイス性能に応じて閾値を調整
+            val (sizeThreshold, memoryThreshold) = when {
+                memoryMB < 256 -> Pair(200, 256 * 1024) // 低メモリ端末
+                memoryMB < 512 -> Pair(350, 384 * 1024) // 中程度メモリ端末
+                memoryMB < 1024 -> Pair(500, 512 * 1024) // 標準メモリ端末
+                else -> Pair(750, 768 * 1024) // 高メモリ端末
+            }
+
+            val shouldUseStreaming = details.size > sizeThreshold || estimateJsonSize(details) > memoryThreshold
 
             if (shouldUseStreaming) {
                 Log.d("DetailCacheManager", "Large dataset detected (${details.size} items), using streaming processing")
@@ -505,14 +521,30 @@ class DetailCacheManager(private val context: Context) {
      * リソースのクリーンアップ（アプリ終了時などに呼び出す）
      */
     fun cleanup() {
-        writeExecutor.shutdown()
-        try {
-            if (!writeExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+        if (!writeExecutor.isShutdown) {
+            writeExecutor.shutdown()
+            try {
+                if (!writeExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    Log.w("DetailCacheManager", "Executor did not terminate gracefully, forcing shutdown")
+                    writeExecutor.shutdownNow()
+                    // 再度終了を待機
+                    if (!writeExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                        Log.e("DetailCacheManager", "Executor did not terminate after forced shutdown")
+                    }
+                }
+            } catch (e: InterruptedException) {
+                Log.w("DetailCacheManager", "Interrupted while waiting for executor termination")
+                Thread.currentThread().interrupt()
                 writeExecutor.shutdownNow()
             }
-        } catch (e: InterruptedException) {
-            writeExecutor.shutdownNow()
         }
+    }
+
+    /**
+     * ファイナライザ：GC時の安全策としてリソースクリーンアップ
+     */
+    protected fun finalize() {
+        cleanup()
     }
 
     /** 文字列の SHA-256 ハッシュ（小文字16進）を返す。 */

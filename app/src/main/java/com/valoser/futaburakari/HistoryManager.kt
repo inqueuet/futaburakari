@@ -38,9 +38,16 @@ object HistoryManager {
 
     // 履歴リストを JSON で保存し、変更通知を送出する。
     private fun save(context: Context, list: List<HistoryEntry>) {
-        prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
-        // 変更通知（アプリ内向けの簡易ブロードキャスト）
-        context.sendBroadcast(Intent(ACTION_HISTORY_CHANGED))
+        synchronized(this) {
+            try {
+                prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
+                // 変更通知（アプリ内向けの簡易ブロードキャスト）
+                context.sendBroadcast(Intent(ACTION_HISTORY_CHANGED))
+            } catch (e: Exception) {
+                // 保存失敗時のログ出力（サイレント失敗を防ぐ）
+                android.util.Log.e("HistoryManager", "Failed to save history", e)
+            }
+        }
     }
 
     /**

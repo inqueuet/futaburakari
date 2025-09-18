@@ -61,6 +61,20 @@ class MainViewModel @Inject constructor(
     private val networkClient: NetworkClient,
 ) : ViewModel() {
 
+    /** デバイスメモリに基づいた最適な画像キャッシュサイズを計算 */
+    private fun calculateMaxImageCacheSize(): Int {
+        val runtime = Runtime.getRuntime()
+        val maxMemory = runtime.maxMemory()
+        // 利用可能メモリに基づいて動的調整（最小1000、最大10000）
+        val memoryMB = maxMemory / 1024 / 1024
+        return when {
+            memoryMB < 512 -> 1000
+            memoryMB < 1024 -> 2000
+            memoryMB < 2048 -> 5000
+            else -> 10000
+        }
+    }
+
     companion object {
         // 正規表現をプリコンパイル
         private val THUMB_PATTERN = Regex("(/thumb/|/cat/|/jun/)")
@@ -75,8 +89,8 @@ class MainViewModel @Inject constructor(
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
-    // サイズ制限付きLinkedHashMapでメモリ使用量を制御
-    private val maxImageCacheSize = 5000
+    // 動的サイズ制限付きLinkedHashMapでメモリ使用量を制御
+    private val maxImageCacheSize = calculateMaxImageCacheSize()
     private val _imageMap = MutableStateFlow<LinkedHashMap<String, ImageItem>>(
         object : LinkedHashMap<String, ImageItem>(maxImageCacheSize, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageItem>?): Boolean {
@@ -98,9 +112,9 @@ class MainViewModel @Inject constructor(
     // 404修正の同時多発を抑制するためのガード
     // detailUrl 単位だとプレビュー404対応中にフル画像404の修正が潰れることがあるため、
     // 失敗URL単位（detailUrl|failedUrl）で抑制する。
-    private val fixing404 = mutableSetOf<String>()
+    private val fixing404 = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     // 404回数制限（detailUrl + failedUrl 単位でカウント）
-    private val http404Counts = mutableMapOf<String, Int>()
+    private val http404Counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val MAX_404_RETRY = 3
     // 再確認ディレイ（ミリ秒）のジッター範囲（スパイク緩和用）
     // プレビューの瞬間未反映対策の再確認待ちを短縮（体感のキビキビ感を優先）
@@ -113,19 +127,15 @@ class MainViewModel @Inject constructor(
     // UI のローカル404ガード解除用に、同一メッセージでも値変化を起こせる短いノンス付き注記を生成
     private fun okNote(): String = "URL修正: /src/存在確認OK#" + (System.nanoTime() % 100000).toString().padStart(5, '0')
 
-    private fun inc404(detailUrl: String, failedUrl: String): Int = synchronized(http404Counts) {
+    private fun inc404(detailUrl: String, failedUrl: String): Int {
         val key = "$detailUrl|$failedUrl"
-        val next = (http404Counts[key] ?: 0) + 1
-        http404Counts[key] = next
-        next
+        return http404Counts.compute(key) { _, current -> (current ?: 0) + 1 } ?: 1
     }
 
-    private fun clear404ForDetail(detailUrl: String) = synchronized(http404Counts) {
+    private fun clear404ForDetail(detailUrl: String) {
         val prefix = "$detailUrl|"
-        val it = http404Counts.keys.iterator()
-        while (it.hasNext()) {
-            if (it.next().startsWith(prefix)) it.remove()
-        }
+        val keysToRemove = http404Counts.keys.filter { it.startsWith(prefix) }
+        keysToRemove.forEach { http404Counts.remove(it) }
     }
 
     /**
@@ -174,7 +184,7 @@ class MainViewModel @Inject constructor(
      */
     fun fixImageIf404NoHtml(detailUrl: String, failedUrl: String) {
         val guardKey = "$detailUrl|$failedUrl"
-        synchronized(fixing404) { if (!fixing404.add(guardKey)) return }
+        if (!fixing404.add(guardKey)) return
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 val currentMap = _imageMap.value
@@ -270,7 +280,7 @@ class MainViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("VM404", "fixImageIf404NoHtml failed detail=$detailUrl url=$failedUrl", e)
             } finally {
-                synchronized(fixing404) { fixing404.remove(guardKey) }
+                fixing404.remove(guardKey)
             }
         }
     }

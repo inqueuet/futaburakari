@@ -306,16 +306,37 @@ class ReplyRepository @Inject constructor(
         }
 
     /**
-     * 代表的なエラーワードを含むかどうかの簡易判定。
+     * エラー判定の精度向上：HTMLタグを除去してからマッチング、文脈を考慮した判定
      */
     private fun looksLikeError(html: String): Boolean {
-        val t = html
-        // 代表的な失敗キーワードを簡易判定（必要に応じて追加）
-        val words = listOf(
-            "エラー", "error", "連投", "本文なし", "不正", "ブロック", "拒否", "失敗",
-            "NG", "荒らし", "規制", "拒絶", "同一内容", "時間をおいて", "Cookie", "IP", "環境変数"
+        // HTMLタグを除去してプレーンテキストで判定
+        val plainText = try {
+            org.jsoup.Jsoup.parse(html).text()
+        } catch (e: Exception) {
+            html.replace(Regex("<[^>]+>"), "")
+        }
+
+        // より正確なエラーパターン判定
+        val errorPatterns = listOf(
+            Regex("エラー.*発生", RegexOption.IGNORE_CASE),
+            Regex("書.*込.*失敗|投稿.*失敗", RegexOption.IGNORE_CASE),
+            Regex("連続.*投稿|連投", RegexOption.IGNORE_CASE),
+            Regex("本文.*必要|本文.*なし", RegexOption.IGNORE_CASE),
+            Regex("規制.*中|ブロック.*中", RegexOption.IGNORE_CASE),
+            Regex("時間.*おいて|しばらく.*待", RegexOption.IGNORE_CASE),
+            Regex("Cookie.*無効|セッション.*切れ", RegexOption.IGNORE_CASE)
         )
-        return words.any { t.contains(it, ignoreCase = true) }
+
+        // 成功を示すキーワードがある場合は成功として扱う
+        val successPatterns = listOf(
+            Regex("書.*込.*まし|送信.*完了|投稿.*完了", RegexOption.IGNORE_CASE),
+            Regex("No\\.?\\s*\\d{6,}", RegexOption.IGNORE_CASE)
+        )
+
+        val hasSuccessPattern = successPatterns.any { it.containsMatchIn(plainText) }
+        if (hasSuccessPattern) return false
+
+        return errorPatterns.any { it.containsMatchIn(plainText) }
     }
 
     /**
