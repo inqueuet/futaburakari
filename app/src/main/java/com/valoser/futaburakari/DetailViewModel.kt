@@ -518,6 +518,12 @@ class DetailViewModel @Inject constructor(
         contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
+                    // プロンプト情報が既に存在する場合はスキップ
+                    if (!content.prompt.isNullOrBlank()) {
+                        Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - already has prompt")
+                        return@forEach
+                    }
+
                     val limitedIO = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
@@ -535,7 +541,10 @@ class DetailViewModel @Inject constructor(
                     sendJobs.add(job)
                 }
                 is DetailContent.Video -> {
-                    // 動画のプロンプト取得は行わない
+                    // 動画のプロンプト取得は行わない（既にプロンプトがある場合もスキップログを出力）
+                    if (!content.prompt.isNullOrBlank()) {
+                        Log.d("DetailViewModel", "Skipping metadata extraction for ${content.videoUrl} - already has prompt")
+                    }
                 }
                 else -> {}
             }

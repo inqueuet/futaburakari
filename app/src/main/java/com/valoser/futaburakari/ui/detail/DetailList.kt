@@ -126,7 +126,7 @@ import androidx.collection.LruCache
  * - `onVisibleMaxOrdinal`: 画面内で50%以上見えている本文の最大序数を通知。
  */
 
-private val imageRequestCache = LruCache<String, ImageRequest>(500)
+private val imageRequestCache = LruCache<String, ImageRequest>(2000)
 private val headersCache = LruCache<String, NetworkHeaders>(100)
 
 private fun createImageRequest(

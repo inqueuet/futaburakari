@@ -201,7 +201,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             .diskCache(
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
-                    .maxSizeBytes(1024L * 1024L * 1024L) // 1GB
+                    .maxSizeBytes(5L * 1024L * 1024L * 1024L) // 5GB
                     .build()
             )
             // デバッグビルド時のみ詳細ログを有効化
