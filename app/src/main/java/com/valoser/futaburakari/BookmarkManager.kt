@@ -83,7 +83,13 @@ object BookmarkManager {
     /** Saves the currently selected bookmark URL; pass null to clear the selection. */
     fun saveSelectedBookmarkUrl(context: Context, url: String?) {
         val prefs = getPreferences(context)
-        prefs.edit().putString(KEY_SELECTED_BOOKMARK_URL, url).apply()
+        val editor = prefs.edit()
+        if (url == null) {
+            editor.remove(KEY_SELECTED_BOOKMARK_URL)
+        } else {
+            editor.putString(KEY_SELECTED_BOOKMARK_URL, url)
+        }
+        editor.apply()
     }
 
     /**
@@ -95,6 +101,6 @@ object BookmarkManager {
         // Get the list of bookmarks; this ensures defaults are created if the list is empty.
         val existingBookmarks = getBookmarks(context)
         val defaultUrl = existingBookmarks.firstOrNull()?.url ?: "https://may.2chan.net/b/futaba.php?mode=cat&sort=3"
-        return prefs.getString(KEY_SELECTED_BOOKMARK_URL, defaultUrl)!!
+        return prefs.getString(KEY_SELECTED_BOOKMARK_URL, null) ?: defaultUrl
     }
 }
