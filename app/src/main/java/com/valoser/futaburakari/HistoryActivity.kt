@@ -67,9 +67,19 @@ class HistoryActivity : BaseActivity() {
                     // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
                     runCatching {
                         val p = PreferenceManager.getDefaultSharedPreferences(this@HistoryActivity)
-                        val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
-                        if (mb > 0) {
-                            val limitBytes = mb * 1024L * 1024L
+
+                        // 新しいパーセンテージベース設定を優先、レガシーMB設定をフォールバック
+                        val percentageKey = p.getString("pref_key_auto_cleanup_limit_percent", null)
+                        val limitBytes = if (percentageKey != null) {
+                            // パーセンテージベース設定が存在する場合
+                            AppPreferences.calculateCacheLimitBytes(this@HistoryActivity, percentageKey)
+                        } else {
+                            // レガシーMB設定をチェック
+                            val mb = p.getString("pref_key_auto_cleanup_limit_mb", "0")?.toLongOrNull() ?: 0L
+                            if (mb > 0) mb * 1024L * 1024L else 0L
+                        }
+
+                        if (limitBytes > 0) {
                             val cm = com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity)
                             // ディスク走査/削除はIOスレッドで実行
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

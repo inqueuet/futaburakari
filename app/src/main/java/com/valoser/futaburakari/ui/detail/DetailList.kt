@@ -133,24 +133,25 @@ private fun createImageRequest(
     context: android.content.Context,
     url: String,
     referer: String?,
-    targetSizePx: Int? = null
+    forDisplay: Boolean = true
 ): ImageRequest {
-    val cacheKey = "$url|$referer|$targetSizePx"
+    val cacheKey = "$url|$referer|$forDisplay"
     return imageRequestCache.get(cacheKey) ?: run {
         val request = ImageRequest.Builder(context)
             .data(url)
             .memoryCacheKey(ImageKeys.full(url))
-            .placeholderMemoryCacheKey(ImageKeys.full(url))
+            .diskCacheKey(url)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .networkCachePolicy(CachePolicy.ENABLED)
             .precision(Precision.INEXACT)
             .transitionFactory(CrossfadeTransition.Factory())
             .apply {
                 if (!referer.isNullOrBlank()) {
                     httpHeaders(createHeaders(referer))
                 }
-                if (targetSizePx != null) {
-                    size(Size(Dimension.Pixels(targetSizePx), Dimension.Pixels(targetSizePx)))
-                    scale(Scale.FIT)
-                }
+                // サイズ指定を削除してキャッシュ効率を優先
+                // Coilが自動的に適切なサイズでスケーリングを行う
             }
             .build()
         imageRequestCache.put(cacheKey, request)
@@ -278,7 +279,7 @@ fun DetailListCompose(
                     for (i in startAhead..endAhead) {
                         val url = urlFor(i) ?: continue
                         if (prefetched.add(url)) {
-                            val req = createImageRequest(ctx, url, threadUrl, screenWidthPx)
+                            val req = createImageRequest(ctx, url, threadUrl, forDisplay = false)
                             imageLoader.enqueue(req)
                         }
                     }
@@ -288,7 +289,7 @@ fun DetailListCompose(
                         for (i in startBack..endBack) {
                             val url = urlFor(i) ?: continue
                             if (prefetched.add(url)) {
-                                val req = createImageRequest(ctx, url, threadUrl, screenWidthPx)
+                                val req = createImageRequest(ctx, url, threadUrl, forDisplay = false)
                                 imageLoader.enqueue(req)
                             }
                         }
@@ -474,13 +475,8 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        val config = androidx.compose.ui.platform.LocalConfiguration.current
-                        val density = androidx.compose.ui.platform.LocalDensity.current
-                        val screenWidthPx = remember(config.screenWidthDp, density) {
-                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
-                        }
                         coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.imageUrl, threadUrl, screenWidthPx),
+                            model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -534,13 +530,8 @@ fun DetailListCompose(
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        val config = androidx.compose.ui.platform.LocalConfiguration.current
-                        val density = androidx.compose.ui.platform.LocalDensity.current
-                        val screenWidthPx = remember(config.screenWidthDp, density) {
-                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
-                        }
                         coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.videoUrl, threadUrl, screenWidthPx),
+                            model = createImageRequest(ctx, item.videoUrl, threadUrl, forDisplay = true),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()

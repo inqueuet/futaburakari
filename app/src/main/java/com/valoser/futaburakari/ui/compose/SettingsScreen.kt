@@ -78,6 +78,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.valoser.futaburakari.MyApplication
+import kotlin.math.roundToInt
 
 /**
  * アプリの設定画面コンポーザブル。
@@ -102,7 +103,26 @@ fun SettingsScreen(onBack: () -> Unit) {
     // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
     // 旧「カラーモード」設定は廃止
-    var autoCleanup by remember { mutableStateOf(prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0") }
+
+    // 自動クリーンアップ設定の初期化（レガシー値からの移行処理を含む）
+    var autoCleanup by remember {
+        val legacyValue = prefs.getString("pref_key_auto_cleanup_limit_mb", "0") ?: "0"
+        val currentValue = prefs.getString("pref_key_auto_cleanup_limit_percent", null)
+
+        val initialValue = if (currentValue != null) {
+            // 既にパーセンテージ設定がある場合はそれを使用
+            currentValue
+        } else {
+            // レガシー値からパーセンテージに移行
+            val migratedValue = AppPreferences.migrateLegacyCacheLimit(ctx, legacyValue)
+            // 移行後の値を保存
+            prefs.edit().putString("pref_key_auto_cleanup_limit_percent", migratedValue).apply()
+            // レガシーキーを削除（完全移行）
+            prefs.edit().remove("pref_key_auto_cleanup_limit_mb").apply()
+            migratedValue
+        }
+        mutableStateOf(initialValue)
+    }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", false)) }
     // 同時接続数（1..4）。AppPreferences に保存（フル画像アップグレードはこの設定に統合）
     var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
@@ -342,14 +362,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // 自動クリーンアップ設定
+            // 自動クリーンアップ設定（パーセンテージベース）
             item {
+                val availableGB = AppPreferences.getAvailableStorageGB(ctx)
+                val currentLimitBytes = AppPreferences.calculateCacheLimitBytes(ctx, autoCleanup)
+                val currentLimitGB = currentLimitBytes / (1024.0 * 1024.0 * 1024.0)
+
+                val summaryText = if (autoCleanup == "0") {
+                    "利用可能容量: ${availableGB.roundToInt()}GB"
+                } else {
+                    "利用可能容量: ${availableGB.roundToInt()}GB（上限: ${currentLimitGB.roundToInt()}GB）"
+                }
+
                 DropdownPreferenceRow(
                     title = "自動クリーンアップ上限",
                     entries = cleanupEntries,
                     values = cleanupValues,
                     value = autoCleanup,
-                    onValueChange = { v -> autoCleanup = v; prefs.edit().putString("pref_key_auto_cleanup_limit_mb", v).apply() }
+                    summary = summaryText,
+                    onValueChange = { v ->
+                        autoCleanup = v
+                        prefs.edit().putString("pref_key_auto_cleanup_limit_percent", v).apply()
+                    }
                 )
             }
 
@@ -450,6 +484,7 @@ private fun DropdownPreferenceRow(
     entries: List<String>,
     values: List<String>,
     value: String,
+    summary: String = "",
     onValueChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -469,6 +504,10 @@ private fun DropdownPreferenceRow(
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
             Text(currentLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            if (summary.isNotBlank()) {
+                Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+            }
         }
 
         DropdownMenu(

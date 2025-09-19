@@ -573,10 +573,19 @@ class DetailViewModel @Inject constructor(
         contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
-                    // プロンプト情報が既に存在する場合はスキップ
+                    // プロンプト情報が既に存在し、かつキャッシュにも存在する場合のみスキップ
                     if (!content.prompt.isNullOrBlank()) {
-                        Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - already has prompt")
-                        return@forEach
+                        // キャッシュの存在確認
+                        val cachedPrompt = runCatching {
+                            MetadataCache(appContext).get(content.imageUrl)
+                        }.getOrNull()
+
+                        if (!cachedPrompt.isNullOrBlank()) {
+                            Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - has prompt and cache")
+                            return@forEach
+                        } else {
+                            Log.d("DetailViewModel", "Re-extracting metadata for ${content.imageUrl} - prompt exists but no cache")
+                        }
                     }
 
                     val limitedIO = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
@@ -616,11 +625,11 @@ class DetailViewModel @Inject constructor(
             }
         }
 
-        // 受信・段階反映（500ms間隔でバッチ適用）
+        // 受信・段階反映（即座に反映 + バッチング最適化）
         viewModelScope.launch(Dispatchers.Default) {
             val batch = mutableMapOf<String, String?>()
             var lastFlush = System.currentTimeMillis()
-            val flushIntervalMs = 500L
+            val flushIntervalMs = 250L // 250msに短縮（より即座な反映）
 
             suspend fun flush(force: Boolean = false) {
                 val now = System.currentTimeMillis()
@@ -642,13 +651,17 @@ class DetailViewModel @Inject constructor(
                     }
                     if (changed) {
                         val snapshot = current.toList()
-                        _detailContent.value = snapshot
+                        // UIは即座に更新
+                        withContext(Dispatchers.Main) {
+                            _detailContent.value = snapshot
+                        }
+                        // ディスク保存は非同期で実行
                         withContext(Dispatchers.IO) {
-                            cacheManager.saveDetails(url, snapshot)
-                            // 抽出完了ごとにアーカイブスナップショットも更新（オフライン時の即時反映用）
-                            cacheManager.saveArchiveSnapshot(url, snapshot)
-                            // 取得済みプロンプトをローカルのアーカイブ画像へも書き戻し（上書き許容）
                             runCatching {
+                                cacheManager.saveDetails(url, snapshot)
+                                // 抽出完了ごとにアーカイブスナップショットも更新（オフライン時の即時反映用）
+                                cacheManager.saveArchiveSnapshot(url, snapshot)
+                                // 取得済みプロンプトをローカルのアーカイブ画像へも書き戻し（上書き許容）
                                 batch.forEach { (id, p) ->
                                     val prompt = p ?: return@forEach
                                     val idx = snapshot.indexOfFirst { it.id == id }
@@ -673,6 +686,8 @@ class DetailViewModel @Inject constructor(
                                         else -> {}
                                     }
                                 }
+                            }.onFailure { e ->
+                                Log.w("DetailViewModel", "Failed to save metadata updates", e)
                             }
                         }
                     }
@@ -684,11 +699,11 @@ class DetailViewModel @Inject constructor(
             // 受信ループ
             for (pair in updates) {
                 batch[pair.first] = pair.second
-                // バッチサイズ制限: 一定数溜まったら強制反映
-                if (batch.size >= 10) {
+                // より積極的な反映: 3件溜まったら即座に反映
+                if (batch.size >= 3) {
                     flush(force = true)
                 } else {
-                    // 必要なら定期的に反映
+                    // 定期的に反映
                     flush(force = false)
                 }
             }
@@ -884,26 +899,39 @@ class DetailViewModel @Inject constructor(
 
     /**
      * 既存表示（prior）に含まれるプロンプト等を新規取得（base）へ引き継ぐ。
-     * - Image/Video で prompt が空の要素のみ対象。
-     * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）。
+     * - Image/Video のプロンプト情報を積極的にマージ（既存のプロンプトも保持）。
+     * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）、最後に完全URL。
      */
     private fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
         if (base.isEmpty() || prior.isEmpty()) return base
-        fun keyForImage(url: String?, fileName: String?): String? =
-            fileName?.takeIf { it.isNotBlank() } ?: url?.substringAfterLast('/')
+
+        fun keyForImage(url: String?, fileName: String?): List<String> {
+            val keys = mutableListOf<String>()
+            // 1. ファイル名での照合
+            fileName?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+            // 2. URL末尾のファイル名での照合
+            url?.substringAfterLast('/')?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+            // 3. 完全URLでの照合
+            url?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+            return keys
+        }
 
         val promptByKey: Map<String, String> = buildMap {
             prior.forEach { dc ->
                 when (dc) {
                     is DetailContent.Image -> {
-                        val k = keyForImage(dc.imageUrl, dc.fileName)
+                        val keys = keyForImage(dc.imageUrl, dc.fileName)
                         val p = dc.prompt
-                        if (!k.isNullOrBlank() && !p.isNullOrBlank()) put(k, p)
+                        if (!p.isNullOrBlank()) {
+                            keys.forEach { k -> put(k, p) }
+                        }
                     }
                     is DetailContent.Video -> {
-                        val k = keyForImage(dc.videoUrl, dc.fileName)
+                        val keys = keyForImage(dc.videoUrl, dc.fileName)
                         val p = dc.prompt
-                        if (!k.isNullOrBlank() && !p.isNullOrBlank()) put(k, p)
+                        if (!p.isNullOrBlank()) {
+                            keys.forEach { k -> put(k, p) }
+                        }
                     }
                     else -> {}
                 }
@@ -915,16 +943,22 @@ class DetailViewModel @Inject constructor(
         return base.map { dc ->
             when (dc) {
                 is DetailContent.Image -> {
-                    if (!dc.prompt.isNullOrBlank()) dc else {
-                        val k = keyForImage(dc.imageUrl, dc.fileName)
-                        val p = if (!k.isNullOrBlank()) promptByKey[k] else null
+                    val currentPrompt = dc.prompt
+                    if (!currentPrompt.isNullOrBlank()) {
+                        dc // 既にプロンプトがある場合はそのまま
+                    } else {
+                        val keys = keyForImage(dc.imageUrl, dc.fileName)
+                        val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
                         if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
                     }
                 }
                 is DetailContent.Video -> {
-                    if (!dc.prompt.isNullOrBlank()) dc else {
-                        val k = keyForImage(dc.videoUrl, dc.fileName)
-                        val p = if (!k.isNullOrBlank()) promptByKey[k] else null
+                    val currentPrompt = dc.prompt
+                    if (!currentPrompt.isNullOrBlank()) {
+                        dc // 既にプロンプトがある場合はそのまま
+                    } else {
+                        val keys = keyForImage(dc.videoUrl, dc.fileName)
+                        val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
                         if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
                     }
                 }
