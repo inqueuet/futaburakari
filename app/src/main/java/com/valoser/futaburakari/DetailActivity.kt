@@ -255,7 +255,8 @@ class DetailActivity : BaseActivity() {
                             isRequestingMore = false
                         }
                     },
-                    onDownloadImages = { urls -> viewModel.downloadImages(urls) }
+                    onDownloadImages = { urls -> viewModel.downloadImages(urls) },
+                    onDownloadImagesSkipExisting = { urls -> viewModel.downloadImagesSkipExisting(urls) }
                 )
             }
         }

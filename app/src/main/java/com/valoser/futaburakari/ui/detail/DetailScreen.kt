@@ -173,6 +173,7 @@ fun DetailScreenScaffold(
     // 末尾近辺に到達したときに呼ばれる（無限スクロール用）
     onNearListEnd: (() -> Unit)? = null,
     onDownloadImages: ((List<String>) -> Unit)? = null,
+    onDownloadImagesSkipExisting: ((List<String>) -> Unit)? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
 ) {
@@ -184,9 +185,9 @@ fun DetailScreenScaffold(
         { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
     }
 
-    // 画像一括ダウンロード用のコールバック
-    var onBulkDownloadImages by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var onBulkDownloadPromptImages by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // 画像一括ダウンロード用のコールバック（重複チェック付き）
+    var onBulkDownloadImagesSkipExisting by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var onBulkDownloadPromptImagesSkipExisting by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // ダイアログ/シート用のUI状態を上位（topBar/本文の両方）で共有できるように保持
     var titleClickPending by remember { mutableStateOf(false) }
@@ -250,14 +251,14 @@ fun DetailScreenScaffold(
                         text = { Text("画像一括ダウンロード") },
                         onClick = {
                             moreExpanded = false
-                            onBulkDownloadImages?.invoke()
+                            onBulkDownloadImagesSkipExisting?.invoke()
                         }
                     )
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("プロンプト付き画像ダウンロード") },
                         onClick = {
                             moreExpanded = false
-                            onBulkDownloadPromptImages?.invoke()
+                            onBulkDownloadPromptImagesSkipExisting?.invoke()
                         }
                     )
                     if (onImageEdit != null) {
@@ -300,20 +301,20 @@ fun DetailScreenScaffold(
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
 
-            // 画像一括ダウンロードのコールバックを設定
+            // 画像一括ダウンロードのコールバックを設定（重複チェック付き）
             LaunchedEffect(items) {
-                onBulkDownloadImages = {
+                onBulkDownloadImagesSkipExisting = {
                     val imageUrls = items.filterIsInstance<DetailContent.Image>().map { it.imageUrl }
                     if (imageUrls.isNotEmpty()) {
-                        onDownloadImages?.invoke(imageUrls)
+                        onDownloadImagesSkipExisting?.invoke(imageUrls)
                     }
                 }
-                onBulkDownloadPromptImages = {
+                onBulkDownloadPromptImagesSkipExisting = {
                     val promptImageUrls = items.filterIsInstance<DetailContent.Image>()
                         .filter { !it.prompt.isNullOrBlank() }
                         .map { it.imageUrl }
                     if (promptImageUrls.isNotEmpty()) {
-                        onDownloadImages?.invoke(promptImageUrls)
+                        onDownloadImagesSkipExisting?.invoke(promptImageUrls)
                     }
                 }
             }

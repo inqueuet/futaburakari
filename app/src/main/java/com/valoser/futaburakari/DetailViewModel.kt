@@ -1268,4 +1268,31 @@ class DetailViewModel @Inject constructor(
             }
         }
     }
+
+    fun downloadImagesSkipExisting(urls: List<String>) {
+        viewModelScope.launch {
+            var skippedCount = 0
+            var downloadedCount = 0
+
+            urls.forEach { url ->
+                val downloaded = MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
+                if (downloaded) {
+                    downloadedCount++
+                } else {
+                    skippedCount++
+                }
+            }
+
+            // 結果を通知
+            withContext(Dispatchers.Main) {
+                val message = when {
+                    downloadedCount > 0 && skippedCount > 0 -> "新規ダウンロード: ${downloadedCount}件、スキップ: ${skippedCount}件"
+                    downloadedCount > 0 -> "${downloadedCount}件の画像をダウンロードしました"
+                    skippedCount > 0 -> "${skippedCount}件の画像は既にダウンロード済みでした"
+                    else -> "ダウンロード対象の画像がありません"
+                }
+                android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 }
