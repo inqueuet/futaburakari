@@ -122,24 +122,8 @@ object MetadataExtractor {
     private fun isScreenShotFile(uriOrUrl: String): Boolean {
         val lowercasePath = uriOrUrl.lowercase()
 
-        // よくあるScreenShotファイルのパターンをチェック
-        return lowercasePath.contains("screenshot") ||
-               lowercasePath.contains("screen_shot") ||
-               lowercasePath.contains("screen-shot") ||
-               lowercasePath.contains("screencapture") ||
-               lowercasePath.contains("screen_capture") ||
-               lowercasePath.contains("screen-capture") ||
-               lowercasePath.contains("スクリーンショット") ||
-               lowercasePath.contains("スクショ") ||
-               // macOSのスクリーンショット命名パターン
-               lowercasePath.contains("スクリーン ショット") ||
-               // Windowsのスクリーンショット命名パターン
-               lowercasePath.contains("screenshot_") ||
-               // Androidのスクリーンショット命名パターン
-               lowercasePath.contains("screenshot-") ||
-               // その他の一般的なパターン
-               lowercasePath.contains("capture_") ||
-               lowercasePath.contains("capture-")
+        // ScreenShotファイルのパターンをチェック（大文字小文字を考慮）
+        return lowercasePath.contains("screenshot")
     }
 
     // ====== Public API ======
