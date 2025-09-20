@@ -804,8 +804,10 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         // 行インデックスを計算
         val lineIndex = text.substring(0, lineStart).count { it == '\n' }
 
-        // ヘッダー行内のNo.のみをクリック可能にする
-        if (isHeaderLine(line, lineIndex)) {
+        // ヘッダー行内のNo.または引用行内のNo.をクリック可能にする
+        val trimmedLine = line.trimStart()
+        val isQuoteLine = trimmedLine.startsWith(">") || trimmedLine.startsWith("＞")
+        if (isHeaderLine(line, lineIndex) || isQuoteLine) {
             val num = m.groupValues[1]
             addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
             addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
