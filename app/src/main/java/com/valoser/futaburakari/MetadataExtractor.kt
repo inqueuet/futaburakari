@@ -112,6 +112,36 @@ object MetadataExtractor {
     @Synchronized private fun cacheGet(key: String): String? = resultCache[key]
     @Synchronized private fun cachePut(key: String, value: String) { resultCache[key] = value }
 
+    // ====== ScreenShot判定 ======
+    /**
+     * ScreenShotファイルかどうかを判定する。
+     *
+     * @param uriOrUrl ファイルのURI/URL
+     * @return ScreenShotファイルの場合 true
+     */
+    private fun isScreenShotFile(uriOrUrl: String): Boolean {
+        val lowercasePath = uriOrUrl.lowercase()
+
+        // よくあるScreenShotファイルのパターンをチェック
+        return lowercasePath.contains("screenshot") ||
+               lowercasePath.contains("screen_shot") ||
+               lowercasePath.contains("screen-shot") ||
+               lowercasePath.contains("screencapture") ||
+               lowercasePath.contains("screen_capture") ||
+               lowercasePath.contains("screen-capture") ||
+               lowercasePath.contains("スクリーンショット") ||
+               lowercasePath.contains("スクショ") ||
+               // macOSのスクリーンショット命名パターン
+               lowercasePath.contains("スクリーン ショット") ||
+               // Windowsのスクリーンショット命名パターン
+               lowercasePath.contains("screenshot_") ||
+               // Androidのスクリーンショット命名パターン
+               lowercasePath.contains("screenshot-") ||
+               // その他の一般的なパターン
+               lowercasePath.contains("capture_") ||
+               lowercasePath.contains("capture-")
+    }
+
     // ====== Public API ======
     /**
      * URI/URL からプロンプトらしき文字列を抽出して返す。見つからなければ null。
@@ -126,6 +156,12 @@ object MetadataExtractor {
      */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
+            // ScreenShotファイルは早期リターン（プロンプト抽出をスキップ）
+            if (isScreenShotFile(uriOrUrl)) {
+                Log.d(TAG, "Skipping prompt extraction for screenshot file: $uriOrUrl")
+                return@withContext null
+            }
+
             // 1) in-memory LRU
             cacheGet(uriOrUrl)?.let { return@withContext it }
             // 2) persistent cache
@@ -161,6 +197,11 @@ object MetadataExtractor {
                 }
             }
             if (!result.isNullOrBlank()) {
+                // "UNICODE"のみの結果は無効として扱う
+                if (result.trim() == "UNICODE") {
+                    Log.w(TAG, "Extracted metadata is just 'UNICODE' marker, treating as null: $uriOrUrl")
+                    return@withContext null
+                }
                 cachePut(uriOrUrl, result)
                 runCatching { MetadataCache(context).put(uriOrUrl, result) }
             }
@@ -317,13 +358,20 @@ object MetadataExtractor {
     // テキスト中から prompt/workflow/CLIPTextEncode 由来の候補を正規表現で抽出
     private fun scanTextForPrompts(text: String): String? {
         RE_JSON_PROMPT.matcher(text).apply {
-            if (find()) parsePromptJson(group(1) ?: "")?.let { return it }
+            if (find()) parsePromptJson(group(1) ?: "")?.let {
+                if (it.trim() != "UNICODE") return it
+            }
         }
         RE_JSON_WORKFLOW.matcher(text).apply {
-            if (find()) parseWorkflowJson(group(1) ?: "")?.let { return it }
+            if (find()) parseWorkflowJson(group(1) ?: "")?.let {
+                if (it.trim() != "UNICODE") return it
+            }
         }
         RE_CLIPTEXTENCODE.matcher(text).apply {
-            if (find()) return (group(3) ?: "").replace("\\\"", "\"")
+            if (find()) {
+                val result = (group(3) ?: "").replace("\\\"", "\"")
+                if (result.trim() != "UNICODE") return result
+            }
         }
         return null
     }
@@ -335,7 +383,7 @@ object MetadataExtractor {
         return try {
             val exif = ExifInterface(ByteArrayInputStream(fileBytes))
             listOf(
-                exif.getAttribute(ExifInterface.TAG_USER_COMMENT),
+                exif.getAttribute(ExifInterface.TAG_USER_COMMENT)?.let { decodeUserComment(it) },
                 exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
                 exif.getAttribute("XPComment")?.let { decodeXpString(it) }
             ).firstOrNull { !it.isNullOrBlank() }
@@ -344,7 +392,54 @@ object MetadataExtractor {
         }
     }
 
-    
+
+
+    // EXIF UserComment の適切なデコード（エンコーディングヘッダーを考慮）
+    private fun decodeUserComment(raw: String): String? {
+        if (raw.length < 8) return raw.takeIf { it.isNotBlank() }
+
+        val bytes = raw.toByteArray(StandardCharsets.ISO_8859_1)
+        return try {
+            when {
+                // UNICODE (UTF-16) エンコーディングマーカー
+                bytes.size >= 8 &&
+                bytes[0] == 'U'.code.toByte() &&
+                bytes[1] == 'N'.code.toByte() &&
+                bytes[2] == 'I'.code.toByte() &&
+                bytes[3] == 'C'.code.toByte() &&
+                bytes[4] == 'O'.code.toByte() &&
+                bytes[5] == 'D'.code.toByte() &&
+                bytes[6] == 'E'.code.toByte() -> {
+                    // 8バイト目以降をUTF-16LEとしてデコード
+                    val textBytes = bytes.copyOfRange(8, bytes.size)
+                    String(textBytes, StandardCharsets.UTF_16LE).trim().takeIf { it.isNotBlank() }
+                }
+                // ASCII エンコーディングマーカー
+                bytes.size >= 8 &&
+                bytes[0] == 'A'.code.toByte() &&
+                bytes[1] == 'S'.code.toByte() &&
+                bytes[2] == 'C'.code.toByte() &&
+                bytes[3] == 'I'.code.toByte() &&
+                bytes[4] == 'I'.code.toByte() -> {
+                    // 8バイト目以降をASCIIとしてデコード
+                    val textBytes = bytes.copyOfRange(8, bytes.size)
+                    String(textBytes, StandardCharsets.US_ASCII).trim().takeIf { it.isNotBlank() }
+                }
+                // JIS エンコーディングマーカー（あまり使われないが一応対応）
+                bytes.size >= 8 &&
+                bytes.sliceArray(0..4).contentEquals("JIS\u0000\u0000".toByteArray(StandardCharsets.ISO_8859_1)) -> {
+                    // 8バイト目以降をShift_JISとしてデコード（正確にはJISだが、実用上Shift_JISで処理）
+                    val textBytes = bytes.copyOfRange(8, bytes.size)
+                    String(textBytes, charset("Shift_JIS")).trim().takeIf { it.isNotBlank() }
+                }
+                // エンコーディングマーカーがない場合はそのまま
+                else -> raw.trim().takeIf { it.isNotBlank() }
+            }
+        } catch (_: Exception) {
+            // デコードに失敗した場合は元の文字列を返す（ただし"UNICODE"だけの場合は除外）
+            raw.trim().takeIf { it.isNotBlank() && it != "UNICODE" }
+        }
+    }
 
     // XPComment は UTF-16LE を ISO-8859-1 として受け取るため、UTF-16LE で復号
     private fun decodeXpString(raw: String): String? {
@@ -398,7 +493,7 @@ object MetadataExtractor {
                         if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
                             scanXmpForPrompts(value)?.let { prompts += it }
                         } else if (isPromptKey(key)) {
-                            if (value.isNotBlank()) prompts += value
+                            if (value.isNotBlank() && value.trim() != "UNICODE") prompts += value
                         }
                     }
                 }
@@ -415,7 +510,7 @@ object MetadataExtractor {
                             if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
                                 scanXmpForPrompts(value)?.let { prompts += it }
                             } else if (isPromptKey(key)) {
-                                if (value.isNotBlank()) prompts += value
+                                if (value.isNotBlank() && value.trim() != "UNICODE") prompts += value
                             }
                         }
                     }
@@ -437,7 +532,7 @@ object MetadataExtractor {
                                 val value = valueBytes.toString(StandardCharsets.UTF_8)
                                 if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
                                     scanXmpForPrompts(value)?.let { prompts += it }
-                                } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                                } else if (isPromptKey(key) && value.isNotBlank() && value.trim() != "UNICODE") prompts += value
                             }
                         } else {
                             p = langEnd + 1
@@ -448,7 +543,7 @@ object MetadataExtractor {
                                 val value = valueBytes.toString(StandardCharsets.UTF_8)
                                 if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
                                     scanXmpForPrompts(value)?.let { prompts += it }
-                                } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                                } else if (isPromptKey(key) && value.isNotBlank() && value.trim() != "UNICODE") prompts += value
                             } else {
                                 p = transEnd + 1
                                 if (p <= data.size) {
@@ -457,7 +552,7 @@ object MetadataExtractor {
                                     val value = valueBytes.toString(StandardCharsets.UTF_8)
                                     if (key.equals("XML:com.adobe.xmp", ignoreCase = true)) {
                                         scanXmpForPrompts(value)?.let { prompts += it }
-                                    } else if (isPromptKey(key) && value.isNotBlank()) prompts += value
+                                    } else if (isPromptKey(key) && value.isNotBlank() && value.trim() != "UNICODE") prompts += value
                                 }
                             }
                         }
@@ -650,8 +745,8 @@ object MetadataExtractor {
                 val cand = s.substring(m.start(), m.end())
                 if (RE_NOVELAI_SOFTWARE.matcher(cand).find()) {
                     scanTextForPrompts(cand)?.let { return it }
-                    // 最後の手段として丸ごと返す
-                    return cand
+                    // 最後の手段として丸ごと返す（ただし"UNICODE"のみは除外）
+                    if (cand.trim() != "UNICODE") return cand
                 }
             }
             return null
@@ -744,7 +839,7 @@ object MetadataExtractor {
             if (rec == 2 && (dset == 120 || dset == 105 || dset == 116 || dset == 122)) {
                 val str = try { String(valueBytes, StandardCharsets.UTF_8) } catch (_: Exception) { String(valueBytes, StandardCharsets.ISO_8859_1) }
                 scanTextForPrompts(str)?.let { return it }
-                if (str.isNotBlank() && !isLabely(str)) return str.trim()
+                if (str.isNotBlank() && !isLabely(str) && str.trim() != "UNICODE") return str.trim()
             }
         }
         return null
@@ -756,7 +851,7 @@ object MetadataExtractor {
             val m = RE_XMP_ATTR.matcher(xmp)
             if (m.find()) {
                 val v = m.group(3) ?: ""
-                if (v.isNotBlank()) return v.replace("\\\"", "\"")
+                if (v.isNotBlank() && v.trim() != "UNICODE") return v.replace("\\\"", "\"")
             }
         }
         // タグ <ns:prompt>...</ns:prompt> or <ns:parameters>...</ns:parameters>
@@ -764,7 +859,7 @@ object MetadataExtractor {
             val m = RE_XMP_TAG.matcher(xmp)
             if (m.find()) {
                 val v = m.group(3) ?: ""
-                if (v.isNotBlank()) return v.trim()
+                if (v.isNotBlank() && v.trim() != "UNICODE") return v.trim()
             }
         }
         // dc:description/rdf:Alt/rdf:li のテキスト
@@ -772,7 +867,7 @@ object MetadataExtractor {
             val m = RE_XMP_DESC.matcher(xmp)
             if (m.find()) {
                 val v = m.group(1) ?: ""
-                if (v.isNotBlank() && !isLabely(v)) return v.trim()
+                if (v.isNotBlank() && !isLabely(v) && v.trim() != "UNICODE") return v.trim()
             }
         }
         // XMP内にJSONが埋まっている可能性にも対応
