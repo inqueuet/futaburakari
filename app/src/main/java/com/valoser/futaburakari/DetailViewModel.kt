@@ -14,10 +14,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.net.MalformedURLException
 import java.io.IOException
 import java.net.URL
@@ -33,6 +36,18 @@ import com.valoser.futaburakari.ui.detail.SearchState
 import androidx.collection.LruCache
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * ダウンロード進捗を表すデータクラス
+ */
+data class DownloadProgress(
+    val current: Int,
+    val total: Int,
+    val currentFileName: String? = null,
+    val isActive: Boolean = true
+) {
+    val percentage: Int get() = if (total > 0) (current * 100 / total) else 0
+}
 
 /**
  * スレ詳細用の ViewModel。
@@ -68,6 +83,10 @@ class DetailViewModel @Inject constructor(
     /** 通信・更新の進行中を表すフロー。 */
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    /** ダウンロード進捗を表すフロー。 */
+    private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
+    val downloadProgress: StateFlow<DownloadProgress?> = _downloadProgress.asStateFlow()
 
     // そうだねの更新通知用（resNum -> サーバ応答カウント）。UI側ではこれを受け取り表示を楽観上書き。
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
@@ -1277,36 +1296,84 @@ class DetailViewModel @Inject constructor(
     }
 
     fun downloadImages(urls: List<String>) {
+        if (urls.isEmpty()) return
+
         viewModelScope.launch {
-            urls.forEach { url ->
-                MediaSaver.saveImage(appContext, url, networkClient)
+            _downloadProgress.value = DownloadProgress(0, urls.size, isActive = true)
+            var completed = 0
+
+            try {
+                // 並列ダウンロード（最大4並列）
+                val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+                val jobs = urls.map { url ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit {
+                            val fileName = url.substringAfterLast('/')
+                            _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
+
+                            MediaSaver.saveImage(appContext, url, networkClient)
+
+                            synchronized(this@DetailViewModel) {
+                                completed++
+                                _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
+                            }
+                        }
+                    }
+                }
+                jobs.awaitAll()
+            } finally {
+                delay(500) // 完了表示を少し見せる
+                _downloadProgress.value = null
             }
         }
     }
 
     fun downloadImagesSkipExisting(urls: List<String>) {
+        if (urls.isEmpty()) return
+
         viewModelScope.launch {
+            _downloadProgress.value = DownloadProgress(0, urls.size, isActive = true)
             var skippedCount = 0
             var downloadedCount = 0
+            var completed = 0
 
-            urls.forEach { url ->
-                val downloaded = MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
-                if (downloaded) {
-                    downloadedCount++
-                } else {
-                    skippedCount++
-                }
-            }
+            try {
+                // 並列ダウンロード（最大4並列）
+                val semaphore = Semaphore(4)
+                val jobs = urls.map { url ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit {
+                            val fileName = url.substringAfterLast('/')
 
-            // 結果を通知
-            withContext(Dispatchers.Main) {
-                val message = when {
-                    downloadedCount > 0 && skippedCount > 0 -> "新規ダウンロード: ${downloadedCount}件、スキップ: ${skippedCount}件"
-                    downloadedCount > 0 -> "${downloadedCount}件の画像をダウンロードしました"
-                    skippedCount > 0 -> "${skippedCount}件の画像は既にダウンロード済みでした"
-                    else -> "ダウンロード対象の画像がありません"
+                            val downloaded = MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
+
+                            synchronized(this@DetailViewModel) {
+                                if (downloaded) {
+                                    downloadedCount++
+                                } else {
+                                    skippedCount++
+                                }
+                                completed++
+                                _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
+                            }
+                        }
+                    }
                 }
-                android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+                jobs.awaitAll()
+
+                // 結果を通知
+                withContext(Dispatchers.Main) {
+                    val message = when {
+                        downloadedCount > 0 && skippedCount > 0 -> "新規ダウンロード: ${downloadedCount}件、スキップ: ${skippedCount}件"
+                        downloadedCount > 0 -> "${downloadedCount}件の画像をダウンロードしました"
+                        skippedCount > 0 -> "${skippedCount}件の画像は既にダウンロード済みでした"
+                        else -> "ダウンロード対象の画像がありません"
+                    }
+                    android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                delay(500) // 完了表示を少し見せる
+                _downloadProgress.value = null
             }
         }
     }

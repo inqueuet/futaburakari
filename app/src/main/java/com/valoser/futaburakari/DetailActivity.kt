@@ -256,7 +256,8 @@ class DetailActivity : BaseActivity() {
                         }
                     },
                     onDownloadImages = { urls -> viewModel.downloadImages(urls) },
-                    onDownloadImagesSkipExisting = { urls -> viewModel.downloadImagesSkipExisting(urls) }
+                    onDownloadImagesSkipExisting = { urls -> viewModel.downloadImagesSkipExisting(urls) },
+                    downloadProgressFlow = viewModel.downloadProgress
                 )
             }
         }

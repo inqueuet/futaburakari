@@ -23,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
 
@@ -174,6 +175,8 @@ fun DetailScreenScaffold(
     onNearListEnd: (() -> Unit)? = null,
     onDownloadImages: ((List<String>) -> Unit)? = null,
     onDownloadImagesSkipExisting: ((List<String>) -> Unit)? = null,
+    // ダウンロード進捗状態
+    downloadProgressFlow: StateFlow<com.valoser.futaburakari.DownloadProgress?>? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
 ) {
@@ -184,6 +187,9 @@ fun DetailScreenScaffold(
     val setSearchActive = remember(onSearchActiveChange) {
         { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
     }
+
+    // ダウンロード進捗状態
+    val downloadProgress by downloadProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
 
     // 画像一括ダウンロード用のコールバック（重複チェック付き）
     var onBulkDownloadImagesSkipExisting by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -511,6 +517,41 @@ fun DetailScreenScaffold(
                         onBottomPaddingChange?.invoke(0)
                     }
                 }
+
+                // ダウンロード進捗表示
+                downloadProgress?.let { progress ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(16.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { progress.current.toFloat() / progress.total.toFloat() },
+                                modifier = Modifier.fillMaxWidth(0.8f)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "${progress.percentage}% (${progress.current}/${progress.total})",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            progress.currentFileName?.let { fileName ->
+                                Text(
+                                    text = fileName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Material3 PullToRefreshBox によるインジケータ描画
             }
 
