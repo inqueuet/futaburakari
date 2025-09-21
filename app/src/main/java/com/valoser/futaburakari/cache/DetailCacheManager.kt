@@ -383,13 +383,13 @@ class DetailCacheManager(private val context: Context) {
             return lower.endsWith(".mp4") || lower.endsWith(".webm")
         }
         val list = mutableListOf<DetailContent>()
-        for (f in files) {
+        for ((index, f) in files.withIndex()) {
             val uri = f.toURI().toString()
             val name = f.name
             if (isVideoName(name)) {
-                list += DetailContent.Video(id = uri, videoUrl = uri, prompt = null, fileName = name)
+                list += DetailContent.Video(id = "$uri#cache_$index", videoUrl = uri, prompt = null, fileName = name)
             } else {
-                list += DetailContent.Image(id = uri, imageUrl = uri, prompt = null, fileName = name)
+                list += DetailContent.Image(id = "$uri#cache_$index", imageUrl = uri, prompt = null, fileName = name)
             }
         }
         return list

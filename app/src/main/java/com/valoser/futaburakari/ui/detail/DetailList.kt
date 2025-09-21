@@ -388,7 +388,7 @@ fun DetailListCompose(
     }
 
     LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
-        itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
+        itemsIndexed(items, key = { index, it -> "${it.id}#$index" }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
                     val plain = plainTextOf(item)
