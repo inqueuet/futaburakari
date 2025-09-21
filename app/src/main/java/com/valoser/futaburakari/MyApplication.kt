@@ -127,6 +127,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED) // ディスクキャッシュは常に有効
                 .build()
         }
+
     }
 
     override fun onCreate() {

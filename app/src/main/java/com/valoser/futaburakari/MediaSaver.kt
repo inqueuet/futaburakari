@@ -25,7 +25,7 @@ object MediaSaver {
 
     /**
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する。
-     * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はダウンロードして保存する。
+     * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はキャッシュ優先でダウンロードして保存する。
      */
     suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
         saveMedia(
@@ -141,7 +141,7 @@ object MediaSaver {
                     return@withContext
                 }
 
-                // 実体を書き出す：file/content はローカルコピー、http(s) はダウンロード
+                // 実体を書き出す：file/content はローカルコピー、http(s) はキャッシュ優先でダウンロード
                 var downloadSuccess = false
                 try {
                     resolver.openOutputStream(uri).use { outputStream ->
@@ -159,6 +159,7 @@ object MediaSaver {
                                 input.copyTo(outputStream, bufferSize = 64 * 1024) // 64KBバッファでストリーミング
                             }
                         } else {
+                            // NetworkClientを使用（OkHttpキャッシュが効く）
                             val ok = networkClient.downloadTo(url, outputStream)
                             if (!ok) {
                                 showToast(context, "ファイルのダウンロードに失敗しました。")
@@ -264,6 +265,7 @@ object MediaSaver {
                             input.copyTo(outputStream, bufferSize = 64 * 1024)
                         }
                     } else {
+                        // NetworkClientを使用（OkHttpキャッシュが効く）
                         val ok = networkClient.downloadTo(url, outputStream)
                         if (!ok) {
                             showToast(context, "ファイルのダウンロードに失敗しました。")
