@@ -135,14 +135,29 @@ class DetailViewModel @Inject constructor(
                 // 極度の高負荷：即座にアクション
                 Log.w("DetailViewModel", "Critical memory usage detected, immediate cleanup")
                 clearNgFilterCache()
+                // Coilメモリキャッシュも即座にクリア
+                MyApplication.clearCoilImageCache(appContext)
                 memoryCheckIntervalMs = 5000L
                 consecutiveHighMemoryCount++
             }
-            memoryUsagePercent > 75 -> {
+            memoryUsagePercent > 80 -> {
+                // 高負荷：Coilメモリキャッシュをクリア
+                Log.w("DetailViewModel", "High memory usage detected, clearing Coil memory cache")
+                MyApplication.clearCoilImageCache(appContext)
                 consecutiveHighMemoryCount++
                 memoryCheckIntervalMs = 10000L
                 if (consecutiveHighMemoryCount >= 2) {
-                    Log.w("DetailViewModel", "High memory usage sustained, clearing caches")
+                    clearNgFilterCache()
+                    consecutiveHighMemoryCount = 0
+                }
+            }
+            memoryUsagePercent > 70 -> {
+                // 中程度の負荷：一部のキャッシュをクリア
+                consecutiveHighMemoryCount++
+                memoryCheckIntervalMs = 15000L
+                if (consecutiveHighMemoryCount >= 3) {
+                    Log.w("DetailViewModel", "Sustained memory pressure, clearing image cache")
+                    MyApplication.clearCoilImageCache(appContext)
                     clearNgFilterCache()
                     consecutiveHighMemoryCount = 0
                 }

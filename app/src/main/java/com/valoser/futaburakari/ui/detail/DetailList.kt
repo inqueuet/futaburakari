@@ -44,6 +44,7 @@ package com.valoser.futaburakari.ui.detail
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
@@ -494,7 +495,7 @@ fun DetailListCompose(
                                 androidx.compose.foundation.layout.Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 120.dp)
+                                        .height(200.dp)
                                 ) {
                                     androidx.compose.material3.CircularProgressIndicator(
                                         modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
@@ -548,7 +549,7 @@ fun DetailListCompose(
                                 androidx.compose.foundation.layout.Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 120.dp)
+                                        .height(200.dp)
                                 ) {
                                     androidx.compose.material3.CircularProgressIndicator(
                                         modifier = Modifier.align(androidx.compose.ui.Alignment.Center)

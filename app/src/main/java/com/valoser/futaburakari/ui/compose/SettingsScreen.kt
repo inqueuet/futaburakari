@@ -321,6 +321,22 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            // 画像ディスクキャッシュのクリア
+            item {
+                val scope = rememberCoroutineScope()
+                ListRow(
+                    title = "画像ディスクキャッシュをクリア",
+                    summary = "ディスク上の画像キャッシュのみを削除します（読み込み速度が低下する可能性があります）"
+                ) {
+                    scope.launch(Dispatchers.IO) {
+                        MyApplication.clearCoilDiskCache(ctx)
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(ctx, "画像ディスクキャッシュをクリアしました", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
             // 全キャッシュの削除（確認ダイアログ付き）
             item {
                 val scope = rememberCoroutineScope()
