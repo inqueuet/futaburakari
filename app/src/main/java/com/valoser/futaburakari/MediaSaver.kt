@@ -119,16 +119,20 @@ object MediaSaver {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val resolver = context.contentResolver
-            val projection = arrayOf(MediaStore.MediaColumns.DISPLAY_NAME)
+            val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME)
+            } else {
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA)
+            }
             val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
             } else {
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.DATA} LIKE ?"
             }
             val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 arrayOf(fileName, "$relativeBaseDir/Futaburakari/")
             } else {
-                arrayOf(fileName)
+                arrayOf(fileName, "%/Futaburakari/%")
             }
 
             resolver.query(mediaContentUri, projection, selection, selectionArgs, null)?.use { cursor ->

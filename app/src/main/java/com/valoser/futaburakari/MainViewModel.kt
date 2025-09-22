@@ -84,6 +84,7 @@ class MainViewModel @Inject constructor(
 
     // URL推測結果をキャッシュ（サイズを拡大）
     private val urlGuessCache = LruCache<String, String?>(500)
+    private val failedUrlCache = LruCache<String, Boolean>(200)
 
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
@@ -146,8 +147,15 @@ class MainViewModel @Inject constructor(
      */
     private fun guessFullFromPreview(previewUrl: String): String? {
         return urlGuessCache.get(previewUrl) ?: run {
+            // 既に失敗記録があるなら即座にnullを返す
+            if (failedUrlCache.get(previewUrl) == true) return null
+
             val result = guessFullFromPreviewInternal(previewUrl)
-            urlGuessCache.put(previewUrl, result)
+            if (result != null) {
+                urlGuessCache.put(previewUrl, result)
+            } else {
+                failedUrlCache.put(previewUrl, true)
+            }
             result
         }
     }
