@@ -300,9 +300,15 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             .clip(MaterialTheme.shapes.medium)
             .background(MaterialTheme.colorScheme.surfaceVariant)
 
-        // サムネイルが無い場合はプレースホルダーのボックスを表示
+        // サムネイルが無い場合は明示的に「画像なし」を表示
         if (entry.thumbnailUrl.isNullOrBlank()) {
-            Box(thumbModifier)
+            Box(thumbModifier, contentAlignment = Alignment.Center) {
+                Text(
+                    text = "画像なし",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         } else {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)

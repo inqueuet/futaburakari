@@ -73,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
  
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -476,34 +477,72 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
-                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
-                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
-                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
-                                        threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
-                                    }
-                                    ctx.startActivity(i)
-                                },
-                            contentScale = ContentScale.Fit,
-                            loading = {
-                                androidx.compose.foundation.layout.Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(200.dp)
-                                ) {
-                                    androidx.compose.material3.CircularProgressIndicator(
-                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                        // 空のimageUrlの場合は直接「画像なし」を表示
+                        if (item.imageUrl.isBlank()) {
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(120.dp)
+                                    .background(
+                                        androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                                     )
-                                }
-                            },
-                            onSuccess = { onImageLoaded?.invoke() }
-                        )
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "画像なし",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                )
+                            }
+                        } else {
+                            coil3.compose.SubcomposeAsyncImage(
+                                model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
+                                            putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
+                                            putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
+                                            putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
+                                            threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
+                                        }
+                                        ctx.startActivity(i)
+                                    },
+                                contentScale = ContentScale.Fit,
+                                loading = {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                    ) {
+                                        androidx.compose.material3.CircularProgressIndicator(
+                                            modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                        )
+                                    }
+                                },
+                                error = {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(120.dp)
+                                            .background(
+                                                androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                                androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                                            )
+                                    ) {
+                                        androidx.compose.material3.Text(
+                                            text = "画像なし",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                        )
+                                    }
+                                },
+                                onSuccess = { onImageLoaded?.invoke() }
+                            )
+                        }
                         // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。長文はタップで展開/折りたたみ。
                         val promptPlain = run {
                             val raw = item.prompt
@@ -552,6 +591,24 @@ fun DetailListCompose(
                                         .height(200.dp)
                                 ) {
                                     androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                    )
+                                }
+                            },
+                            error = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp)
+                                        .background(
+                                            androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                            androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                                        )
+                                ) {
+                                    androidx.compose.material3.Text(
+                                        text = "動画なし",
+                                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
                                     )
                                 }

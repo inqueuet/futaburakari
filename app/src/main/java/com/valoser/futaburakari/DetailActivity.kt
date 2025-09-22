@@ -369,19 +369,43 @@ class DetailActivity : BaseActivity() {
                 }
             }
 
-            // 履歴のサムネイル更新（最初のメディアを採用）
+            // 履歴のサムネイル更新（OPの画像のみを採用）
             runCatching {
-                val media = list.firstOrNull {
-                    it is DetailContent.Image || it is DetailContent.Video
+                val firstTextIndex = list.indexOfFirst { it is DetailContent.Text }
+                val media = if (firstTextIndex >= 0) {
+                    // OPレスの直後の画像/動画を探す（次のTextレスが現れるまで）
+                    // 空のURLを持つプレースホルダー画像は除外
+                    list.drop(firstTextIndex + 1).takeWhile { it !is DetailContent.Text }
+                        .firstOrNull {
+                            when (it) {
+                                is DetailContent.Image -> it.imageUrl.isNotBlank()
+                                is DetailContent.Video -> it.videoUrl.isNotBlank()
+                                else -> false
+                            }
+                        }
+                } else null
+                val opResNum = (list.getOrNull(firstTextIndex) as? DetailContent.Text)?.resNum
+                val mediaId = when (media) {
+                    is DetailContent.Image -> media.id
+                    is DetailContent.Video -> media.id
+                    else -> null
                 }
-                val url = when (media) {
+                // OPレス番号とメディアIDの末尾が一致する場合のみ OP のサムネとみなす
+                val isOpMedia = if (!opResNum.isNullOrBlank() && !mediaId.isNullOrBlank()) {
+                    mediaId.endsWith("#$opResNum")
+                } else media != null
+                val url = if (isOpMedia) when (media) {
                     is DetailContent.Image -> media.imageUrl
                     is DetailContent.Video -> media.videoUrl
                     else -> null
-                }
+                } else null
                 val threadUrl = currentUrl
-                if (!url.isNullOrBlank() && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
+                if (!threadUrl.isNullOrBlank()) {
+                    if (!url.isNullOrBlank()) {
+                        HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
+                    } else {
+                        HistoryManager.clearThumbnail(this@DetailActivity, threadUrl)
+                    }
                 }
             }
 

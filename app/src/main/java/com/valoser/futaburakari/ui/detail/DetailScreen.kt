@@ -859,13 +859,24 @@ fun DetailScreenScaffold(
                         // Compose 標準のグリッドで表示
                         val images = remember(items) {
                             data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String, val prompt: String?)
-                            var lastTextIdx = -1
                             val out = ArrayList<Entry>()
+                            // 各画像/動画に対して、直前のTextレスを探して関連付ける
                             for (i in items.indices) {
                                 when (val c = items[i]) {
-                                    is com.valoser.futaburakari.DetailContent.Text -> lastTextIdx = i
-                                    is com.valoser.futaburakari.DetailContent.Image -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.imageUrl, c.prompt)
-                                    is com.valoser.futaburakari.DetailContent.Video -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.videoUrl, c.prompt)
+                                    is com.valoser.futaburakari.DetailContent.Image -> {
+                                        // 直前のTextレスを探す
+                                        val parentTextIdx = (i - 1 downTo 0).firstOrNull { idx ->
+                                            items[idx] is com.valoser.futaburakari.DetailContent.Text
+                                        } ?: i
+                                        out += Entry(i, parentTextIdx, c.imageUrl, c.prompt)
+                                    }
+                                    is com.valoser.futaburakari.DetailContent.Video -> {
+                                        // 直前のTextレスを探す
+                                        val parentTextIdx = (i - 1 downTo 0).firstOrNull { idx ->
+                                            items[idx] is com.valoser.futaburakari.DetailContent.Text
+                                        } ?: i
+                                        out += Entry(i, parentTextIdx, c.videoUrl, c.prompt)
+                                    }
                                     else -> {}
                                 }
                             }

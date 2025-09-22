@@ -378,16 +378,62 @@ class DetailViewModel @Inject constructor(
                     applyNgAndPostAsync()
                     // キャッシュ由来でも画像プロンプト抽出を再試行（オフライン時の復元用）
                     updateMetadataInBackground(cached, url)
-                    // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映
+                    // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映（OPの画像のみ）
                     runCatching {
-                        val media = cached.firstOrNull { it is DetailContent.Image || it is DetailContent.Video }
+                        val firstTextIndex = cached.indexOfFirst { it is DetailContent.Text }
+                        val media = if (firstTextIndex >= 0) {
+                            // OPレスに直接関連付けられた画像/動画のみを取得
+                            // parseContentFromDocument と同じロジック：OPの直後で次のTextレスより前のメディアを探す
+                            val afterOP = cached.drop(firstTextIndex + 1)
+                            val nextTextIndex = afterOP.indexOfFirst { it is DetailContent.Text }
+                            val opMediaRange = if (nextTextIndex >= 0) {
+                                afterOP.take(nextTextIndex)
+                            } else {
+                                afterOP
+                            }
+
+                            // OPに属する最初のメディアのみを取得（空のURLを持つプレースホルダーは除外）
+                            val opMedia = opMediaRange.firstOrNull {
+                                when (it) {
+                                    is DetailContent.Image -> it.imageUrl.isNotBlank()
+                                    is DetailContent.Video -> it.videoUrl.isNotBlank()
+                                    else -> false
+                                }
+                            }
+
+                            // OPレスの番号を確認してより厳密にチェック
+                            val opText = cached[firstTextIndex] as DetailContent.Text
+                            val opResNum = opText.resNum
+
+                            // メディアのIDがOPレス番号と関連しているかチェック
+                            if (opMedia != null && opResNum != null) {
+                                val mediaId = when (opMedia) {
+                                    is DetailContent.Image -> opMedia.id
+                                    is DetailContent.Video -> opMedia.id
+                                    else -> null
+                                }
+                                // IDの末尾がOPレス番号と一致するかチェック
+                                if (mediaId != null && mediaId.endsWith("#$opResNum")) {
+                                    opMedia
+                                } else {
+                                    Log.d("DetailViewModel", "Skipping thumbnail - media ID '$mediaId' doesn't match OP resNum '$opResNum'")
+                                    null
+                                }
+                            } else {
+                                opMedia
+                            }
+                        } else null
                         val thumb = when (media) {
                             is DetailContent.Image -> media.imageUrl
                             is DetailContent.Video -> media.videoUrl
                             else -> null
                         }
                         if (!thumb.isNullOrBlank()) {
+                            Log.d("DetailViewModel", "Updating thumbnail for OP: $thumb")
                             HistoryManager.updateThumbnail(appContext, url, thumb)
+                        } else {
+                            Log.d("DetailViewModel", "No OP thumbnail found - clearing history thumbnail")
+                            HistoryManager.clearThumbnail(appContext, url)
                         }
                     }
                     _error.value = null
@@ -400,13 +446,60 @@ class DetailViewModel @Inject constructor(
                         // アーカイブ扱いにしてサムネも反映
                         runCatching { HistoryManager.markArchived(appContext, url) }
                         runCatching {
-                            val first = reconstructed.first()
-                            val thumb = when (first) {
-                                is DetailContent.Image -> first.imageUrl
-                                is DetailContent.Video -> first.videoUrl
+                            val firstTextIndex = reconstructed.indexOfFirst { it is DetailContent.Text }
+                            val media = if (firstTextIndex >= 0) {
+                                // OPレスに直接関連付けられた画像/動画のみを取得
+                                val afterOP = reconstructed.drop(firstTextIndex + 1)
+                                val nextTextIndex = afterOP.indexOfFirst { it is DetailContent.Text }
+                                val opMediaRange = if (nextTextIndex >= 0) {
+                                    afterOP.take(nextTextIndex)
+                                } else {
+                                    afterOP
+                                }
+
+                                // OPに属する最初のメディアのみを取得（空のURLを持つプレースホルダーは除外）
+                                val opMedia = opMediaRange.firstOrNull {
+                                    when (it) {
+                                        is DetailContent.Image -> it.imageUrl.isNotBlank()
+                                        is DetailContent.Video -> it.videoUrl.isNotBlank()
+                                        else -> false
+                                    }
+                                }
+
+                                // OPレスの番号を確認してより厳密にチェック
+                                val opText = reconstructed[firstTextIndex] as DetailContent.Text
+                                val opResNum = opText.resNum
+
+                                // メディアのIDがOPレス番号と関連しているかチェック
+                                if (opMedia != null && opResNum != null) {
+                                    val mediaId = when (opMedia) {
+                                        is DetailContent.Image -> opMedia.id
+                                        is DetailContent.Video -> opMedia.id
+                                        else -> null
+                                    }
+                                    // IDの末尾がOPレス番号と一致するかチェック
+                                    if (mediaId != null && mediaId.endsWith("#$opResNum")) {
+                                        opMedia
+                                    } else {
+                                        Log.d("DetailViewModel", "Skipping archive thumbnail - media ID '$mediaId' doesn't match OP resNum '$opResNum'")
+                                        null
+                                    }
+                                } else {
+                                    opMedia
+                                }
+                            } else null
+                            val thumb = when (media) {
+                                is DetailContent.Image -> media.imageUrl
+                                is DetailContent.Video -> media.videoUrl
                                 else -> null
                             }
-                            if (!thumb.isNullOrBlank()) HistoryManager.updateThumbnail(appContext, url, thumb)
+                            if (!thumb.isNullOrBlank()) {
+                                Log.d("DetailViewModel", "Updating archive thumbnail for OP: $thumb")
+                                HistoryManager.updateThumbnail(appContext, url, thumb)
+                            } else {
+                                Log.d("DetailViewModel", "No OP archive thumbnail found - clearing history thumbnail")
+                                HistoryManager.clearThumbnail(appContext, url)
+                            }
                         }
                         rawContent = reconstructed
                         applyNgAndPostAsync()
@@ -526,8 +619,32 @@ class DetailViewModel @Inject constructor(
             }
 
             // --- 2. メディアコンテンツの解析 ---
-            val mediaLinkNode = block.select("a[target=_blank][href]").firstOrNull { a ->
-                MEDIA_URL_PATTERN.containsMatchIn(a.attr("href"))
+            val mediaLinkNode = if (isOp) {
+                // OPの場合、返信テーブル内の画像を除外してメディアリンクを検索
+                // より厳密に：OPのコンテンツ内に直接含まれる画像のみを取得
+                val cloned = block.clone()
+                // 返信テーブル（td.rtd を含むtable）を完全に除去
+                cloned.select("table:has(td.rtd)").remove()
+                cloned.select("table").remove()  // 念のため他のテーブルも除去
+
+                // OPのテキスト部分内で画像リンクを検索（より限定的に）
+                val opMediaLinks = cloned.select("a[target=_blank][href]").filter { a ->
+                    MEDIA_URL_PATTERN.containsMatchIn(a.attr("href"))
+                }
+
+                // OPに画像がない場合はnullを返す（次の画像を取得しない）
+                if (opMediaLinks.isEmpty()) {
+                    Log.d("DetailViewModel", "OP has no images - returning null")
+                    null
+                } else {
+                    Log.d("DetailViewModel", "OP has ${opMediaLinks.size} image(s) - using first one")
+                    opMediaLinks.firstOrNull()
+                }
+            } else {
+                // 返信の場合、通常通り検索
+                block.select("a[target=_blank][href]").firstOrNull { a ->
+                    MEDIA_URL_PATTERN.containsMatchIn(a.attr("href"))
+                }
             }
 
             // ループ先頭で isOp を見た後に、そのブロックの resNum を必ず計算しておく
@@ -540,7 +657,8 @@ class DetailViewModel @Inject constructor(
                     ?: NO_PATTERN_FALLBACK.find(htmlForRes)?.groupValues?.getOrNull(1)
             }
 
-            mediaLinkNode?.let { link ->
+            if (mediaLinkNode != null) {
+                val link = mediaLinkNode
                 val hrefAttr = link.attr("href")
                 try {
                     val absoluteUrl = URL(URL(url), hrefAttr).toString()
@@ -578,6 +696,17 @@ class DetailViewModel @Inject constructor(
                         e
                     )
                 }
+            } else if (isOp) {
+                // OPに画像がない場合は「画像なし」プレースホルダーを追加
+                progressivelyLoadedContent.add(
+                    DetailContent.Image(
+                        id = "no_image_op_${itemIdCounter++}",
+                        imageUrl = "", // 空のURLで「画像なし」を表現
+                        prompt = null,
+                        fileName = null
+                    )
+                )
+                Log.d("DetailViewModel", "OP has no images - added placeholder")
             }
         }
 
