@@ -2,6 +2,8 @@ package com.valoser.futaburakari
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.StatFs
+import android.os.Environment
 import java.security.SecureRandom
 
 /**
@@ -99,5 +101,58 @@ object AppPreferences {
     fun generateNewPwd(): String {
         val secureRandom = SecureRandom()
         return (10000000 + secureRandom.nextInt(90000000)).toString()
+    }
+
+    /**
+     * 端末の内部ストレージの利用可能容量をGB単位で取得する。
+     */
+    fun getAvailableStorageGB(context: Context): Double {
+        return try {
+            val stat = StatFs(context.filesDir.path)
+            val availableBytes = stat.availableBytes
+            availableBytes / (1024.0 * 1024.0 * 1024.0)
+        } catch (e: Exception) {
+            // フォールバック: 32GBと仮定
+            32.0
+        }
+    }
+
+    /**
+     * パーセンテージベースの自動クリーンアップ設定のためのユーティリティ。
+     * 利用可能容量に対する割合から実際のバイト数を計算する。
+     */
+    fun calculateCacheLimitBytes(context: Context, percentageKey: String): Long {
+        val availableGB = getAvailableStorageGB(context)
+        val availableBytes = (availableGB * 1024 * 1024 * 1024).toLong()
+
+        return when (percentageKey) {
+            "0" -> 0L // 無効
+            "5" -> (availableBytes * 0.05).toLong()
+            "10" -> (availableBytes * 0.10).toLong()
+            "20" -> (availableBytes * 0.20).toLong()
+            "30" -> (availableBytes * 0.30).toLong()
+            else -> 0L
+        }
+    }
+
+    /**
+     * 既存の固定値設定(MB)をパーセンテージに変換する。
+     * 移行用の関数。
+     */
+    fun migrateLegacyCacheLimit(context: Context, legacyMB: String): String {
+        val availableGB = getAvailableStorageGB(context)
+        val availableBytes = (availableGB * 1024 * 1024 * 1024).toLong()
+        val legacyBytes = (legacyMB.toLongOrNull() ?: 0L) * 1024 * 1024
+
+        if (legacyBytes <= 0) return "0"
+
+        val percentage = (legacyBytes.toDouble() / availableBytes * 100).toInt()
+
+        return when {
+            percentage <= 7 -> "5"
+            percentage <= 15 -> "10"
+            percentage <= 25 -> "20"
+            else -> "30"
+        }
     }
 }

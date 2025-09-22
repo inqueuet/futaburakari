@@ -255,7 +255,13 @@ class DetailActivity : BaseActivity() {
                             isRequestingMore = false
                         }
                     },
-                    onDownloadImages = { urls -> viewModel.downloadImages(urls) }
+                    onDownloadImages = { urls -> viewModel.downloadImages(urls) },
+                    onDownloadImagesSkipExisting = { urls -> viewModel.downloadImagesSkipExisting(urls) },
+                    downloadProgressFlow = viewModel.downloadProgress,
+                    downloadConflictFlow = viewModel.downloadConflictRequests,
+                    onDownloadConflictSkip = { id -> viewModel.confirmDownloadSkip(id) },
+                    onDownloadConflictOverwrite = { id -> viewModel.confirmDownloadOverwrite(id) },
+                    onDownloadConflictCancel = { id -> viewModel.cancelDownloadRequest(id) }
                 )
             }
         }
@@ -318,12 +324,18 @@ class DetailActivity : BaseActivity() {
     }
 
     /**
-     * 設定変更の監視を停止する。
+     * 設定変更の監視を停止し、画像プロンプトキャッシュをフラッシュする。
      */
     override fun onStop() {
         // 設定変更の監視を停止
         if (this::prefs.isInitialized) {
             prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        }
+        // 画像プロンプトキャッシュを強制的にディスクに保存
+        try {
+            MetadataCache(this).flush()
+        } catch (e: Exception) {
+            android.util.Log.e("DetailActivity", "Failed to flush metadata cache", e)
         }
         super.onStop()
     }

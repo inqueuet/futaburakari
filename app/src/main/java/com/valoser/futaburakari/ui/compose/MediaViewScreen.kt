@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
@@ -235,23 +236,40 @@ private fun ImageContent(url: String?, referer: String? = null, modifier: Modifi
 
 /**
  * ExoPlayer を用いた動画表示。URL から `MediaItem` をセットして再生準備。
- * `DisposableEffect` でライフサイクルに合わせてプレイヤーを解放する。
+ * `DisposableEffect` でライフサイクルに合わせてプレイヤーを解放し、
+ * 画面回転時に再生位置を保持する。
  */
 @Composable
 private fun VideoContent(url: String?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var player: ExoPlayer? by remember { mutableStateOf(null) }
+    var savedPosition by rememberSaveable { mutableStateOf(0L) }
+    var savedPlayWhenReady by rememberSaveable { mutableStateOf(false) }
 
     DisposableEffect(url) {
         val exo = ExoPlayer.Builder(context).build().also { p ->
             val mediaItem = url?.let { MediaItem.fromUri(Uri.parse(it)) }
             if (mediaItem != null) {
                 p.setMediaItem(mediaItem)
+                // プレイヤーの準備ができた後に再生位置を復元
+                p.addListener(object : androidx.media3.common.Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == androidx.media3.common.Player.STATE_READY && savedPosition > 0L) {
+                            p.seekTo(savedPosition)
+                            p.playWhenReady = savedPlayWhenReady
+                            // 一度復元したらリスナーを削除
+                            p.removeListener(this)
+                        }
+                    }
+                })
                 p.prepare()
             }
         }
         player = exo
         onDispose {
+            // 現在の再生位置と再生状態を保存
+            savedPosition = exo.currentPosition
+            savedPlayWhenReady = exo.playWhenReady
             exo.release()
             player = null
         }

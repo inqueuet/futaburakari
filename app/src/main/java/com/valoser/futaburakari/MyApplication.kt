@@ -105,6 +105,29 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
                 "Cache info unavailable: ${e.message}"
             }
         }
+
+        /**
+         * ディスクキャッシュを優先したImageRequestを作成するヘルパー関数
+         * メモリ使用量を抑制しつつ、ディスクキャッシュからの高速読み込みを優先する
+         */
+        fun createDiskOptimizedImageRequest(
+            context: Context,
+            data: Any,
+            memoryCacheRead: Boolean = true,
+            memoryCacheWrite: Boolean = false // デフォルトでメモリキャッシュへの書き込みを無効化
+        ): coil3.request.ImageRequest {
+            return coil3.request.ImageRequest.Builder(context)
+                .data(data)
+                .memoryCachePolicy(
+                    if (memoryCacheRead && memoryCacheWrite) coil3.request.CachePolicy.ENABLED
+                    else if (memoryCacheRead) coil3.request.CachePolicy.READ_ONLY
+                    else if (memoryCacheWrite) coil3.request.CachePolicy.WRITE_ONLY
+                    else coil3.request.CachePolicy.DISABLED
+                )
+                .diskCachePolicy(coil3.request.CachePolicy.ENABLED) // ディスクキャッシュは常に有効
+                .build()
+        }
+
     }
 
     override fun onCreate() {
@@ -196,16 +219,18 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
                 // GIF / 動画 / SVG のデコーダは拡張モジュール（coil-gif / coil-video / coil-svg）
                 // を依存関係に追加すると自動登録されるため、手動追加は不要。
             }
-            // メモリ/ディスクキャッシュを明示設定（プリフェッチの効果を高める）
+            // メモリ/ディスクキャッシュを明示設定（ディスクキャッシュを優先、メモリ使用量を抑制）
             .memoryCache(
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.35) // メモリの35%まで
+                    .maxSizePercent(context, 0.15) // メモリの15%まで（35%から削減）
+                    .strongReferencesEnabled(false) // 強参照を無効化してメモリ使用量を削減
                     .build()
             )
             .diskCache(
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
-                    .maxSizeBytes(5L * 1024L * 1024L * 1024L) // 5GB
+                    .maxSizeBytes(8L * 1024L * 1024L * 1024L) // 8GB（5GBから増量）
+                    .cleanupDispatcher(Dispatchers.IO) // ディスクI/Oの最適化
                     .build()
             )
             // デバッグビルド時のみ詳細ログを有効化

@@ -44,6 +44,7 @@ package com.valoser.futaburakari.ui.detail
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
@@ -133,24 +134,25 @@ private fun createImageRequest(
     context: android.content.Context,
     url: String,
     referer: String?,
-    targetSizePx: Int? = null
+    forDisplay: Boolean = true
 ): ImageRequest {
-    val cacheKey = "$url|$referer|$targetSizePx"
+    val cacheKey = "$url|$referer|$forDisplay"
     return imageRequestCache.get(cacheKey) ?: run {
         val request = ImageRequest.Builder(context)
             .data(url)
             .memoryCacheKey(ImageKeys.full(url))
-            .placeholderMemoryCacheKey(ImageKeys.full(url))
+            .diskCacheKey(url)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .networkCachePolicy(CachePolicy.ENABLED)
             .precision(Precision.INEXACT)
             .transitionFactory(CrossfadeTransition.Factory())
             .apply {
                 if (!referer.isNullOrBlank()) {
                     httpHeaders(createHeaders(referer))
                 }
-                if (targetSizePx != null) {
-                    size(Size(Dimension.Pixels(targetSizePx), Dimension.Pixels(targetSizePx)))
-                    scale(Scale.FIT)
-                }
+                // サイズ指定を削除してキャッシュ効率を優先
+                // Coilが自動的に適切なサイズでスケーリングを行う
             }
             .build()
         imageRequestCache.put(cacheKey, request)
@@ -278,7 +280,7 @@ fun DetailListCompose(
                     for (i in startAhead..endAhead) {
                         val url = urlFor(i) ?: continue
                         if (prefetched.add(url)) {
-                            val req = createImageRequest(ctx, url, threadUrl, screenWidthPx)
+                            val req = createImageRequest(ctx, url, threadUrl, forDisplay = false)
                             imageLoader.enqueue(req)
                         }
                     }
@@ -288,7 +290,7 @@ fun DetailListCompose(
                         for (i in startBack..endBack) {
                             val url = urlFor(i) ?: continue
                             if (prefetched.add(url)) {
-                                val req = createImageRequest(ctx, url, threadUrl, screenWidthPx)
+                                val req = createImageRequest(ctx, url, threadUrl, forDisplay = false)
                                 imageLoader.enqueue(req)
                             }
                         }
@@ -386,7 +388,7 @@ fun DetailListCompose(
     }
 
     LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
-        itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
+        itemsIndexed(items, key = { index, it -> "${it.id}#$index" }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
                     val plain = plainTextOf(item)
@@ -474,13 +476,8 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        val config = androidx.compose.ui.platform.LocalConfiguration.current
-                        val density = androidx.compose.ui.platform.LocalDensity.current
-                        val screenWidthPx = remember(config.screenWidthDp, density) {
-                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
-                        }
                         coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.imageUrl, threadUrl, screenWidthPx),
+                            model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -498,7 +495,7 @@ fun DetailListCompose(
                                 androidx.compose.foundation.layout.Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 120.dp)
+                                        .height(200.dp)
                                 ) {
                                     androidx.compose.material3.CircularProgressIndicator(
                                         modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
@@ -534,13 +531,8 @@ fun DetailListCompose(
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        val config = androidx.compose.ui.platform.LocalConfiguration.current
-                        val density = androidx.compose.ui.platform.LocalDensity.current
-                        val screenWidthPx = remember(config.screenWidthDp, density) {
-                            with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
-                        }
                         coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.videoUrl, threadUrl, screenWidthPx),
+                            model = createImageRequest(ctx, item.videoUrl, threadUrl, forDisplay = true),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -557,7 +549,7 @@ fun DetailListCompose(
                                 androidx.compose.foundation.layout.Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 120.dp)
+                                        .height(200.dp)
                                 ) {
                                     androidx.compose.material3.CircularProgressIndicator(
                                         modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
@@ -813,8 +805,10 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         // 行インデックスを計算
         val lineIndex = text.substring(0, lineStart).count { it == '\n' }
 
-        // ヘッダー行内のNo.のみをクリック可能にする
-        if (isHeaderLine(line, lineIndex)) {
+        // ヘッダー行内のNo.または引用行内のNo.をクリック可能にする
+        val trimmedLine = line.trimStart()
+        val isQuoteLine = trimmedLine.startsWith(">") || trimmedLine.startsWith("＞")
+        if (isHeaderLine(line, lineIndex) || isQuoteLine) {
             val num = m.groupValues[1]
             addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
             addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)

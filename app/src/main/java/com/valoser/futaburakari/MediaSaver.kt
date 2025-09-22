@@ -1,5 +1,6 @@
 package com.valoser.futaburakari
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
@@ -23,9 +24,15 @@ import android.net.Uri
  */
 object MediaSaver {
 
+    data class ExistingMedia(
+        val url: String,
+        val fileName: String,
+        val contentUri: Uri
+    )
+
     /**
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する。
-     * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はダウンロードして保存する。
+     * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はキャッシュ優先でダウンロードして保存する。
      */
     suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
         saveMedia(
@@ -37,6 +44,52 @@ object MediaSaver {
             relativeBaseDir = Environment.DIRECTORY_PICTURES,
             networkClient = networkClient
         )
+    }
+
+    /**
+     * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する（重複チェック付き）。
+     * 既に同名ファイルが存在する場合はスキップする。
+     */
+    suspend fun saveImageIfNotExists(context: Context, imageUrl: String, networkClient: NetworkClient): Boolean {
+        return saveMediaIfNotExists(
+            context = context,
+            url = imageUrl,
+            subfolder = "Images",
+            mimeType = getMimeTypeOrDefault(imageUrl, "image/jpeg"),
+            mediaContentUri = imagesContentUri(),
+            relativeBaseDir = Environment.DIRECTORY_PICTURES,
+            networkClient = networkClient
+        )
+    }
+
+    suspend fun findExistingImages(
+        context: Context,
+        imageUrls: List<String>
+    ): Map<String, List<ExistingMedia>> {
+        return findExistingMedia(
+            context = context,
+            urls = imageUrls,
+            mediaContentUri = imagesContentUri(),
+            relativeBaseDir = Environment.DIRECTORY_PICTURES
+        )
+    }
+
+    suspend fun deleteMedia(context: Context, entries: List<ExistingMedia>) {
+        if (entries.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            val resolver = context.contentResolver
+            entries.forEach { entry ->
+                try {
+                    resolver.delete(entry.contentUri, null, null)
+                } catch (e: Exception) {
+                    android.util.Log.w("MediaSaver", "Failed to delete existing media: ${entry.contentUri}", e)
+                }
+            }
+        }
+    }
+
+    suspend fun deleteMedia(context: Context, entry: ExistingMedia) {
+        deleteMedia(context, listOf(entry))
     }
 
     /**
@@ -53,6 +106,37 @@ object MediaSaver {
             relativeBaseDir = Environment.DIRECTORY_MOVIES,
             networkClient = networkClient
         )
+    }
+
+    /**
+     * ファイルが既に存在するかをチェックする。
+     */
+    private suspend fun isFileExists(
+        context: Context,
+        fileName: String,
+        mediaContentUri: android.net.Uri,
+        relativeBaseDir: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val projection = arrayOf(MediaStore.MediaColumns.DISPLAY_NAME)
+            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
+            } else {
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+            }
+            val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                arrayOf(fileName, "$relativeBaseDir/Futaburakari/")
+            } else {
+                arrayOf(fileName)
+            }
+
+            resolver.query(mediaContentUri, projection, selection, selectionArgs, null)?.use { cursor ->
+                cursor.count > 0
+            } ?: false
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // 共通の保存処理（画像/動画）。呼び出し元で種別に応じたURIとベースディレクトリを指定する。
@@ -94,7 +178,7 @@ object MediaSaver {
                     return@withContext
                 }
 
-                // 実体を書き出す：file/content はローカルコピー、http(s) はダウンロード
+                // 実体を書き出す：file/content はローカルコピー、http(s) はキャッシュ優先でダウンロード
                 var downloadSuccess = false
                 try {
                     resolver.openOutputStream(uri).use { outputStream ->
@@ -112,6 +196,7 @@ object MediaSaver {
                                 input.copyTo(outputStream, bufferSize = 64 * 1024) // 64KBバッファでストリーミング
                             }
                         } else {
+                            // NetworkClientを使用（OkHttpキャッシュが効く）
                             val ok = networkClient.downloadTo(url, outputStream)
                             if (!ok) {
                                 showToast(context, "ファイルのダウンロードに失敗しました。")
@@ -153,6 +238,175 @@ object MediaSaver {
                 showToast(context, userMessage)
             }
         }
+    }
+
+    // 重複チェック付きの共通保存処理（画像/動画）。既存ファイルがある場合は false を返す。
+    private suspend fun saveMediaIfNotExists(
+        context: Context,
+        url: String,
+        subfolder: String,
+        mimeType: String?,
+        mediaContentUri: android.net.Uri,
+        relativeBaseDir: String,
+        networkClient: NetworkClient
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val fileName = url.substring(url.lastIndexOf('/') + 1)
+
+            // 既存ファイルをチェック
+            if (isFileExists(context, fileName, mediaContentUri, relativeBaseDir)) {
+                // 既に存在する場合はスキップ
+                return@withContext false
+            }
+
+            // 存在しない場合は通常の保存処理を実行
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                } else {
+                    @Suppress("DEPRECATION")
+                    val base = Environment.getExternalStoragePublicDirectory(relativeBaseDir)
+                    val brandDir = java.io.File(base, "Futaburakari")
+                    if (!brandDir.exists()) brandDir.mkdirs()
+                    val outFile = java.io.File(brandDir, fileName)
+                    put(MediaStore.MediaColumns.DATA, outFile.absolutePath)
+                }
+            }
+
+            val resolver = context.contentResolver
+            val uri = resolver.insert(mediaContentUri, values)
+
+            if (uri == null) {
+                showToast(context, "ファイルの保存に失敗しました。")
+                return@withContext false
+            }
+
+            // 実体を書き出す
+            var downloadSuccess = false
+            try {
+                resolver.openOutputStream(uri).use { outputStream ->
+                    if (outputStream == null) {
+                        showToast(context, "ファイルの保存に失敗しました。")
+                        return@withContext false
+                    }
+                    if (url.startsWith("file://") || url.startsWith("content://")) {
+                        val src = context.contentResolver.openInputStream(Uri.parse(url))
+                        if (src == null) {
+                            showToast(context, "ファイルの読み込みに失敗しました。")
+                            return@withContext false
+                        }
+                        src.use { input ->
+                            input.copyTo(outputStream, bufferSize = 64 * 1024)
+                        }
+                    } else {
+                        // NetworkClientを使用（OkHttpキャッシュが効く）
+                        val ok = networkClient.downloadTo(url, outputStream)
+                        if (!ok) {
+                            showToast(context, "ファイルのダウンロードに失敗しました。")
+                            return@withContext false
+                        }
+                    }
+                    downloadSuccess = true
+                }
+            } catch (e: Exception) {
+                showToast(context, "ファイルの保存中にエラーが発生しました: ${e.message}")
+                return@withContext false
+            } finally {
+                if (!downloadSuccess) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (e: Exception) {
+                        // 削除失敗は無視
+                    }
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+
+            showToast(context, "ファイルを保存しました: $fileName")
+            return@withContext true
+
+        } catch (e: Exception) {
+            android.util.Log.e("MediaSaver", "Failed to save media", e)
+            val userMessage = when (e) {
+                is java.io.IOException -> "ファイルの保存に失敗しました。ストレージの空き容量を確認してください。"
+                is SecurityException -> "ファイルの保存に必要な権限がありません。"
+                else -> "保存中にエラーが発生しました。"
+            }
+            showToast(context, userMessage)
+            return@withContext false
+        }
+    }
+
+    private suspend fun findExistingMedia(
+        context: Context,
+        urls: List<String>,
+        mediaContentUri: Uri,
+        relativeBaseDir: String
+    ): Map<String, List<ExistingMedia>> = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val result = mutableMapOf<String, MutableList<ExistingMedia>>()
+        val projectionQ = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH
+        )
+        @Suppress("DEPRECATION")
+        val projectionLegacy = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.DATA
+        )
+
+        urls.forEach { url ->
+            val fileName = url.substringAfterLast('/')
+            val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) projectionQ else projectionLegacy
+            try {
+                resolver.query(
+                    mediaContentUri,
+                    projection,
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                    arrayOf(fileName),
+                    null
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val pathMatches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            val relIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                            val relPath = cursor.getString(relIndex)
+                            val expectedRelative = "$relativeBaseDir/Futaburakari"
+                            relPath?.contains("Futaburakari") == true || relPath?.contains(expectedRelative) == true
+                        } else {
+                            val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                            val dataPath = cursor.getString(dataIndex)
+                            dataPath?.contains("/Futaburakari/") == true
+                        }
+
+                        if (!pathMatches) continue
+
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                        val displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)) ?: fileName
+                        val existing = ExistingMedia(
+                            url = url,
+                            fileName = displayName,
+                            contentUri = ContentUris.withAppendedId(mediaContentUri, id)
+                        )
+                        val list = result.getOrPut(url) { mutableListOf() }
+                        list += existing
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MediaSaver", "Failed to query existing media for $fileName", e)
+            }
+        }
+
+        result
     }
 
     // 拡張子からMIME Typeを推測し、取得できなければ既定値を返す
