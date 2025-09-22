@@ -53,10 +53,11 @@ class MetadataCache(context: Context) {
     }
 
     @Synchronized
-    private fun saveDelayed(map: MutableMap<String, Entry>) {
+    private fun saveDelayed() {
+        if (pendingMap == null) return
+
         isDirty = true
         val now = System.currentTimeMillis()
-        pendingMap = map
 
         if (now - lastSaveTime >= saveDelayMs) {
             savePendingNow()
@@ -137,6 +138,7 @@ class MetadataCache(context: Context) {
      * @param id URI/URL 等の識別子
      * @param value 保存する値（空白のみは保存しない）
      */
+    @Synchronized
     fun put(id: String, value: String) {
         if (value.isBlank()) return
 
@@ -145,22 +147,22 @@ class MetadataCache(context: Context) {
         // メモリキャッシュに即座に保存
         memoryCache.put(id, entry)
 
-        // ディスクへは遅延書き込み
-        val diskMap = load()
-        diskMap[id] = entry
+        // 遅延ディスク書き込み用のマップを取得（未ロードならロードして保持）
+        val workingMap = pendingMap ?: load().also { pendingMap = it }
+        workingMap[id] = entry
 
         // 上限チェックとLRU削除
-        if (diskMap.size > maxEntries) {
-            val toRemove = diskMap.entries
+        if (workingMap.size > maxEntries) {
+            val toRemove = workingMap.entries
                 .sortedBy { it.value.ts }
-                .take(diskMap.size - maxEntries)
+                .take(workingMap.size - maxEntries)
                 .map { it.key }
             toRemove.forEach { key ->
-                diskMap.remove(key)
+                workingMap.remove(key)
                 memoryCache.remove(key) // メモリキャッシュからも削除
             }
         }
 
-        saveDelayed(diskMap)
+        saveDelayed()
     }
 }

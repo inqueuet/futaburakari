@@ -2,13 +2,16 @@ package com.valoser.futaburakari
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.zip.CRC32
@@ -20,7 +23,7 @@ import java.util.zip.CRC32
  *   TokenProvider から hidden/token を取得して再送を試みます。
  * - 「操作が早すぎます。あとN秒」を検出した場合は自動的に待機して、その段階内で 1 回だけ再試行します。
  *  （初回送信と再送のそれぞれで一度ずつ自動再試行の可能性があります。）
- * - 全体処理は 10 秒で打ち切ります。トークン取得自体には 5 秒の個別タイムアウトを設けています。
+ * - 全体処理は添付ファイルの有無とサイズに応じて 15〜120 秒で打ち切ります。トークン取得自体には 5 秒の個別タイムアウトを設けています。
  */
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -55,7 +58,7 @@ class ReplyViewModel @Inject constructor(
      * - まず最低限のフィールドのみで送信。失敗した場合、`postPageUrlForToken` が指定されていれば
      *   TokenProvider でトークンを取得し、不足値を補完して再送します。
      * - 初回・再送の各段階で「早すぎます」エラーを検出したら待機して 1 回だけ自動再試行します。
-     * - 全体のタイムアウトは 10 秒。トークン取得は個別に 5 秒でタイムアウトします。
+     * - 全体のタイムアウトは添付ファイルに応じて 15〜120 秒。トークン取得は個別に 5 秒でタイムアウトします。
      * - 結果は `uiState` に `Success` または `Error` として反映されます。
      */
     fun submit(
@@ -74,8 +77,10 @@ class ReplyViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.postValue(UiState.Loading)
 
+            val totalTimeoutMs = estimateTotalTimeoutMs(context, upfileUri)
+
             val result = runCatching {
-                withTimeout(10_000L) {  // ✅ 全体タイムアウト 10秒
+                withTimeout(totalTimeoutMs) {
                     // --- 1回目：ブラウザ準拠の最低限フィールド付きで投稿 ---
                     val firstExtras = mutableMapOf(
                         "responsemode" to "ajax",
@@ -216,5 +221,47 @@ class ReplyViewModel @Inject constructor(
         val c = CRC32()
         c.update(text.toByteArray(Charsets.UTF_8))
         return c.value.toString()
+    }
+
+    private suspend fun estimateTotalTimeoutMs(context: Context, upfileUri: Uri?): Long {
+        if (upfileUri == null) return BASE_TIMEOUT_MS
+
+        val size = resolveFileSize(context, upfileUri)
+        if (size == null || size <= 0L) return UNKNOWN_FILE_TIMEOUT_MS
+
+        val transferMs = ((size * 1000L) + MIN_UPLOAD_BYTES_PER_SECOND - 1) / MIN_UPLOAD_BYTES_PER_SECOND
+        val total = BASE_TIMEOUT_MS + transferMs + UPLOAD_HEADROOM_MS
+        return total.coerceIn(BASE_TIMEOUT_MS, MAX_TIMEOUT_MS)
+    }
+
+    private suspend fun resolveFileSize(context: Context, uri: Uri): Long? = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+
+        val fromMeta = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                    cursor.getLong(index)
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
+
+        if (fromMeta != null && fromMeta > 0L) {
+            return@withContext fromMeta
+        }
+
+        runCatching {
+            resolver.openFileDescriptor(uri, "r")?.use { it.statSize.takeIf { size -> size >= 0L } }
+        }.getOrNull()
+    }
+
+    companion object {
+        private const val BASE_TIMEOUT_MS = 15_000L
+        private const val UNKNOWN_FILE_TIMEOUT_MS = 45_000L
+        private const val UPLOAD_HEADROOM_MS = 5_000L
+        private const val MIN_UPLOAD_BYTES_PER_SECOND = 256_000L // ≈2 Mbps 相当
+        private const val MAX_TIMEOUT_MS = 120_000L
     }
 }
