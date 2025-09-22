@@ -260,6 +260,16 @@ class MainActivity : BaseActivity() {
         setAutoUpdateIndicator(false)
     }
 
+    override fun onPause() {
+        super.onPause()
+        // 画像プロンプトキャッシュを強制的にディスクに保存
+        try {
+            MetadataCache(this).flush()
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to flush metadata cache", e)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         // 設定でのNG変更を反映（Composeへ）

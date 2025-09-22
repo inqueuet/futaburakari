@@ -103,20 +103,20 @@
 
     <!-- 備考: 旧カラー系モード配列（green/purple/blue/orange）は整理済み -->
 
-    <!-- 設定: 自動クリーンアップ上限（MB 単位） -->
+    <!-- 設定: 自動クリーンアップ上限（利用可能容量に対する割合） -->
     <string-array name="pref_auto_cleanup_entries">
         <item>無効</item>
-        <item>1 GB</item>
-        <item>5 GB</item>
-        <item>10 GB</item>
-        <item>20 GB</item>
+        <item>利用可能容量の5%</item>
+        <item>利用可能容量の10%</item>
+        <item>利用可能容量の20%</item>
+        <item>利用可能容量の30%</item>
     </string-array>
     <string-array name="pref_auto_cleanup_values">
         <item>0</item>
-        <item>1024</item>
-        <item>5120</item>
-        <item>10240</item>
-        <item>20480</item>
+        <item>5</item>
+        <item>10</item>
+        <item>20</item>
+        <item>30</item>
     </string-array>
 
 </resources>

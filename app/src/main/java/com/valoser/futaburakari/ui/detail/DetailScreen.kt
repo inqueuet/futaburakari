@@ -23,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
 
@@ -50,6 +51,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.*
@@ -68,6 +70,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -76,6 +79,7 @@ import coil3.imageLoader
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import coil3.memory.MemoryCache
+import com.valoser.futaburakari.DownloadConflictRequest
 import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
@@ -173,6 +177,13 @@ fun DetailScreenScaffold(
     // 末尾近辺に到達したときに呼ばれる（無限スクロール用）
     onNearListEnd: (() -> Unit)? = null,
     onDownloadImages: ((List<String>) -> Unit)? = null,
+    onDownloadImagesSkipExisting: ((List<String>) -> Unit)? = null,
+    // ダウンロード進捗状態
+    downloadProgressFlow: StateFlow<com.valoser.futaburakari.DownloadProgress?>? = null,
+    downloadConflictFlow: Flow<DownloadConflictRequest>? = null,
+    onDownloadConflictSkip: ((Long) -> Unit)? = null,
+    onDownloadConflictOverwrite: ((Long) -> Unit)? = null,
+    onDownloadConflictCancel: ((Long) -> Unit)? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
 ) {
@@ -183,6 +194,24 @@ fun DetailScreenScaffold(
     val setSearchActive = remember(onSearchActiveChange) {
         { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
     }
+
+    // ダウンロード進捗状態
+    val downloadProgress by downloadProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
+
+    var downloadConflict by remember { mutableStateOf<DownloadConflictRequest?>(null) }
+    LaunchedEffect(downloadConflictFlow) {
+        if (downloadConflictFlow == null) {
+            downloadConflict = null
+            return@LaunchedEffect
+        }
+        downloadConflictFlow.collectLatest { request ->
+            downloadConflict = request
+        }
+    }
+
+    // 画像一括ダウンロード用のコールバック（重複チェック付き）
+    var onBulkDownloadImagesSkipExisting by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var onBulkDownloadPromptImagesSkipExisting by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // ダイアログ/シート用のUI状態を上位（topBar/本文の両方）で共有できるように保持
     var titleClickPending by remember { mutableStateOf(false) }
@@ -242,6 +271,20 @@ fun DetailScreenScaffold(
                         text = { Text("NG 管理") },
                         onClick = { moreExpanded = false; onOpenNg() }
                     )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("画像一括ダウンロード") },
+                        onClick = {
+                            moreExpanded = false
+                            onBulkDownloadImagesSkipExisting?.invoke()
+                        }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("プロンプト付き画像ダウンロード") },
+                        onClick = {
+                            moreExpanded = false
+                            onBulkDownloadPromptImagesSkipExisting?.invoke()
+                        }
+                    )
                     if (onImageEdit != null) {
                         androidx.compose.material3.DropdownMenuItem(
                             text = { Text("画像編集") },
@@ -281,6 +324,24 @@ fun DetailScreenScaffold(
             // 下のダイアログ/シートからも参照できるよう items / listState を上位に保持
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
+
+            // 画像一括ダウンロードのコールバックを設定（重複チェック付き）
+            LaunchedEffect(items) {
+                onBulkDownloadImagesSkipExisting = {
+                    val imageUrls = items.filterIsInstance<DetailContent.Image>().map { it.imageUrl }
+                    if (imageUrls.isNotEmpty()) {
+                        onDownloadImagesSkipExisting?.invoke(imageUrls)
+                    }
+                }
+                onBulkDownloadPromptImagesSkipExisting = {
+                    val promptImageUrls = items.filterIsInstance<DetailContent.Image>()
+                        .filter { !it.prompt.isNullOrBlank() }
+                        .map { it.imageUrl }
+                    if (promptImageUrls.isNotEmpty()) {
+                        onDownloadImagesSkipExisting?.invoke(promptImageUrls)
+                    }
+                }
+            }
             // リストと高速スクロールで同じ listState を共有
             val listState = rememberLazyListState(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
@@ -474,7 +535,106 @@ fun DetailScreenScaffold(
                         onBottomPaddingChange?.invoke(0)
                     }
                 }
+
+                // ダウンロード進捗表示
+                downloadProgress?.let { progress ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(16.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { progress.current.toFloat() / progress.total.toFloat() },
+                                modifier = Modifier.fillMaxWidth(0.8f)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "${progress.percentage}% (${progress.current}/${progress.total})",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            progress.currentFileName?.let { fileName ->
+                                Text(
+                                    text = fileName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Material3 PullToRefreshBox によるインジケータ描画
+            }
+
+            // 既存ファイル確認ダイアログ
+            downloadConflict?.let { conflict ->
+                val existingCount = conflict.existingFiles.size
+                val previewLimit = 5
+                val previewItems = conflict.existingFiles.take(previewLimit)
+                val remainingCount = existingCount - previewItems.size
+
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = {
+                        onDownloadConflictCancel?.invoke(conflict.requestId)
+                        downloadConflict = null
+                    },
+                    title = { Text("保存確認") },
+                    text = {
+                        Column {
+                            Text("${existingCount}件の画像が既に保存されています。")
+                            if (conflict.newCount > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("新規保存予定: ${conflict.newCount}件")
+                            }
+                            if (previewItems.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "対象ファイル",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                previewItems.forEach { file ->
+                                    Text(
+                                        text = "・${file.fileName}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                    )
+                                }
+                                if (remainingCount > 0) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "ほか${remainingCount}件",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            downloadConflict = null
+                            onDownloadConflictSkip?.invoke(conflict.requestId)
+                        }) {
+                            Text("新規のみ保存")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = {
+                            downloadConflict = null
+                            onDownloadConflictOverwrite?.invoke(conflict.requestId)
+                        }) {
+                            Text("すべて上書き保存")
+                        }
+                    }
+                )
             }
 
             // ID メニュー（Composeダイアログ）

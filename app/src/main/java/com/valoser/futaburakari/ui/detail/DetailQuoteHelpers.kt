@@ -22,6 +22,7 @@ import java.text.Normalizer
  *   - 数字の前後が他の数字でない素の <num>
  * - ヒットごとに Text 行と直後の Image/Video を次の Text/ThreadEndTime までまとめます。
  * - 先頭要素の id で重複排除し、可能なら抽出した No. 昇順でグループを並べ替えてからフラット化します。
+ * - 引用されたNo.の場合、元のNo.とそれを引用しているNo.の両方を表示します。
  */
 internal fun buildResReferencesItems(
     all: List<DetailContent>,
@@ -74,7 +75,34 @@ internal fun buildResReferencesItems(
         else -> null
     }
 
-    return groups
+    // 元のNo.の投稿も含めるため、該当する投稿を検索
+    val originalPost = all.find { content ->
+        content is DetailContent.Text && content.resNum == resNum
+    }
+
+    val allResults = mutableListOf<List<DetailContent>>()
+
+    // 元の投稿を最初に追加（存在する場合）
+    if (originalPost != null) {
+        val originalIndex = all.indexOf(originalPost)
+        if (originalIndex >= 0) {
+            val originalGroup = mutableListOf<DetailContent>()
+            originalGroup += all[originalIndex]
+            var j = originalIndex + 1
+            while (j < all.size) {
+                when (val c = all[j]) {
+                    is DetailContent.Image, is DetailContent.Video -> { originalGroup += c; j++ }
+                    is DetailContent.Text, is DetailContent.ThreadEndTime -> break
+                }
+            }
+            allResults += originalGroup
+        }
+    }
+
+    // 引用している投稿を追加
+    allResults += groups
+
+    return allResults
         .distinctBy { it.firstOrNull()?.id }
         .sortedWith(compareBy<List<DetailContent>> { grp -> extractResNo(grp.firstOrNull() ?: return@compareBy Int.MAX_VALUE) ?: Int.MAX_VALUE })
         .flatten()

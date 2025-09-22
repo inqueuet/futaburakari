@@ -13,11 +13,17 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import java.net.MalformedURLException
 import java.io.IOException
 import java.net.URL
@@ -33,6 +39,30 @@ import com.valoser.futaburakari.ui.detail.SearchState
 import androidx.collection.LruCache
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * ダウンロード進捗を表すデータクラス
+ */
+data class DownloadProgress(
+    val current: Int,
+    val total: Int,
+    val currentFileName: String? = null,
+    val isActive: Boolean = true
+) {
+    val percentage: Int get() = if (total > 0) (current * 100 / total) else 0
+}
+
+data class DownloadConflictFile(
+    val url: String,
+    val fileName: String
+)
+
+data class DownloadConflictRequest(
+    val requestId: Long,
+    val totalCount: Int,
+    val newCount: Int,
+    val existingFiles: List<DownloadConflictFile>
+)
 
 /**
  * スレ詳細用の ViewModel。
@@ -68,6 +98,17 @@ class DetailViewModel @Inject constructor(
     /** 通信・更新の進行中を表すフロー。 */
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    /** ダウンロード進捗を表すフロー。 */
+    private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
+    val downloadProgress: StateFlow<DownloadProgress?> = _downloadProgress.asStateFlow()
+
+    private val _downloadConflictRequests = MutableSharedFlow<DownloadConflictRequest>(extraBufferCapacity = 1)
+    val downloadConflictRequests = _downloadConflictRequests.asSharedFlow()
+
+    private val downloadRequestIdGenerator = AtomicLong(0)
+    private val pendingDownloadMutex = Mutex()
+    private val pendingDownloadRequests = mutableMapOf<Long, PendingDownloadRequest>()
 
     // そうだねの更新通知用（resNum -> サーバ応答カウント）。UI側ではこれを受け取り表示を楽観上書き。
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
@@ -135,14 +176,29 @@ class DetailViewModel @Inject constructor(
                 // 極度の高負荷：即座にアクション
                 Log.w("DetailViewModel", "Critical memory usage detected, immediate cleanup")
                 clearNgFilterCache()
+                // Coilメモリキャッシュも即座にクリア
+                MyApplication.clearCoilImageCache(appContext)
                 memoryCheckIntervalMs = 5000L
                 consecutiveHighMemoryCount++
             }
-            memoryUsagePercent > 75 -> {
+            memoryUsagePercent > 80 -> {
+                // 高負荷：Coilメモリキャッシュをクリア
+                Log.w("DetailViewModel", "High memory usage detected, clearing Coil memory cache")
+                MyApplication.clearCoilImageCache(appContext)
                 consecutiveHighMemoryCount++
                 memoryCheckIntervalMs = 10000L
                 if (consecutiveHighMemoryCount >= 2) {
-                    Log.w("DetailViewModel", "High memory usage sustained, clearing caches")
+                    clearNgFilterCache()
+                    consecutiveHighMemoryCount = 0
+                }
+            }
+            memoryUsagePercent > 70 -> {
+                // 中程度の負荷：一部のキャッシュをクリア
+                consecutiveHighMemoryCount++
+                memoryCheckIntervalMs = 15000L
+                if (consecutiveHighMemoryCount >= 3) {
+                    Log.w("DetailViewModel", "Sustained memory pressure, clearing image cache")
+                    MyApplication.clearCoilImageCache(appContext)
                     clearNgFilterCache()
                     consecutiveHighMemoryCount = 0
                 }
@@ -573,10 +629,19 @@ class DetailViewModel @Inject constructor(
         contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
-                    // プロンプト情報が既に存在する場合はスキップ
+                    // プロンプト情報が既に存在し、かつキャッシュにも存在する場合のみスキップ
                     if (!content.prompt.isNullOrBlank()) {
-                        Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - already has prompt")
-                        return@forEach
+                        // キャッシュの存在確認
+                        val cachedPrompt = runCatching {
+                            MetadataCache(appContext).get(content.imageUrl)
+                        }.getOrNull()
+
+                        if (!cachedPrompt.isNullOrBlank()) {
+                            Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - has prompt and cache")
+                            return@forEach
+                        } else {
+                            Log.d("DetailViewModel", "Re-extracting metadata for ${content.imageUrl} - prompt exists but no cache")
+                        }
                     }
 
                     val limitedIO = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
@@ -616,11 +681,11 @@ class DetailViewModel @Inject constructor(
             }
         }
 
-        // 受信・段階反映（500ms間隔でバッチ適用）
+        // 受信・段階反映（即座に反映 + バッチング最適化）
         viewModelScope.launch(Dispatchers.Default) {
             val batch = mutableMapOf<String, String?>()
             var lastFlush = System.currentTimeMillis()
-            val flushIntervalMs = 500L
+            val flushIntervalMs = 250L // 250msに短縮（より即座な反映）
 
             suspend fun flush(force: Boolean = false) {
                 val now = System.currentTimeMillis()
@@ -642,13 +707,17 @@ class DetailViewModel @Inject constructor(
                     }
                     if (changed) {
                         val snapshot = current.toList()
-                        _detailContent.value = snapshot
+                        // UIは即座に更新
+                        withContext(Dispatchers.Main) {
+                            _detailContent.value = snapshot
+                        }
+                        // ディスク保存は非同期で実行
                         withContext(Dispatchers.IO) {
-                            cacheManager.saveDetails(url, snapshot)
-                            // 抽出完了ごとにアーカイブスナップショットも更新（オフライン時の即時反映用）
-                            cacheManager.saveArchiveSnapshot(url, snapshot)
-                            // 取得済みプロンプトをローカルのアーカイブ画像へも書き戻し（上書き許容）
                             runCatching {
+                                cacheManager.saveDetails(url, snapshot)
+                                // 抽出完了ごとにアーカイブスナップショットも更新（オフライン時の即時反映用）
+                                cacheManager.saveArchiveSnapshot(url, snapshot)
+                                // 取得済みプロンプトをローカルのアーカイブ画像へも書き戻し（上書き許容）
                                 batch.forEach { (id, p) ->
                                     val prompt = p ?: return@forEach
                                     val idx = snapshot.indexOfFirst { it.id == id }
@@ -673,6 +742,8 @@ class DetailViewModel @Inject constructor(
                                         else -> {}
                                     }
                                 }
+                            }.onFailure { e ->
+                                Log.w("DetailViewModel", "Failed to save metadata updates", e)
                             }
                         }
                     }
@@ -684,11 +755,11 @@ class DetailViewModel @Inject constructor(
             // 受信ループ
             for (pair in updates) {
                 batch[pair.first] = pair.second
-                // バッチサイズ制限: 一定数溜まったら強制反映
-                if (batch.size >= 10) {
+                // より積極的な反映: 3件溜まったら即座に反映
+                if (batch.size >= 3) {
                     flush(force = true)
                 } else {
-                    // 必要なら定期的に反映
+                    // 定期的に反映
                     flush(force = false)
                 }
             }
@@ -884,26 +955,39 @@ class DetailViewModel @Inject constructor(
 
     /**
      * 既存表示（prior）に含まれるプロンプト等を新規取得（base）へ引き継ぐ。
-     * - Image/Video で prompt が空の要素のみ対象。
-     * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）。
+     * - Image/Video のプロンプト情報を積極的にマージ（既存のプロンプトも保持）。
+     * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）、最後に完全URL。
      */
     private fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
         if (base.isEmpty() || prior.isEmpty()) return base
-        fun keyForImage(url: String?, fileName: String?): String? =
-            fileName?.takeIf { it.isNotBlank() } ?: url?.substringAfterLast('/')
+
+        fun keyForImage(url: String?, fileName: String?): List<String> {
+            val keys = mutableListOf<String>()
+            // 1. ファイル名での照合
+            fileName?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+            // 2. URL末尾のファイル名での照合
+            url?.substringAfterLast('/')?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+            // 3. 完全URLでの照合
+            url?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+            return keys
+        }
 
         val promptByKey: Map<String, String> = buildMap {
             prior.forEach { dc ->
                 when (dc) {
                     is DetailContent.Image -> {
-                        val k = keyForImage(dc.imageUrl, dc.fileName)
+                        val keys = keyForImage(dc.imageUrl, dc.fileName)
                         val p = dc.prompt
-                        if (!k.isNullOrBlank() && !p.isNullOrBlank()) put(k, p)
+                        if (!p.isNullOrBlank()) {
+                            keys.forEach { k -> put(k, p) }
+                        }
                     }
                     is DetailContent.Video -> {
-                        val k = keyForImage(dc.videoUrl, dc.fileName)
+                        val keys = keyForImage(dc.videoUrl, dc.fileName)
                         val p = dc.prompt
-                        if (!k.isNullOrBlank() && !p.isNullOrBlank()) put(k, p)
+                        if (!p.isNullOrBlank()) {
+                            keys.forEach { k -> put(k, p) }
+                        }
                     }
                     else -> {}
                 }
@@ -915,16 +999,22 @@ class DetailViewModel @Inject constructor(
         return base.map { dc ->
             when (dc) {
                 is DetailContent.Image -> {
-                    if (!dc.prompt.isNullOrBlank()) dc else {
-                        val k = keyForImage(dc.imageUrl, dc.fileName)
-                        val p = if (!k.isNullOrBlank()) promptByKey[k] else null
+                    val currentPrompt = dc.prompt
+                    if (!currentPrompt.isNullOrBlank()) {
+                        dc // 既にプロンプトがある場合はそのまま
+                    } else {
+                        val keys = keyForImage(dc.imageUrl, dc.fileName)
+                        val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
                         if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
                     }
                 }
                 is DetailContent.Video -> {
-                    if (!dc.prompt.isNullOrBlank()) dc else {
-                        val k = keyForImage(dc.videoUrl, dc.fileName)
-                        val p = if (!k.isNullOrBlank()) promptByKey[k] else null
+                    val currentPrompt = dc.prompt
+                    if (!currentPrompt.isNullOrBlank()) {
+                        dc // 既にプロンプトがある場合はそのまま
+                    } else {
+                        val keys = keyForImage(dc.videoUrl, dc.fileName)
+                        val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
                         if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
                     }
                 }
@@ -1227,11 +1317,237 @@ class DetailViewModel @Inject constructor(
         _searchState.value = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)
     }
 
+    private data class PendingDownloadRequest(
+        val id: Long,
+        val urls: List<String>,
+        val newUrls: List<String>,
+        val existingByUrl: Map<String, List<MediaSaver.ExistingMedia>>
+    ) {
+        val existingCount: Int get() = existingByUrl.values.sumOf { it.size }
+    }
+
+    private enum class DownloadConflictResolution {
+        SkipExisting,
+        OverwriteExisting
+    }
+
     fun downloadImages(urls: List<String>) {
+        if (urls.isEmpty()) return
+
         viewModelScope.launch {
-            urls.forEach { url ->
-                MediaSaver.saveImage(appContext, url, networkClient)
+            _downloadProgress.value = DownloadProgress(0, urls.size, isActive = true)
+            var completed = 0
+
+            try {
+                val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+                coroutineScope {
+                    val jobs = urls.map { url ->
+                        async(Dispatchers.IO) {
+                            semaphore.withPermit {
+                                val fileName = url.substringAfterLast('/')
+                                _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
+
+                                MediaSaver.saveImage(appContext, url, networkClient)
+
+                                synchronized(this@DetailViewModel) {
+                                    completed++
+                                    _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
+                                }
+                            }
+                        }
+                    }
+                    jobs.awaitAll()
+                }
+            } finally {
+                delay(500) // 完了表示を少し見せる
+                _downloadProgress.value = null
             }
+        }
+    }
+
+    fun downloadImagesSkipExisting(urls: List<String>) {
+        if (urls.isEmpty()) return
+
+        viewModelScope.launch {
+            val requestId = downloadRequestIdGenerator.incrementAndGet()
+            val existingByUrl = MediaSaver.findExistingImages(appContext, urls)
+            val newUrls = urls.filterNot { existingByUrl.containsKey(it) }
+            val pending = PendingDownloadRequest(
+                id = requestId,
+                urls = urls,
+                newUrls = newUrls,
+                existingByUrl = existingByUrl
+            )
+
+            if (existingByUrl.isEmpty()) {
+                performBulkDownload(pending, DownloadConflictResolution.SkipExisting)
+                return@launch
+            }
+
+            pendingDownloadMutex.withLock {
+                pendingDownloadRequests[requestId] = pending
+            }
+
+            val conflictFiles = existingByUrl
+                .flatMap { (url, entries) -> entries.map { DownloadConflictFile(url = url, fileName = it.fileName) } }
+                .sortedBy { it.fileName }
+
+            _downloadConflictRequests.emit(
+                DownloadConflictRequest(
+                    requestId = requestId,
+                    totalCount = urls.size,
+                    newCount = newUrls.size,
+                    existingFiles = conflictFiles
+                )
+            )
+        }
+    }
+
+    fun confirmDownloadSkip(requestId: Long) {
+        viewModelScope.launch {
+            val pending = removePendingRequest(requestId) ?: return@launch
+            if (pending.newUrls.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    val message = if (pending.existingCount > 0) {
+                        "${pending.existingCount}件の画像は既にダウンロード済みでした"
+                    } else {
+                        "ダウンロード対象の画像がありません"
+                    }
+                    android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+            performBulkDownload(pending, DownloadConflictResolution.SkipExisting)
+        }
+    }
+
+    fun confirmDownloadOverwrite(requestId: Long) {
+        viewModelScope.launch {
+            val pending = removePendingRequest(requestId) ?: return@launch
+            performBulkDownload(pending, DownloadConflictResolution.OverwriteExisting)
+        }
+    }
+
+    fun cancelDownloadRequest(requestId: Long) {
+        viewModelScope.launch {
+            pendingDownloadMutex.withLock {
+                pendingDownloadRequests.remove(requestId)
+            }
+        }
+    }
+
+    private suspend fun removePendingRequest(requestId: Long): PendingDownloadRequest? {
+        return pendingDownloadMutex.withLock { pendingDownloadRequests.remove(requestId) }
+    }
+
+    private suspend fun performBulkDownload(
+        pending: PendingDownloadRequest,
+        resolution: DownloadConflictResolution
+    ) {
+        val urlsToDownload = when (resolution) {
+            DownloadConflictResolution.SkipExisting -> pending.newUrls
+            DownloadConflictResolution.OverwriteExisting -> pending.urls
+        }
+
+        val total = urlsToDownload.size
+
+        if (resolution == DownloadConflictResolution.SkipExisting && total == 0) {
+            withContext(Dispatchers.Main) {
+                val message = if (pending.existingCount > 0) {
+                    "${pending.existingCount}件の画像は既にダウンロード済みでした"
+                } else {
+                    "ダウンロード対象の画像がありません"
+                }
+                android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        if (total == 0) return
+
+        _downloadProgress.value = DownloadProgress(0, total, isActive = true)
+        var completed = 0
+        var skippedCount = if (resolution == DownloadConflictResolution.SkipExisting) pending.existingCount else 0
+        var newSuccess = 0
+        var overwriteSuccess = 0
+        var failureCount = 0
+
+        val semaphore = Semaphore(4)
+
+        try {
+            coroutineScope {
+                val jobs = urlsToDownload.map { url ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit {
+                            val fileName = url.substringAfterLast('/')
+                            _downloadProgress.value = DownloadProgress(completed, total, fileName, true)
+                            val hasExisting = !pending.existingByUrl[url].isNullOrEmpty()
+                            val success = when (resolution) {
+                                DownloadConflictResolution.SkipExisting ->
+                                    MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
+                                DownloadConflictResolution.OverwriteExisting -> {
+                                    pending.existingByUrl[url]?.let { entries ->
+                                        MediaSaver.deleteMedia(appContext, entries)
+                                    }
+                                    MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
+                                }
+                            }
+
+                            synchronized(this@DetailViewModel) {
+                                if (success) {
+                                    if (hasExisting && resolution == DownloadConflictResolution.OverwriteExisting) {
+                                        overwriteSuccess++
+                                    } else {
+                                        newSuccess++
+                                    }
+                                } else {
+                                    if (resolution == DownloadConflictResolution.SkipExisting) {
+                                        skippedCount++
+                                    } else {
+                                        failureCount++
+                                    }
+                                }
+                                completed++
+                                _downloadProgress.value = DownloadProgress(completed, total, fileName, true)
+                            }
+                        }
+                    }
+                }
+
+                jobs.awaitAll()
+            }
+
+            withContext(Dispatchers.Main) {
+                val message = when (resolution) {
+                    DownloadConflictResolution.SkipExisting -> buildSkipMessage(newSuccess, skippedCount)
+                    DownloadConflictResolution.OverwriteExisting -> buildOverwriteMessage(newSuccess, overwriteSuccess, failureCount)
+                }
+                android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } finally {
+            delay(500)
+            _downloadProgress.value = null
+        }
+    }
+
+    private fun buildSkipMessage(downloadedCount: Int, skippedCount: Int): String {
+        return when {
+            downloadedCount > 0 && skippedCount > 0 -> "新規ダウンロード: ${downloadedCount}件、スキップ: ${skippedCount}件"
+            downloadedCount > 0 -> "${downloadedCount}件の画像をダウンロードしました"
+            skippedCount > 0 -> "${skippedCount}件の画像は既にダウンロード済みでした"
+            else -> "ダウンロード対象の画像がありません"
+        }
+    }
+
+    private fun buildOverwriteMessage(newSuccess: Int, overwriteSuccess: Int, failureCount: Int): String {
+        val totalSuccess = newSuccess + overwriteSuccess
+        return when {
+            totalSuccess > 0 && failureCount > 0 -> "保存完了: ${totalSuccess}件（新規: ${newSuccess}件、上書き: ${overwriteSuccess}件、失敗: ${failureCount}件）"
+            totalSuccess > 0 && overwriteSuccess > 0 && newSuccess > 0 -> "保存完了: ${totalSuccess}件（新規: ${newSuccess}件、上書き: ${overwriteSuccess}件）"
+            totalSuccess > 0 && overwriteSuccess > 0 -> "既存ファイルを${overwriteSuccess}件上書き保存しました"
+            totalSuccess > 0 -> "${totalSuccess}件の画像をダウンロードしました"
+            failureCount > 0 -> "画像の保存に失敗しました"
+            else -> "ダウンロード対象の画像がありません"
         }
     }
 }
