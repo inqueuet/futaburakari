@@ -1,5 +1,6 @@
 package com.valoser.futaburakari
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
@@ -22,6 +23,12 @@ import android.net.Uri
  * - 成否はトーストで通知
  */
 object MediaSaver {
+
+    data class ExistingMedia(
+        val url: String,
+        val fileName: String,
+        val contentUri: Uri
+    )
 
     /**
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する。
@@ -53,6 +60,36 @@ object MediaSaver {
             relativeBaseDir = Environment.DIRECTORY_PICTURES,
             networkClient = networkClient
         )
+    }
+
+    suspend fun findExistingImages(
+        context: Context,
+        imageUrls: List<String>
+    ): Map<String, List<ExistingMedia>> {
+        return findExistingMedia(
+            context = context,
+            urls = imageUrls,
+            mediaContentUri = imagesContentUri(),
+            relativeBaseDir = Environment.DIRECTORY_PICTURES
+        )
+    }
+
+    suspend fun deleteMedia(context: Context, entries: List<ExistingMedia>) {
+        if (entries.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            val resolver = context.contentResolver
+            entries.forEach { entry ->
+                try {
+                    resolver.delete(entry.contentUri, null, null)
+                } catch (e: Exception) {
+                    android.util.Log.w("MediaSaver", "Failed to delete existing media: ${entry.contentUri}", e)
+                }
+            }
+        }
+    }
+
+    suspend fun deleteMedia(context: Context, entry: ExistingMedia) {
+        deleteMedia(context, listOf(entry))
     }
 
     /**
@@ -306,6 +343,70 @@ object MediaSaver {
             showToast(context, userMessage)
             return@withContext false
         }
+    }
+
+    private suspend fun findExistingMedia(
+        context: Context,
+        urls: List<String>,
+        mediaContentUri: Uri,
+        relativeBaseDir: String
+    ): Map<String, List<ExistingMedia>> = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val result = mutableMapOf<String, MutableList<ExistingMedia>>()
+        val projectionQ = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH
+        )
+        @Suppress("DEPRECATION")
+        val projectionLegacy = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.DATA
+        )
+
+        urls.forEach { url ->
+            val fileName = url.substringAfterLast('/')
+            val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) projectionQ else projectionLegacy
+            try {
+                resolver.query(
+                    mediaContentUri,
+                    projection,
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                    arrayOf(fileName),
+                    null
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val pathMatches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            val relIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                            val relPath = cursor.getString(relIndex)
+                            val expectedRelative = "$relativeBaseDir/Futaburakari"
+                            relPath?.contains("Futaburakari") == true || relPath?.contains(expectedRelative) == true
+                        } else {
+                            val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                            val dataPath = cursor.getString(dataIndex)
+                            dataPath?.contains("/Futaburakari/") == true
+                        }
+
+                        if (!pathMatches) continue
+
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                        val displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)) ?: fileName
+                        val existing = ExistingMedia(
+                            url = url,
+                            fileName = displayName,
+                            contentUri = ContentUris.withAppendedId(mediaContentUri, id)
+                        )
+                        val list = result.getOrPut(url) { mutableListOf() }
+                        list += existing
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MediaSaver", "Failed to query existing media for $fileName", e)
+            }
+        }
+
+        result
     }
 
     // 拡張子からMIME Typeを推測し、取得できなければ既定値を返す

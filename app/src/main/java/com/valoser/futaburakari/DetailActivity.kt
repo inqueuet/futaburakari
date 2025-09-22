@@ -257,7 +257,11 @@ class DetailActivity : BaseActivity() {
                     },
                     onDownloadImages = { urls -> viewModel.downloadImages(urls) },
                     onDownloadImagesSkipExisting = { urls -> viewModel.downloadImagesSkipExisting(urls) },
-                    downloadProgressFlow = viewModel.downloadProgress
+                    downloadProgressFlow = viewModel.downloadProgress,
+                    downloadConflictFlow = viewModel.downloadConflictRequests,
+                    onDownloadConflictSkip = { id -> viewModel.confirmDownloadSkip(id) },
+                    onDownloadConflictOverwrite = { id -> viewModel.confirmDownloadOverwrite(id) },
+                    onDownloadConflictCancel = { id -> viewModel.cancelDownloadRequest(id) }
                 )
             }
         }
