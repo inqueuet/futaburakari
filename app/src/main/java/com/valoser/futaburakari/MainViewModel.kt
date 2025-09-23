@@ -20,20 +20,30 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import coil3.imageLoader
+import coil3.network.HttpException
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
+import coil3.size.Dimension
+import coil3.size.Precision
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -84,6 +94,10 @@ class MainViewModel @Inject constructor(
         private val THUMB_PATTERN = Regex("(/thumb/|/cat/|/jun/)")
         private val EXTENSION_PATTERN = Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
         private val VALID_EXTENSION_PATTERN = Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
+
+        private const val PREVIEW_BATCH_SIZE = 4
+        private const val PREVIEW_BATCH_DELAY_MS = 5L
+        private const val FULL_BATCH_DELAY_MS = 50L
     }
 
     // URL推測結果をキャッシュ（サイズを拡大）
@@ -92,6 +106,13 @@ class MainViewModel @Inject constructor(
 
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
+
+    // カタログ画面からのプリフェッチ要求を受けるチャネル
+    private val catalogPrefetchHints = MutableSharedFlow<CatalogPrefetchHint>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
     // 動的サイズ制限付きLinkedHashMapでメモリ使用量を制御
@@ -120,6 +141,111 @@ class MainViewModel @Inject constructor(
     private val _error = MutableLiveData<String>()
     // エラー時のメッセージ
     val error: LiveData<String> = _error
+
+    /**
+     * カタログ画面から渡されたプリフェッチヒントを登録する。
+     *
+     * ビューポートが高速で変化した場合でも最新の要求だけを処理するため、SharedFlow に積んで
+     * `collectLatest` で前回処理をキャンセルする。
+     */
+    fun submitCatalogPrefetchHint(hint: CatalogPrefetchHint) {
+        if (hint.items.isEmpty() || hint.cellWidthPx <= 0 || hint.cellHeightPx <= 0) return
+        if (!catalogPrefetchHints.tryEmit(hint)) {
+            viewModelScope.launch { catalogPrefetchHints.emit(hint) }
+        }
+    }
+
+    private suspend fun handleCatalogPrefetch(hint: CatalogPrefetchHint) {
+        val width = hint.cellWidthPx.coerceAtLeast(1)
+        val height = hint.cellHeightPx.coerceAtLeast(1)
+        val imageLoader = appContext.imageLoader
+
+        val previewTargets = hint.items.mapNotNull { item ->
+            val preview = item.previewUrl
+            if (preview.isBlank()) null else item.detailUrl to preview
+        }
+
+        previewTargets.chunked(PREVIEW_BATCH_SIZE).forEach { batch ->
+            batch.forEach { (referer, url) ->
+                val request = ImageRequest.Builder(appContext)
+                    .data(url)
+                    .size(Dimension.Pixels(width), Dimension.Pixels(height))
+                    .precision(Precision.EXACT)
+                    .httpHeaders(
+                        NetworkHeaders.Builder()
+                            .add("Referer", referer)
+                            .add("Accept", "*/*")
+                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                            .add("User-Agent", Ua.STRING)
+                            .build()
+                    )
+                    .build()
+                imageLoader.enqueue(request)
+            }
+            if (PREVIEW_BATCH_DELAY_MS > 0) delay(PREVIEW_BATCH_DELAY_MS)
+        }
+
+        val prefetchTargets = hint.items.mapNotNull { item ->
+            val full = item.fullImageUrl
+            val preferPreview = item.preferPreviewOnly
+            val hadFull = item.hadFullSuccess
+            val isVideo = full?.lowercase()?.let { url ->
+                url.endsWith(".webm") || url.endsWith(".mp4") || url.endsWith(".mkv")
+            } ?: false
+            when {
+                !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full)
+                else -> null
+            }
+        }
+
+        if (prefetchTargets.isEmpty()) return
+
+        val concurrency = AppPreferences.getConcurrencyLevel(appContext).coerceIn(1, 4)
+        prefetchTargets.chunked(concurrency).forEach { batch ->
+            batch.forEach { (item, referer, url) ->
+                val request = ImageRequest.Builder(appContext)
+                    .data(url)
+                    .size(Dimension.Pixels(width), Dimension.Pixels(height))
+                    .precision(Precision.EXACT)
+                    .httpHeaders(
+                        NetworkHeaders.Builder()
+                            .add("Referer", referer)
+                            .add("Accept", "*/*")
+                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                            .add("User-Agent", Ua.STRING)
+                            .build()
+                    )
+                    .listener(
+                        onSuccess = { request, _ ->
+                            val loaded = request.data?.toString()
+                            if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                notifyFullImageSuccess(item.detailUrl, loaded)
+                            }
+                        },
+                        onError = { request, result ->
+                            val throwable = result.throwable
+                            if (throwable is HttpException && throwable.response.code == 404) {
+                                request.data?.toString()?.takeIf { it.isNotEmpty() }?.let { failed ->
+                                    fixImageIf404NoHtml(item.detailUrl, failed)
+                                }
+                            }
+                        }
+                    )
+                    .build()
+                imageLoader.enqueue(request)
+            }
+            if (FULL_BATCH_DELAY_MS > 0) delay(FULL_BATCH_DELAY_MS)
+        }
+    }
+
+    init {
+        // 最新のプリフェッチ要求のみを処理し、過去の要求はキャンセル
+        viewModelScope.launch(ImageLoadingDispatcher) {
+            catalogPrefetchHints.collectLatest { hint ->
+                handleCatalogPrefetch(hint)
+            }
+        }
+    }
 
     private val _isLoading = MutableLiveData<Boolean>()
     // 通信/解析中フラグ

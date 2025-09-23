@@ -49,8 +49,6 @@ import coil3.request.ImageRequest
 import coil3.size.Dimension
 import coil3.size.Precision
 import coil3.network.HttpException
-import coil3.request.ErrorResult
-import coil3.request.SuccessResult
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import kotlinx.coroutines.delay
@@ -65,6 +63,7 @@ import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.ui.theme.LocalSpacing
+import com.valoser.futaburakari.CatalogPrefetchHint
 
 /**
  * 画像カタログの一覧画面（メイン画面）。
@@ -110,6 +109,7 @@ fun MainCatalogScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     onReload: () -> Unit,
+    onPrefetchHint: (CatalogPrefetchHint) -> Unit,
     onSelectBookmark: () -> Unit,
     onManageBookmarks: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -148,6 +148,8 @@ fun MainCatalogScreen(
 
     // バウンス（端でのオーバースクロール）検出用の状態
     val density = LocalDensity.current
+    val sPx by remember(sDp, density) { derivedStateOf { with(density) { sDp.toPx() } } }
+    val xsPx by remember(xsDp, density) { derivedStateOf { with(density) { xsDp.toPx() } } }
     val minBouncePx = with(density) { 120.dp.toPx() }.coerceAtLeast(48f) // トリガーに必要な最小距離
     var continuousOverscrollPx by remember { mutableStateOf(0f) } // 連続オーバースクロール距離の累積
     var lastScrollDirection by remember { mutableStateOf(0) } // 1: 下方向, -1: 上方向, 0: なし
@@ -205,9 +207,7 @@ fun MainCatalogScreen(
 
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
-    val context = LocalContext.current
-    val prefetchDensity = LocalDensity.current
-    LaunchedEffect(items, gridState, spanCount) {
+    LaunchedEffect(filtered, gridState, spanCount, sPx, xsPx) {
         snapshotFlow {
             val layout = gridState.layoutInfo
             val first = layout.visibleItemsInfo.firstOrNull()?.index ?: 0
@@ -218,104 +218,32 @@ fun MainCatalogScreen(
         }
             .distinctUntilChanged()
             .collectLatest { (first, last, viewportWidthPx) ->
-                if (last <= 0 || items.isEmpty()) return@collectLatest
+                if (last <= 0 || filtered.isEmpty()) return@collectLatest
 
-                // 1行あたりのアイテム幅（コンテンツ左右余白＋カード内余白を考慮）
-                val sPx = with(prefetchDensity) { sDp.toPx() }
-                val xsPx = with(prefetchDensity) { xsDp.toPx() }
                 val contentWidthPx = (viewportWidthPx - (sPx * 2)).coerceAtLeast(0f)
                 val cellWidthPx = ((contentWidthPx / spanCount) - (xsPx * 2)).coerceAtLeast(64f)
-                val cellHeightPx = (cellWidthPx * 4f / 3f)
+                val cellHeightPx = cellWidthPx * 4f / 3f
 
                 // 先読み行数は画面内の行数の約2倍（2画面分）
                 val visibleCount = (last - first + 1).coerceAtLeast(spanCount)
                 val rowsVisible = (visibleCount + spanCount - 1) / spanCount
                 val prefetchRows = (rowsVisible * 2).coerceAtLeast(1)
-                val prefetchAhead = (prefetchRows * spanCount)
+                val prefetchAhead = prefetchRows * spanCount
 
-                val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
+                val end = (last + prefetchAhead).coerceAtMost(filtered.lastIndex)
                 val start = first.coerceAtLeast(0)
+                if (end < start) return@collectLatest
 
-                // 1) 先にプレビューをプリフェッチ（画面に入った瞬間に確実に出す）
-                val previewTargets = items.subList(start, end + 1)
-                    .map { it.detailUrl to it.previewUrl }
+                val targets = filtered.subList(start, end + 1)
+                if (targets.isEmpty()) return@collectLatest
 
-                previewTargets.chunked(4).forEach { batch ->
-                    batch.forEach { (referer, url) ->
-                        val req = ImageRequest.Builder(context)
-                            .data(url)
-                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
-                            .precision(Precision.EXACT)
-                            // 優先度は未使用（互換性のため）。先にプレビューをキューへ入れる運用でカバー
-                            .httpHeaders(
-                                NetworkHeaders.Builder()
-                                    .add("Referer", referer)
-                                    .add("Accept", "*/*")
-                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
-                                    .build()
-                            )
-                            .build()
-                        context.imageLoader.enqueue(req)
-                    }
-                    delay(5)
-                }
-
-                // 2) 未検証フルは控えめに裏取り（LOW優先度）
-                val prefetchTargets = items.subList(start, end + 1)
-                    .mapNotNull { item ->
-                        // プレビュー不可かつフル未確定ならプリフェッチしない
-                        val full = item.fullImageUrl
-                        val preferPreview = item.preferPreviewOnly
-                        val hadFull = item.hadFullSuccess
-                        // 大容量動画はプリフェッチ対象から除外
-                        val isVideo = full?.lowercase()?.let { u ->
-                            u.endsWith(".webm") || u.endsWith(".mp4") || u.endsWith(".mkv")
-                        } ?: false
-                        when {
-                            !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full) // 未検証フルを裏取り
-                            else -> null // プレビューはプリフェッチしない/動画は除外
-                        }
-                    }
-
-                // 過度な同時リクエストを避けつつ並列プリフェッチ（同時接続数に統一）
-                val concurrency = com.valoser.futaburakari.AppPreferences.getConcurrencyLevel(context).coerceIn(1, 4)
-                prefetchTargets.chunked(concurrency).forEach { batch ->
-                    batch.forEach { (item, referer, url) ->
-                        val req = ImageRequest.Builder(context)
-                            .data(url)
-                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
-                            .precision(Precision.EXACT)
-                            // 優先度は未使用（互換性のため）。バッチ1件＋待機で実質低優先度化
-                            .httpHeaders(
-                                NetworkHeaders.Builder()
-                                    .add("Referer", referer)
-                                    .add("Accept", "*/*")
-                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
-                                    .build()
-                            )
-                            .listener(
-                                onSuccess = { request, _ ->
-                                    val loaded = request.data?.toString()
-                                    if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
-                                        onImageLoadSuccess(item, loaded)
-                                    }
-                                },
-                                onError = { request, result ->
-                                    val ex = result.throwable
-                                    if (ex is HttpException && ex.response.code == 404) {
-                                        val failed = request.data?.toString() ?: ""
-                                        if (failed.isNotEmpty()) onImageLoadHttp404(item, failed)
-                                    }
-                                }
-                            )
-                            .build()
-                        context.imageLoader.enqueue(req)
-                    }
-                    // キュー充満速度を抑制（軽く間隔を空ける）
-                    delay(50)
-                }
+                onPrefetchHint(
+                    CatalogPrefetchHint(
+                        items = targets.toList(),
+                        cellWidthPx = cellWidthPx.toInt(),
+                        cellHeightPx = cellHeightPx.toInt(),
+                    )
+                )
             }
     }
 

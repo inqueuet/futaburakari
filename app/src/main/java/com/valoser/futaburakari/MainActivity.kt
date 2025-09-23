@@ -176,32 +176,33 @@ class MainActivity : BaseActivity() {
                             fetchDataForCurrentUrl()
                             scope.launch { snackbarHostState.showSnackbar(getString(R.string.reloading)) }
                         },
-                    onSelectBookmark = {
-                        val bms = BookmarkManager.getBookmarks(this@MainActivity)
-                        if (bms.isEmpty()) {
-                            scope.launch { snackbarHostState.showSnackbar("ブックマークがありません。まずはブックマークを登録してください。") }
+                        onPrefetchHint = { hint -> viewModel.submitCatalogPrefetchHint(hint) },
+                        onSelectBookmark = {
+                            val bms = BookmarkManager.getBookmarks(this@MainActivity)
+                            if (bms.isEmpty()) {
+                                scope.launch { snackbarHostState.showSnackbar("ブックマークがありません。まずはブックマークを登録してください。") }
+                                val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
+                                bookmarkActivityResultLauncher.launch(intent)
+                            } else {
+                                showBookmarkDialog = true
+                            }
+                        },
+                        onManageBookmarks = {
                             val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
                             bookmarkActivityResultLauncher.launch(intent)
-                        } else {
-                            showBookmarkDialog = true
-                        }
-                    },
-                    onManageBookmarks = {
-                        val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
-                        bookmarkActivityResultLauncher.launch(intent)
-                    },
-                    onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
-                    onOpenHistory = { startActivity(Intent(this@MainActivity, HistoryActivity::class.java)) },
-                    onImageEdit = { startActivity(Intent(this@MainActivity, ImagePickerActivity::class.java)) },
-                    onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
-                    onItemClick = { item -> handleItemClick(item) },
-                    ngRules = ngRulesState.value,
-                    onImageLoadHttp404 = { item, failedUrl ->
-                        viewModel.fixImageIf404NoHtml(item.detailUrl, failedUrl)
-                    },
-                    onImageLoadSuccess = { item, loadedUrl ->
-                        viewModel.notifyFullImageSuccess(item.detailUrl, loadedUrl)
-                    },
+                        },
+                        onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                        onOpenHistory = { startActivity(Intent(this@MainActivity, HistoryActivity::class.java)) },
+                        onImageEdit = { startActivity(Intent(this@MainActivity, ImagePickerActivity::class.java)) },
+                        onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
+                        onItemClick = { item -> handleItemClick(item) },
+                        ngRules = ngRulesState.value,
+                        onImageLoadHttp404 = { item, failedUrl ->
+                            viewModel.fixImageIf404NoHtml(item.detailUrl, failedUrl)
+                        },
+                        onImageLoadSuccess = { item, loadedUrl ->
+                            viewModel.notifyFullImageSuccess(item.detailUrl, loadedUrl)
+                        },
                     )
 
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
