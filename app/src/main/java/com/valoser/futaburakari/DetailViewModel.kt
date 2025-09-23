@@ -1064,23 +1064,27 @@ class DetailViewModel @Inject constructor(
     }
 
     private suspend fun postRawContent() {
+        val list = rawContent
+        val cache = buildPlainTextCache(list)
         withContext(Dispatchers.Main) {
-            _detailContent.value = rawContent
-            buildPlainTextCacheAsync()
+            _plainTextCache.value = cache
+            _detailContent.value = list
             recomputeSearchState()
         }
     }
 
     private suspend fun postFilteredContent(filtered: List<DetailContent>) {
+        val cache = buildPlainTextCache(filtered)
         withContext(Dispatchers.Main) {
+            _plainTextCache.value = cache
             _detailContent.value = filtered
-            buildPlainTextCacheAsync()
             recomputeSearchState()
             // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
             currentUrl?.let { url ->
+                val snapshot = filtered
                 viewModelScope.launch(Dispatchers.IO) {
                     cacheManager.saveDetails(url, rawContent)
-                    cacheManager.saveArchiveSnapshot(url, _detailContent.value)
+                    cacheManager.saveArchiveSnapshot(url, snapshot)
                 }
             }
         }
@@ -1420,16 +1424,14 @@ class DetailViewModel @Inject constructor(
     private val _plainTextCache = MutableStateFlow<Map<String, String>>(emptyMap())
     val plainTextCache: StateFlow<Map<String, String>> = _plainTextCache.asStateFlow()
 
-    private fun buildPlainTextCacheAsync() {
-        val list = _detailContent.value
-        viewModelScope.launch(Dispatchers.Default) {
-            val cache = list.asSequence()
+    private suspend fun buildPlainTextCache(list: List<DetailContent>): Map<String, String> {
+        return withContext(Dispatchers.Default) {
+            list.asSequence()
                 .filterIsInstance<DetailContent.Text>()
                 .associate { t ->
                     val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
                     t.id to plain
                 }
-            withContext(Dispatchers.Main) { _plainTextCache.value = cache }
         }
     }
 
