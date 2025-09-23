@@ -4,7 +4,7 @@
  * 役割
  * - カタログHTMLの取得・解析（#cattable 優先 → 準備ページは空 → cgi 風フォールバック）
  * - プレビュー画像URLの検証/補正と、フル画像URLの推測・補完（HEAD 検証つき、HTML 解析なし）
- * - 表示用データ/状態: 画像は `StateFlow<Map<detailUrl, ImageItem>>` で差分更新、読込中/エラーは LiveData で公開
+ * - 表示用データ/状態: 画像は内部で `StateFlow<Map<detailUrl, ImageItem>>` で差分更新し、UI には `StateFlow<List<ImageItem>>` を提供。読込中/エラーは LiveData で公開
  * - 既存リストの更新確認（checkForUpdates）では既知の fullImageUrl を引き継ぎ、不足分のみ補完
  *
  * 実装メモ
@@ -31,8 +31,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.coroutines.executeAsync
@@ -99,7 +103,19 @@ class MainViewModel @Inject constructor(
             }
         }
     )
+    @Deprecated("UI 側では imageList を利用する")
     val imageMap: StateFlow<Map<String, ImageItem>> = _imageMap.asStateFlow()
+
+    private val imageListInternal: StateFlow<List<ImageItem>> = _imageMap
+        .map { map -> if (map.isEmpty()) emptyList() else map.values.toList() }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
+    val imageList: StateFlow<List<ImageItem>> = imageListInternal
 
     private val _error = MutableLiveData<String>()
     // エラー時のメッセージ

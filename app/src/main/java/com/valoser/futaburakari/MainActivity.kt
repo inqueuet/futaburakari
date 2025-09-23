@@ -463,12 +463,11 @@ class MainActivity : BaseActivity() {
             isLoadingState.value = isLoading
         }
 
-        // 差分更新: Map を購読し、順序を保ったリストへ変換
+        // 差分更新: ViewModel から順序維持済みリストをそのまま受け取る
         lifecycleScope.launch {
-            viewModel.imageMap.collectLatest { map ->
+            viewModel.imageList.collectLatest { list ->
                 setAutoUpdateIndicator(false)
-                // LinkedHashMap ベースの順序を維持
-                itemsState.value = map.values.toList()
+                itemsState.value = list
             }
         }
 
