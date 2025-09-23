@@ -302,7 +302,15 @@ class DetailViewModel @Inject constructor(
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
         val updateId = contentUpdateCounter.incrementAndGet()
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            suspend fun setLoading(value: Boolean) {
+                withContext(Dispatchers.Main) { _isLoading.value = value }
+            }
+
+            suspend fun setError(message: String?) {
+                withContext(Dispatchers.Main) { _error.value = message }
+            }
+
             // データ整合性チェック：更新中の競合状態を防ぐ
             if (contentUpdateCounter.get() != updateId) {
                 Log.d("DetailViewModel", "Newer update detected, canceling this fetch")
@@ -311,14 +319,16 @@ class DetailViewModel @Inject constructor(
 
             // スレ移動時に「そうだね」状態を正しくリセットするため、
             // 代入前のURLと比較してページ遷移を判定する。
-            val isNewPage = this@DetailViewModel.currentUrl != url
-            if (forceRefresh || isNewPage) {
-                resetSodaNeStates()
+            withContext(Dispatchers.Main) {
+                val isNewPage = this@DetailViewModel.currentUrl != url
+                if (forceRefresh || isNewPage) {
+                    resetSodaNeStates()
+                }
+                this@DetailViewModel.currentUrl = url
+                _isLoading.value = true
+                _error.value = null
+                _promptLoadingIds.value = emptySet()
             }
-            this@DetailViewModel.currentUrl = url
-            _isLoading.value = true
-            _error.value = null
-            _promptLoadingIds.value = emptySet()
             var itemIdCounter = 0L
 
 
@@ -333,7 +343,7 @@ class DetailViewModel @Inject constructor(
                         applyNgAndPostAsync()
                         // 即時表示後に、キャッシュ由来でも不足メタデータ（画像プロンプト等）を並行取得して段階反映
                         updateMetadataInBackground(sanitized, url)
-                        _isLoading.value = false
+                        setLoading(false)
                         return@launch
                     }
                     // 履歴がアーカイブ済みで、アーカイブスナップショットがあれば即時表示してネットワークを避ける
@@ -345,7 +355,7 @@ class DetailViewModel @Inject constructor(
                         if (!snap.isNullOrEmpty()) {
                             setRawContentSanitized(snap)
                             applyNgAndPostAsync()
-                            _isLoading.value = false
+                            setLoading(false)
                             return@launch
                         }
                     }
@@ -368,7 +378,7 @@ class DetailViewModel @Inject constructor(
                 val sanitizedMerged = setRawContentSanitized(merged)
                 val sanitizedProgressive = sanitizePrompts(progressivelyLoadedContent)
                 applyNgAndPostAsync()
-                _isLoading.value = false
+                setLoading(false)
 
                 // バックグラウンドでメタデータを取得し、完了後に段階反映
                 updateMetadataInBackground(sanitizedProgressive, url)
@@ -446,7 +456,7 @@ class DetailViewModel @Inject constructor(
                     } catch (_: Exception) {
                         Log.w("DetailViewModel", "Failed to update cached thumbnail for $url")
                     }
-                    _error.value = null
+                    setError(null)
                 } else {
                     // キャッシュも無い → アーカイブスナップショット or 媒体のみで再構成
                     val reconstructed = withContext(Dispatchers.IO) {
@@ -517,12 +527,12 @@ class DetailViewModel @Inject constructor(
                         applyNgAndPostAsync()
                         // スナップショット/再構成からも画像プロンプト抽出を実施（file:// を対象）
                         updateMetadataInBackground(sanitizedReconstructed, url)
-                        _error.value = null
+                        setError(null)
                     } else {
-                        _error.value = "詳細の取得に失敗しました: ${e.message}"
+                        setError("詳細の取得に失敗しました: ${e.message}")
                     }
                 }
-                _isLoading.value = false
+                setLoading(false)
             }
         }
     }
