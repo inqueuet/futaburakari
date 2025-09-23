@@ -1124,67 +1124,71 @@ class DetailViewModel @Inject constructor(
      * - Image/Video のプロンプト情報を積極的にマージ（既存のプロンプトも保持）。
      * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）、最後に完全URL。
      */
-    private fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
+    private suspend fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
         if (base.isEmpty() || prior.isEmpty()) return base
 
-        fun keyForImage(url: String?, fileName: String?): List<String> {
-            val keys = mutableListOf<String>()
-            // 1. ファイル名での照合
-            fileName?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
-            // 2. URL末尾のファイル名での照合
-            url?.substringAfterLast('/')?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
-            // 3. 完全URLでの照合
-            url?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
-            return keys
-        }
+        return withContext(Dispatchers.Default) {
+            fun keyForImage(url: String?, fileName: String?): List<String> {
+                val keys = mutableListOf<String>()
+                // 1. ファイル名での照合
+                fileName?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+                // 2. URL末尾のファイル名での照合
+                url?.substringAfterLast('/')?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+                // 3. 完全URLでの照合
+                url?.takeIf { it.isNotBlank() }?.let { keys.add(it) }
+                return keys
+            }
 
-        val promptByKey: Map<String, String> = buildMap {
-            prior.forEach { dc ->
-                when (dc) {
-                    is DetailContent.Image -> {
-                        val keys = keyForImage(dc.imageUrl, dc.fileName)
-                        val p = dc.prompt
-                        if (!p.isNullOrBlank()) {
-                            keys.forEach { k -> put(k, p) }
+            val promptByKey: Map<String, String> = buildMap {
+                prior.forEach { dc ->
+                    when (dc) {
+                        is DetailContent.Image -> {
+                            val keys = keyForImage(dc.imageUrl, dc.fileName)
+                            val p = dc.prompt
+                            if (!p.isNullOrBlank()) {
+                                keys.forEach { k -> put(k, p) }
+                            }
                         }
-                    }
-                    is DetailContent.Video -> {
-                        val keys = keyForImage(dc.videoUrl, dc.fileName)
-                        val p = dc.prompt
-                        if (!p.isNullOrBlank()) {
-                            keys.forEach { k -> put(k, p) }
+                        is DetailContent.Video -> {
+                            val keys = keyForImage(dc.videoUrl, dc.fileName)
+                            val p = dc.prompt
+                            if (!p.isNullOrBlank()) {
+                                keys.forEach { k -> put(k, p) }
+                            }
                         }
+                        else -> {}
                     }
-                    else -> {}
                 }
             }
-        }
 
-        if (promptByKey.isEmpty()) return base
-
-        return base.map { dc ->
-            when (dc) {
-                is DetailContent.Image -> {
-                    val currentPrompt = dc.prompt
-                    if (!currentPrompt.isNullOrBlank()) {
-                        dc // 既にプロンプトがある場合はそのまま
-                    } else {
-                        val keys = keyForImage(dc.imageUrl, dc.fileName)
-                        val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
-                        if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
+            if (promptByKey.isEmpty()) {
+                base
+            } else {
+                base.map { dc ->
+                    when (dc) {
+                        is DetailContent.Image -> {
+                            val currentPrompt = dc.prompt
+                            if (!currentPrompt.isNullOrBlank()) {
+                                dc // 既にプロンプトがある場合はそのまま
+                            } else {
+                                val keys = keyForImage(dc.imageUrl, dc.fileName)
+                                val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
+                                if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
+                            }
+                        }
+                        is DetailContent.Video -> {
+                            val currentPrompt = dc.prompt
+                            if (!currentPrompt.isNullOrBlank()) {
+                                dc // 既にプロンプトがある場合はそのまま
+                            } else {
+                                val keys = keyForImage(dc.videoUrl, dc.fileName)
+                                val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
+                                if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
+                            }
+                        }
+                        else -> dc
                     }
                 }
-                is DetailContent.Video -> {
-                    val currentPrompt = dc.prompt
-                    if (!currentPrompt.isNullOrBlank()) {
-                        dc // 既にプロンプトがある場合はそのまま
-                    } else {
-                        val keys = keyForImage(dc.videoUrl, dc.fileName)
-                        val p = keys.firstNotNullOfOrNull { k -> promptByKey[k] }
-                        if (!p.isNullOrBlank()) dc.copy(prompt = p) else dc
-                    }
-                }
-                else -> dc
             }
         }
     }
