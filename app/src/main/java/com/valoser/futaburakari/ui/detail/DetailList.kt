@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
@@ -212,6 +213,7 @@ fun DetailListCompose(
     onSetSodaneCount: ((String, Int) -> Unit)? = null,
     // スレタイトル（タイトル行を引用扱いにするためのヒント）
     threadTitle: String? = null,
+    promptLoadingIds: Set<String> = emptySet(),
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -543,17 +545,32 @@ fun DetailListCompose(
                                 onSuccess = { onImageLoaded?.invoke() }
                             )
                         }
-                        // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。長文はタップで展開/折りたたみ。
-                        val promptPlain = run {
-                            val raw = item.prompt
-                            val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
-                            if (!plain.isNullOrBlank()) plain else null
+                        // プロンプトは ViewModel 側でプレーン化済み。長文はタップで展開/折りたたみ。
+                        val promptText = item.prompt?.trim()?.takeIf { it.isNotEmpty() }
+                        val isPromptLoading = promptLoadingIds.contains(item.id)
+                        if (isPromptLoading && promptText == null) {
+                            androidx.compose.foundation.layout.Row(
+                                modifier = Modifier
+                                    .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.height(16.dp).width(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                androidx.compose.material3.Text(
+                                    text = "読み込み中…",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = LocalSpacing.current.xs)
+                                )
+                            }
                         }
-                        if (!promptPlain.isNullOrBlank()) {
+                        if (promptText != null) {
                             var expanded by remember(item.id) { mutableStateOf(false) }
                             SelectionContainer {
                                 androidx.compose.material3.Text(
-                                    text = promptPlain,
+                                    text = promptText,
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = if (expanded) Int.MAX_VALUE else 3,
@@ -615,17 +632,32 @@ fun DetailListCompose(
                             },
                             onSuccess = { onImageLoaded?.invoke() }
                         )
-                        // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
-                        val promptPlain = run {
-                            val raw = item.prompt
-                            val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
-                            if (!plain.isNullOrBlank()) plain else null
+                        // サムネイル下の説明テキストは ViewModel 側でプレーン化済み。長文はタップで展開/折りたたみ。
+                        val promptText = item.prompt?.trim()?.takeIf { it.isNotEmpty() }
+                        val isPromptLoading = promptLoadingIds.contains(item.id)
+                        if (isPromptLoading && promptText == null) {
+                            androidx.compose.foundation.layout.Row(
+                                modifier = Modifier
+                                    .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.height(16.dp).width(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                androidx.compose.material3.Text(
+                                    text = "読み込み中…",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = LocalSpacing.current.xs)
+                                )
+                            }
                         }
-                        if (!promptPlain.isNullOrBlank()) {
+                        if (promptText != null) {
                             var expanded by remember(item.id) { mutableStateOf(false) }
                             SelectionContainer {
                                 androidx.compose.material3.Text(
-                                    text = promptPlain,
+                                    text = promptText,
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = if (expanded) Int.MAX_VALUE else 3,

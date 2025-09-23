@@ -261,7 +261,8 @@ class DetailActivity : BaseActivity() {
                     downloadConflictFlow = viewModel.downloadConflictRequests,
                     onDownloadConflictSkip = { id -> viewModel.confirmDownloadSkip(id) },
                     onDownloadConflictOverwrite = { id -> viewModel.confirmDownloadOverwrite(id) },
-                    onDownloadConflictCancel = { id -> viewModel.cancelDownloadRequest(id) }
+                    onDownloadConflictCancel = { id -> viewModel.cancelDownloadRequest(id) },
+                    promptLoadingIdsFlow = viewModel.promptLoadingIds
                 )
             }
         }

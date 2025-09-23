@@ -2,6 +2,7 @@ package com.valoser.futaburakari
 
 import android.content.Context
 import android.util.Log
+import androidx.core.text.HtmlCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -34,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
 import androidx.collection.LruCache
@@ -105,6 +107,9 @@ class DetailViewModel @Inject constructor(
 
     private val _downloadConflictRequests = MutableSharedFlow<DownloadConflictRequest>(extraBufferCapacity = 1)
     val downloadConflictRequests = _downloadConflictRequests.asSharedFlow()
+
+    private val _promptLoadingIds = MutableStateFlow<Set<String>>(emptySet())
+    val promptLoadingIds: StateFlow<Set<String>> = _promptLoadingIds.asStateFlow()
 
     private val downloadRequestIdGenerator = AtomicLong(0)
     private val pendingDownloadMutex = Mutex()
@@ -312,6 +317,7 @@ class DetailViewModel @Inject constructor(
             this@DetailViewModel.currentUrl = url
             _isLoading.value = true
             _error.value = null
+            _promptLoadingIds.value = emptySet()
             var itemIdCounter = 0L
 
 
@@ -322,10 +328,10 @@ class DetailViewModel @Inject constructor(
                 if (!forceRefresh) {
                     val cachedDetails = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
                     if (cachedDetails != null) {
-                        rawContent = cachedDetails
+                        val sanitized = setRawContentSanitized(cachedDetails)
                         applyNgAndPostAsync()
                         // 即時表示後に、キャッシュ由来でも不足メタデータ（画像プロンプト等）を並行取得して段階反映
-                        updateMetadataInBackground(cachedDetails, url)
+                        updateMetadataInBackground(sanitized, url)
                         _isLoading.value = false
                         return@launch
                     }
@@ -336,7 +342,7 @@ class DetailViewModel @Inject constructor(
                     if (archived) {
                         val snap = withContext(Dispatchers.IO) { cacheManager.loadArchiveSnapshot(url) }
                         if (!snap.isNullOrEmpty()) {
-                            rawContent = snap
+                            setRawContentSanitized(snap)
                             applyNgAndPostAsync()
                             _isLoading.value = false
                             return@launch
@@ -358,12 +364,13 @@ class DetailViewModel @Inject constructor(
                 val merged = if (prior.isEmpty()) progressivelyLoadedContent else mergePrompts(progressivelyLoadedContent, prior)
 
                 // キャッシュは生データを保存し、表示はNG適用後
-                rawContent = merged
+                val sanitizedMerged = setRawContentSanitized(merged)
+                val sanitizedProgressive = sanitizePrompts(progressivelyLoadedContent)
                 applyNgAndPostAsync()
                 _isLoading.value = false
 
                 // バックグラウンドでメタデータを取得し、完了後に段階反映
-                updateMetadataInBackground(progressivelyLoadedContent, url)
+                updateMetadataInBackground(sanitizedProgressive, url)
 
             } catch (e: Exception) {
                 // ネットワーク失敗時はキャッシュへフォールバック（アーカイブ閲覧時など）
@@ -374,10 +381,10 @@ class DetailViewModel @Inject constructor(
                     if (e is IOException && (e.message?.contains("404") == true)) {
                         runCatching { HistoryManager.markArchived(appContext, url) }
                     }
-                    rawContent = cached
+                    val sanitizedCached = setRawContentSanitized(cached)
                     applyNgAndPostAsync()
                     // キャッシュ由来でも画像プロンプト抽出を再試行（オフライン時の復元用）
-                    updateMetadataInBackground(cached, url)
+                    updateMetadataInBackground(sanitizedCached, url)
                     // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映（OPの画像のみ）
                     runCatching {
                         val firstTextIndex = cached.indexOfFirst { it is DetailContent.Text }
@@ -501,10 +508,10 @@ class DetailViewModel @Inject constructor(
                                 HistoryManager.clearThumbnail(appContext, url)
                             }
                         }
-                        rawContent = reconstructed
+                        val sanitizedReconstructed = setRawContentSanitized(reconstructed)
                         applyNgAndPostAsync()
                         // スナップショット/再構成からも画像プロンプト抽出を実施（file:// を対象）
-                        updateMetadataInBackground(reconstructed, url)
+                        updateMetadataInBackground(sanitizedReconstructed, url)
                         _error.value = null
                     } else {
                         _error.value = "詳細の取得に失敗しました: ${e.message}"
@@ -533,10 +540,12 @@ class DetailViewModel @Inject constructor(
 
                 if (newItems.isNotEmpty()) {
                     // 生データを更新してキャッシュ保存、表示はNG適用後
-                    rawContent = rawContent + newItems
-                    withContext(Dispatchers.IO) { cacheManager.saveDetails(url, rawContent) }
+                    val sanitizedNewItems = sanitizePrompts(newItems)
+                    val updatedRaw = rawContent + sanitizedNewItems
+                    rawContent = updatedRaw
+                    withContext(Dispatchers.IO) { cacheManager.saveDetails(url, updatedRaw) }
                     applyNgAndPostAsync()
-                    updateMetadataInBackground(newItems, url)
+                    updateMetadataInBackground(sanitizedNewItems, url)
                     callback(true)
                 } else {
                     callback(false)
@@ -773,6 +782,8 @@ class DetailViewModel @Inject constructor(
                         }
                     }
 
+                    markPromptLoading(content.id, true)
+
                     val limitedIO = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
                     val job = viewModelScope.async(limitedIO) {
                         val prompt = try {
@@ -785,7 +796,13 @@ class DetailViewModel @Inject constructor(
                         if (prompt == null) {
                             Log.w("DetailViewModel", "Metadata for ${content.imageUrl} was null (timeout or null)")
                         }
-                        updates.send(content.id to prompt)
+                        val normalized = normalizePrompt(prompt)
+                        updates.send(content.id to normalized)
+                    }
+                    job.invokeOnCompletion { throwable ->
+                        if (throwable != null) {
+                            markPromptLoading(content.id, false)
+                        }
                     }
                     sendJobs.add(job)
                 }
@@ -833,6 +850,7 @@ class DetailViewModel @Inject constructor(
                             }
                             if (upd != it) { current[idx] = upd; changed = true }
                         }
+                        markPromptLoading(id, false)
                     }
                     if (changed) {
                         val snapshot = current.toList()
@@ -1342,6 +1360,77 @@ class DetailViewModel @Inject constructor(
             }
             .joinToString("\n")
             .trimEnd()
+    }
+
+    private fun markPromptLoading(ids: Collection<String>, loading: Boolean) {
+        if (ids.isEmpty()) return
+        _promptLoadingIds.update { current ->
+            if (loading) current + ids else current - ids
+        }
+    }
+
+    private fun markPromptLoading(id: String, loading: Boolean) {
+        markPromptLoading(listOf(id), loading)
+    }
+
+    private suspend fun sanitizePrompts(list: List<DetailContent>): List<DetailContent> {
+        if (list.isEmpty()) return list
+        val needsSanitize = list.any { it.hasPromptNeedingSanitize() }
+        if (!needsSanitize) return list
+
+        return withContext(Dispatchers.Default) {
+            var changed = false
+            val sanitized = list.map { content ->
+                when (content) {
+                    is DetailContent.Image -> {
+                        val normalized = normalizePrompt(content.prompt)
+                        if (normalized != content.prompt) {
+                            changed = true
+                            content.copy(prompt = normalized)
+                        } else content
+                    }
+                    is DetailContent.Video -> {
+                        val normalized = normalizePrompt(content.prompt)
+                        if (normalized != content.prompt) {
+                            changed = true
+                            content.copy(prompt = normalized)
+                        } else content
+                    }
+                    else -> content
+                }
+            }
+            if (changed) sanitized else list
+        }
+    }
+
+    private suspend fun setRawContentSanitized(list: List<DetailContent>): List<DetailContent> {
+        val sanitized = sanitizePrompts(list)
+        rawContent = sanitized
+        return sanitized
+    }
+
+    private fun DetailContent.hasPromptNeedingSanitize(): Boolean = when (this) {
+        is DetailContent.Image -> this.prompt.needsHtmlNormalization()
+        is DetailContent.Video -> this.prompt.needsHtmlNormalization()
+        else -> false
+    }
+
+    private fun String?.needsHtmlNormalization(): Boolean {
+        val value = this?.trim() ?: return false
+        if (value.isEmpty()) return false
+        val hasAngleBrackets = value.indexOf('<') >= 0 && value.indexOf('>') > value.indexOf('<')
+        if (hasAngleBrackets) return true
+        val lower = value.lowercase()
+        return lower.contains("&lt;") || lower.contains("&gt;") || lower.contains("&amp;") || lower.contains("&#")
+    }
+
+    private fun normalizePrompt(raw: String?): String? {
+        if (raw == null) return null
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        if (!trimmed.needsHtmlNormalization()) return trimmed
+        val plain = HtmlCompat.fromHtml(trimmed, HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
+        return plain.ifBlank { null }
     }
 
     // ===== 検索: 公開APIと内部実装 =====

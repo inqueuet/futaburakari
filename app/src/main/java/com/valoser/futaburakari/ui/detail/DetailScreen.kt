@@ -186,6 +186,7 @@ fun DetailScreenScaffold(
     onDownloadConflictCancel: ((Long) -> Unit)? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
+    promptLoadingIdsFlow: StateFlow<Set<String>>? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var reportTarget by remember { mutableStateOf<String?>(null) }
@@ -197,6 +198,8 @@ fun DetailScreenScaffold(
 
     // ダウンロード進捗状態
     val downloadProgress by downloadProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
+
+    val promptLoadingIds: Set<String> = promptLoadingIdsFlow?.collectAsStateWithLifecycle(emptySet())?.value ?: emptySet()
 
     var downloadConflict by remember { mutableStateOf<DownloadConflictRequest?>(null) }
     LaunchedEffect(downloadConflictFlow) {
@@ -402,6 +405,7 @@ fun DetailScreenScaffold(
                         threadUrl = threadUrl,
                         modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
+                        promptLoadingIds = promptLoadingIds,
                         plainTextOf = plainOfProvider,
                         onQuoteClick = { token ->
                             // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
@@ -762,6 +766,7 @@ fun DetailScreenScaffold(
                             searchQuery = null,
                             threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
+                            promptLoadingIds = promptLoadingIds,
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,
@@ -800,6 +805,7 @@ fun DetailScreenScaffold(
                             searchQuery = null,
                             threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
+                            promptLoadingIds = promptLoadingIds,
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,
