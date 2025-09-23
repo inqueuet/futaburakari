@@ -95,10 +95,18 @@ class MetadataCache(context: Context) {
     }
 
     /**
-     * 強制的に保留中の変更をディスクに保存する
+     * 強制的に保留中の変更をディスクに保存する。
+     *
+     * @return 非同期フラッシュ処理の `Job`（呼び出し側で必要に応じて待機可能）
      */
+    fun flush(): Job {
+        return scope.launch {
+            flushInternal()
+        }
+    }
+
     @Synchronized
-    fun flush() {
+    private fun flushInternal() {
         saveJob?.cancel()
         savePendingNow()
     }

@@ -333,10 +333,10 @@ class DetailActivity : BaseActivity() {
             prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         }
         // 画像プロンプトキャッシュを強制的にディスクに保存
-        try {
-            MetadataCache(this).flush()
-        } catch (e: Exception) {
-            android.util.Log.e("DetailActivity", "Failed to flush metadata cache", e)
+        MetadataCache(applicationContext).flush().invokeOnCompletion { error ->
+            if (error != null) {
+                android.util.Log.e("DetailActivity", "Failed to flush metadata cache", error)
+            }
         }
         super.onStop()
     }
