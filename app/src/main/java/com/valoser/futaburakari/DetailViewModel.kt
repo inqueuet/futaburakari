@@ -1517,21 +1517,45 @@ class DetailViewModel @Inject constructor(
     private val _plainTextCache = MutableStateFlow<Map<String, String>>(emptyMap())
     val plainTextCache: StateFlow<Map<String, String>> = _plainTextCache.asStateFlow()
 
+    private fun toPlainText(t: DetailContent.Text): String {
+        return android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+    }
+
     private suspend fun buildPlainTextCache(list: List<DetailContent>): Map<String, String> {
         return withContext(Dispatchers.Default) {
             list.asSequence()
                 .filterIsInstance<DetailContent.Text>()
-                .associate { t ->
-                    val plain = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
-                    t.id to plain
+                .associate { t -> t.id to toPlainText(t) }
+        }
+    }
+
+    fun ensurePlainTextCachedFor(contents: List<DetailContent>) {
+        if (contents.isEmpty()) return
+        viewModelScope.launch(Dispatchers.Default) {
+            val current = _plainTextCache.value
+            val missing = contents.asSequence()
+                .filterIsInstance<DetailContent.Text>()
+                .filter { !current.containsKey(it.id) }
+                .toList()
+            if (missing.isEmpty()) return@launch
+            val updated = HashMap(current)
+            var changed = false
+            for (text in missing) {
+                if (!updated.containsKey(text.id)) {
+                    updated[text.id] = toPlainText(text)
+                    changed = true
                 }
+            }
+            if (changed) {
+                withContext(Dispatchers.Main) { _plainTextCache.value = updated }
+            }
         }
     }
 
     fun plainTextOf(t: DetailContent.Text): String {
         val cached = _plainTextCache.value[t.id]
         if (cached != null) return cached
-        val now = android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        val now = toPlainText(t)
         viewModelScope.launch(Dispatchers.Default) {
             val updated = HashMap(_plainTextCache.value)
             if (!updated.containsKey(t.id)) {

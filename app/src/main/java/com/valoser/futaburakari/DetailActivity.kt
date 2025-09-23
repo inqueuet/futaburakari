@@ -215,6 +215,8 @@ class DetailActivity : BaseActivity() {
                         scrollStore.saveScrollState(key, pos, off)
                     },
                     itemsFlow = viewModel.detailContent,
+                    plainTextCacheFlow = viewModel.plainTextCache,
+                    onEnsurePlainTextCache = { list -> viewModel.ensurePlainTextCachedFor(list) },
                     plainTextOf = { t -> viewModel.plainTextOf(t) },
                     currentQueryFlow = viewModel.currentQuery,
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },

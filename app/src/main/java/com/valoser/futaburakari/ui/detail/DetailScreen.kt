@@ -161,6 +161,8 @@ fun DetailScreenScaffold(
     initialScrollOffset: Int = 0,
     onSaveScroll: ((Int, Int) -> Unit)? = null,
     itemsFlow: StateFlow<List<DetailContent>>? = null,
+    plainTextCacheFlow: StateFlow<Map<String, String>>? = null,
+    onEnsurePlainTextCache: ((List<DetailContent>) -> Unit)? = null,
     plainTextOf: ((DetailContent.Text) -> String)? = null,
     currentQueryFlow: StateFlow<String?>? = null,
     getSodaneState: ((String) -> Boolean)? = null,
@@ -311,7 +313,7 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
-            val plainOfProvider = remember(plainTextOf) {
+            val fallbackPlainProvider = remember(plainTextOf) {
                 plainTextOf ?: { t: DetailContent.Text -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() }
             }
             // UI をブロックしないためのスコープ（重い集計はメインスレッド外で実行）
@@ -327,6 +329,22 @@ fun DetailScreenScaffold(
             // 下のダイアログ/シートからも参照できるよう items / listState を上位に保持
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
+            val plainTextCache = plainTextCacheFlow?.collectAsStateWithLifecycle(emptyMap())?.value ?: emptyMap()
+
+            LaunchedEffect(items, plainTextCache) {
+                if (onEnsurePlainTextCache != null) {
+                    val missing = items.asSequence()
+                        .filterIsInstance<DetailContent.Text>()
+                        .any { !plainTextCache.containsKey(it.id) }
+                    if (missing) {
+                        onEnsurePlainTextCache(items)
+                    }
+                }
+            }
+
+            val plainOfProvider = remember(plainTextCache, fallbackPlainProvider) {
+                { t: DetailContent.Text -> plainTextCache[t.id] ?: fallbackPlainProvider(t) }
+            }
 
             // 画像一括ダウンロードのコールバックを設定（重複チェック付き）
             LaunchedEffect(items) {
@@ -406,6 +424,7 @@ fun DetailScreenScaffold(
                         modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
                         promptLoadingIds = promptLoadingIds,
+                        plainTextCache = plainTextCache,
                         plainTextOf = plainOfProvider,
                         onQuoteClick = { token ->
                             // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
@@ -767,6 +786,8 @@ fun DetailScreenScaffold(
                             threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
                             promptLoadingIds = promptLoadingIds,
+                            plainTextCache = plainTextCache,
+                            plainTextOf = plainOfProvider,
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,
@@ -806,6 +827,8 @@ fun DetailScreenScaffold(
                             threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
                             promptLoadingIds = promptLoadingIds,
+                            plainTextCache = plainTextCache,
+                            plainTextOf = plainOfProvider,
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,

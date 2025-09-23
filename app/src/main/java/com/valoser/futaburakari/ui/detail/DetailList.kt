@@ -68,6 +68,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -183,6 +184,7 @@ fun DetailListCompose(
     modifier: Modifier = Modifier,
     // HTML->プレーンテキストの取得（ViewModelのキャッシュを利用するため注入可能）
     plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
+    plainTextCache: Map<String, String> = emptyMap(),
     // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
@@ -305,7 +307,7 @@ fun DetailListCompose(
     // Compose内で検索ヒット位置を計算してナビゲーションを提供
     var hitPositions by remember(items, searchQuery) { mutableStateOf<List<Int>>(emptyList()) }
     var currentHit by remember(items, searchQuery) { mutableStateOf(0) }
-    LaunchedEffect(items, searchQuery) {
+    LaunchedEffect(items, searchQuery, plainTextCache) {
         val q = searchQuery?.trim().orEmpty()
         if (q.isBlank()) {
             hitPositions = emptyList()
@@ -316,7 +318,7 @@ fun DetailListCompose(
                 val acc = mutableListOf<Int>()
                 items.forEachIndexed { idx, content ->
                     val textToSearch: String? = when (content) {
-                        is DetailContent.Text -> plainTextOf(content)
+                        is DetailContent.Text -> plainTextCache[content.id] ?: plainTextOf(content)
                         is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
                         is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
                         is DetailContent.ThreadEndTime -> null
@@ -394,7 +396,19 @@ fun DetailListCompose(
         itemsIndexed(items, key = { index, it -> "${it.id}#$index" }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
-                    val plain = plainTextOf(item)
+                    val plainState = produceState<String?>(
+                        initialValue = plainTextCache[item.id],
+                        key1 = item.id,
+                        key2 = plainTextCache[item.id]
+                    ) {
+                        val cached = plainTextCache[item.id]
+                        if (cached != null) {
+                            value = cached
+                        } else {
+                            value = withContext(kotlinx.coroutines.Dispatchers.Default) { plainTextOf(item) }
+                        }
+                    }
+                    val plain = plainState.value.orEmpty()
                     val selfResNum = remember(plain) {
                         // No 抽出を寛容に（ドット任意・全角許容・空白改行許容）
                         Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(plain)?.groupValues?.getOrNull(2)
@@ -771,7 +785,19 @@ fun DetailListCompose(
 
     // 本文タップメニュー（返信 / 確認 / NG）
     bodyForDialog?.let { src ->
-        val plain = plainTextOf(src)
+        val plainState = produceState<String?>(
+            initialValue = plainTextCache[src.id],
+            key1 = src.id,
+            key2 = plainTextCache[src.id]
+        ) {
+            val cached = plainTextCache[src.id]
+            if (cached != null) {
+                value = cached
+            } else {
+                value = withContext(kotlinx.coroutines.Dispatchers.Default) { plainTextOf(src) }
+            }
+        }
+        val plain = plainState.value.orEmpty()
         val bodyOnly = extractBodyOnlyPlain(plain)
         val source = if (bodyOnly.isNotBlank()) bodyOnly else plain
         val quoted = source.lines().joinToString("\n") { ">" + it }
