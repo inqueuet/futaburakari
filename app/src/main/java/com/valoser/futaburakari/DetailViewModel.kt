@@ -87,6 +87,7 @@ data class DownloadConflictRequest(
 class DetailViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val networkClient: NetworkClient,
+    private val metadataCache: MetadataCache,
 ) : ViewModel() {
 
     /** NG適用後の表示用リストを流すフロー（UI購読用）。 */
@@ -761,7 +762,7 @@ class DetailViewModel @Inject constructor(
      * - `file://` の場合、EXIF(UserComment) にも書き戻し（上書き）し、後続の再抽出を安定化。
      * - 動画は対象外。
      */
-    private fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
+    private suspend fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
         // 段階反映: 各ジョブ完了ごとにチャンネルへ送り、一定間隔でまとめて適用
         // バッファサイズを制限してメモリ使用量を制御
         val maxBufferSize = maxOf(100, contentList.size / 10) // 最小100、最大でアイテム数の10%
@@ -771,13 +772,14 @@ class DetailViewModel @Inject constructor(
         contentList.forEach { content ->
             when (content) {
                 is DetailContent.Image -> {
-                    // プロンプト情報が既に存在し、かつキャッシュにも存在する場合のみスキップ
-                    if (!content.prompt.isNullOrBlank()) {
-                        // キャッシュの存在確認
-                        val cachedPrompt = runCatching {
-                            MetadataCache(appContext).get(content.imageUrl)
-                        }.getOrNull()
+                    val hasPrompt = !content.prompt.isNullOrBlank()
+                    val cachedPrompt = if (hasPrompt) {
+                        withContext(Dispatchers.IO) {
+                            runCatching { metadataCache.get(content.imageUrl) }.getOrNull()
+                        }
+                    } else null
 
+                    if (hasPrompt) {
                         if (!cachedPrompt.isNullOrBlank()) {
                             Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - has prompt and cache")
                             return@forEach
