@@ -362,16 +362,18 @@ class DetailActivity : BaseActivity() {
                 viewModel.detailContent.collect { list ->
 
             // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
-            runCatching {
+            try {
                 val latestReplyNo = list.count { it is DetailContent.Text }
                 val threadUrl = currentUrl
                 if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
                     HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
                 }
+            } catch (_: Exception) {
+                // 例外は無視して UI 更新継続
             }
 
             // 履歴のサムネイル更新（OPの画像のみを採用）
-            runCatching {
+            try {
                 val firstTextIndex = list.indexOfFirst { it is DetailContent.Text }
                 val media = if (firstTextIndex >= 0) {
                     // OPレスの直後の画像/動画を探す（次のTextレスが現れるまで）
@@ -408,6 +410,8 @@ class DetailActivity : BaseActivity() {
                         HistoryManager.clearThumbnail(this@DetailActivity, threadUrl)
                     }
                 }
+            } catch (_: Exception) {
+                // 例外は無視して UI 更新継続
             }
 
             // Compose側は LiveData を直接購読しているため、ここでのAdapter更新は不要

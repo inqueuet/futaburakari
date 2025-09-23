@@ -386,7 +386,7 @@ class DetailViewModel @Inject constructor(
                     // キャッシュ由来でも画像プロンプト抽出を再試行（オフライン時の復元用）
                     updateMetadataInBackground(sanitizedCached, url)
                     // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映（OPの画像のみ）
-                    runCatching {
+                    try {
                         val firstTextIndex = cached.indexOfFirst { it is DetailContent.Text }
                         val media = if (firstTextIndex >= 0) {
                             // OPレスに直接関連付けられた画像/動画のみを取得
@@ -442,6 +442,8 @@ class DetailViewModel @Inject constructor(
                             Log.d("DetailViewModel", "No OP thumbnail found - clearing history thumbnail")
                             HistoryManager.clearThumbnail(appContext, url)
                         }
+                    } catch (_: Exception) {
+                        Log.w("DetailViewModel", "Failed to update cached thumbnail for $url")
                     }
                     _error.value = null
                 } else {
@@ -452,7 +454,7 @@ class DetailViewModel @Inject constructor(
                     if (!reconstructed.isNullOrEmpty()) {
                         // アーカイブ扱いにしてサムネも反映
                         runCatching { HistoryManager.markArchived(appContext, url) }
-                        runCatching {
+                        try {
                             val firstTextIndex = reconstructed.indexOfFirst { it is DetailContent.Text }
                             val media = if (firstTextIndex >= 0) {
                                 // OPレスに直接関連付けられた画像/動画のみを取得
@@ -507,6 +509,8 @@ class DetailViewModel @Inject constructor(
                                 Log.d("DetailViewModel", "No OP archive thumbnail found - clearing history thumbnail")
                                 HistoryManager.clearThumbnail(appContext, url)
                             }
+                        } catch (_: Exception) {
+                            Log.w("DetailViewModel", "Failed to update archive thumbnail for $url")
                         }
                         val sanitizedReconstructed = setRawContentSanitized(reconstructed)
                         applyNgAndPostAsync()

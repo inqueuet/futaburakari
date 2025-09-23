@@ -65,7 +65,8 @@ class HistoryActivity : BaseActivity() {
                     }
                     // 自動クリーンアップ: ユーザー設定の上限(MB)を超えないよう、
                     // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
-                    runCatching {
+                    val cleanedEntries = mutableListOf<com.valoser.futaburakari.HistoryEntry>()
+                    try {
                         val p = PreferenceManager.getDefaultSharedPreferences(this@HistoryActivity)
 
                         // 新しいパーセンテージベース設定を優先、レガシーMB設定をフォールバック
@@ -84,8 +85,19 @@ class HistoryActivity : BaseActivity() {
                             // ディスク走査/削除はIOスレッドで実行
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                 cm.enforceLimit(limitBytes, base) { entry ->
-                                    HistoryManager.clearThumbnail(this@HistoryActivity, entry.url)
+                                    cleanedEntries += entry
                                 }
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // クリーンアップ処理中の例外は握りつぶす
+                    }
+                    if (cleanedEntries.isNotEmpty()) {
+                        cleanedEntries.forEach { entry ->
+                            try {
+                                HistoryManager.clearThumbnail(this@HistoryActivity, entry.url)
+                            } catch (_: Exception) {
+                                // サムネイルの更新失敗は無視
                             }
                         }
                     }

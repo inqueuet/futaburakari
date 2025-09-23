@@ -5,6 +5,10 @@ import android.content.Intent
 import android.content.SharedPreferences
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 履歴データの読み書き・更新・並び替えを担うマネージャ。
@@ -19,6 +23,8 @@ object HistoryManager {
     private const val PREFS_NAME = "com.valoser.futaburakari.history"
     private const val KEY_HISTORY = "history_list"
     const val ACTION_HISTORY_CHANGED = "com.valoser.futaburakari.ACTION_HISTORY_CHANGED"
+
+    private val historyMutex = Mutex()
 
     // 履歴保存先の SharedPreferences を取得
     private fun prefs(context: Context): SharedPreferences =
@@ -132,38 +138,46 @@ object HistoryManager {
      * - 旧キーが見つかった場合は現行キーへ差し替え
      * - 値が変化したときのみ保存/通知
      */
-    fun updateThumbnail(context: Context, url: String, thumbnailUrl: String) {
-        val key = UrlNormalizer.threadKey(url)
-        val legacyKey = UrlNormalizer.legacyThreadKey(url)
-        val list = load(context)
-        var idx = list.indexOfFirst { it.key == key }
-        if (idx < 0 && legacyKey != key) {
-            idx = list.indexOfFirst { it.key == legacyKey }
-            if (idx >= 0) {
-                // 旧キーであれば最新キーへ差し替える
-                val e = list[idx]
-                list[idx] = e.copy(key = key)
-            }
-        }
-        if (idx >= 0) {
-            val e = list[idx]
-            if (e.thumbnailUrl != thumbnailUrl) {
-                list[idx] = e.copy(thumbnailUrl = thumbnailUrl)
-                save(context, list)
+    suspend fun updateThumbnail(context: Context, url: String, thumbnailUrl: String) {
+        withContext(Dispatchers.IO) {
+            historyMutex.withLock {
+                val key = UrlNormalizer.threadKey(url)
+                val legacyKey = UrlNormalizer.legacyThreadKey(url)
+                val list = load(context)
+                var idx = list.indexOfFirst { it.key == key }
+                if (idx < 0 && legacyKey != key) {
+                    idx = list.indexOfFirst { it.key == legacyKey }
+                    if (idx >= 0) {
+                        // 旧キーであれば最新キーへ差し替える
+                        val e = list[idx]
+                        list[idx] = e.copy(key = key)
+                    }
+                }
+                if (idx >= 0) {
+                    val e = list[idx]
+                    if (e.thumbnailUrl != thumbnailUrl) {
+                        list[idx] = e.copy(thumbnailUrl = thumbnailUrl)
+                        save(context, list)
+                    }
+                }
             }
         }
     }
 
     // サムネイルをクリア（自動クリーンアップで媒体削除したときなど）
-    fun clearThumbnail(context: Context, url: String) {
-        val key = UrlNormalizer.threadKey(url)
-        val list = load(context)
-        val idx = list.indexOfFirst { it.key == key }
-        if (idx >= 0) {
-            val e = list[idx]
-            if (e.thumbnailUrl != null) {
-                list[idx] = e.copy(thumbnailUrl = null)
-                save(context, list)
+    suspend fun clearThumbnail(context: Context, url: String) {
+        withContext(Dispatchers.IO) {
+            historyMutex.withLock {
+                val key = UrlNormalizer.threadKey(url)
+                val list = load(context)
+                val idx = list.indexOfFirst { it.key == key }
+                if (idx >= 0) {
+                    val e = list[idx]
+                    if (e.thumbnailUrl != null) {
+                        list[idx] = e.copy(thumbnailUrl = null)
+                        save(context, list)
+                    }
+                }
             }
         }
     }
@@ -171,25 +185,29 @@ object HistoryManager {
     // 取得結果の反映（バックグラウンド更新などから呼び出し）
     // 最新レス番号が増えている場合に更新時刻/未読数/既知番号を反映。
     // 変化がなくても最新番号のみ更新する場合がある。
-    fun applyFetchResult(context: Context, url: String, latestReplyNo: Int) {
-        val key = UrlNormalizer.threadKey(url)
-        val list = load(context)
-        val now = System.currentTimeMillis()
-        val idx = list.indexOfFirst { it.key == key }
-        if (idx >= 0) {
-            val e = list[idx]
-            if (latestReplyNo > e.lastKnownReplyNo) {
-                val unread = (latestReplyNo - maxOf(e.lastViewedReplyNo, 0)).coerceAtLeast(0)
-                list[idx] = e.copy(
-                    lastUpdatedAt = now,
-                    lastKnownReplyNo = latestReplyNo,
-                    unreadCount = unread
-                )
-                save(context, list)
-            } else if (latestReplyNo > 0 && latestReplyNo != e.lastKnownReplyNo) {
-                // 変化はないが最新番号を追従（未読は据え置き）
-                list[idx] = e.copy(lastKnownReplyNo = latestReplyNo)
-                save(context, list)
+    suspend fun applyFetchResult(context: Context, url: String, latestReplyNo: Int) {
+        withContext(Dispatchers.IO) {
+            historyMutex.withLock {
+                val key = UrlNormalizer.threadKey(url)
+                val list = load(context)
+                val now = System.currentTimeMillis()
+                val idx = list.indexOfFirst { it.key == key }
+                if (idx >= 0) {
+                    val e = list[idx]
+                    if (latestReplyNo > e.lastKnownReplyNo) {
+                        val unread = (latestReplyNo - maxOf(e.lastViewedReplyNo, 0)).coerceAtLeast(0)
+                        list[idx] = e.copy(
+                            lastUpdatedAt = now,
+                            lastKnownReplyNo = latestReplyNo,
+                            unreadCount = unread
+                        )
+                        save(context, list)
+                    } else if (latestReplyNo > 0 && latestReplyNo != e.lastKnownReplyNo) {
+                        // 変化はないが最新番号を追従（未読は据え置き）
+                        list[idx] = e.copy(lastKnownReplyNo = latestReplyNo)
+                        save(context, list)
+                    }
+                }
             }
         }
     }
