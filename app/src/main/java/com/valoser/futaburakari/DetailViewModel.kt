@@ -1050,19 +1050,28 @@ class DetailViewModel @Inject constructor(
      * 併せて生データのキャッシュ保存と、表示状態のアーカイブスナップショット保存を行う。
      */
     private suspend fun applyNgAndPostAsync() {
-        ngStore.cleanup()
-        val rules = ngStore.getRules()
+        val rules = ngStore.cleanupAndGetRules()
         if (rules.isEmpty()) {
-            withContext(Dispatchers.Main) {
-                _detailContent.value = rawContent
-                buildPlainTextCacheAsync()
-                recomputeSearchState()
-            }
+            postRawContent()
             return
         }
 
-        val filtered = filterByNgRulesOptimized(rawContent, rules)
+        val filtered = withContext(Dispatchers.Default) {
+            filterByNgRulesOptimized(rawContent, rules)
+        }
 
+        postFilteredContent(filtered)
+    }
+
+    private suspend fun postRawContent() {
+        withContext(Dispatchers.Main) {
+            _detailContent.value = rawContent
+            buildPlainTextCacheAsync()
+            recomputeSearchState()
+        }
+    }
+
+    private suspend fun postFilteredContent(filtered: List<DetailContent>) {
         withContext(Dispatchers.Main) {
             _detailContent.value = filtered
             buildPlainTextCacheAsync()
