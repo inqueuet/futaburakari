@@ -361,14 +361,7 @@ class ImageEditActivity : BaseActivity() {
                 prompt = try {
                     MetadataExtractor.extract(this@ImageEditActivity, imageUri.toString(), networkClient)
                 } catch (e: Exception) {
-                    Log.e("ImageEditActivity", "Failed to load image", e)
-                val userMessage = when (e) {
-                    is SecurityException -> "画像へのアクセス権限がありません"
-                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
-                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
-                    else -> "画像の読み込みに失敗しました"
-                }
-                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
+                    Log.e("ImageEditActivity", "Failed to extract metadata", e)
                     null
                 }
             }
@@ -414,28 +407,14 @@ class ImageEditActivity : BaseActivity() {
                                 exif.saveAttributes()
                             }
                         } catch (e: Exception) {
-                            Log.e("ImageEditActivity", "Failed to load image", e)
-                val userMessage = when (e) {
-                    is SecurityException -> "画像へのアクセス権限がありません"
-                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
-                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
-                    else -> "画像の読み込みに失敗しました"
-                }
-                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
+                            Log.e("ImageEditActivity", "Failed to save EXIF metadata", e)
                         }
                     }
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@ImageEditActivity, getString(R.string.save_success), Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    Log.e("ImageEditActivity", "Failed to load image", e)
-                val userMessage = when (e) {
-                    is SecurityException -> "画像へのアクセス権限がありません"
-                    is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
-                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
-                    else -> "画像の読み込みに失敗しました"
-                }
-                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
+                    Log.e("ImageEditActivity", "Failed to save image", e)
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@ImageEditActivity, "${getString(R.string.save_failed)}: ${e.message}", Toast.LENGTH_LONG).show()
                     }
