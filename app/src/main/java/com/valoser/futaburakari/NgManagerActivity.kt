@@ -33,8 +33,8 @@ class NgManagerActivity : BaseActivity() {
          */
         const val EXTRA_LIMIT_RULE_TYPE = "extra_limit_rule_type"
         /**
-         * タイトル表示有無を指定するエクストラキー。
-         * `true` でタイトル関連オプションを非表示にします。
+         * タイトル関連オプションの表示有無を指定するエクストラキー。
+         * `true` を渡すとタイトル向けの項目を非表示にします。
          */
         const val EXTRA_HIDE_TITLE = "extra_hide_title"
     }

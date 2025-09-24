@@ -7,7 +7,8 @@ import com.google.gson.reflect.TypeToken
 
 /**
  * Manages persistence for bookmarks and the currently selected bookmark URL.
- * Data is stored in `SharedPreferences` with the bookmark list serialized via Gson.
+ * Data is stored in `SharedPreferences` with the bookmark list serialized via Gson, and the list
+ * is automatically seeded with a pair of default boards the first time it is requested.
  */
 object BookmarkManager {
 

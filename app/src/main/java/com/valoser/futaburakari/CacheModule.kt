@@ -9,7 +9,8 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 /**
- * キャッシュ関連の依存を提供する Hilt モジュール。
+ * メタデータキャッシュの依存を提供する Hilt モジュール。
+ * `MetadataCache` をアプリケーションスコープのシングルトンとして公開する。
  */
 @Module
 @InstallIn(SingletonComponent::class)

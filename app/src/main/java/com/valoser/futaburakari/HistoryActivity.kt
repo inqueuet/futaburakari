@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
  * - UI状態（未読のみ/ソート種別）を `SharedPreferences` に保存・復元
  * - `HistoryManager` から履歴を取得し、フィルタ/ソートして表示
  * - 変更ブロードキャスト（`ACTION_HISTORY_CHANGED`）を受けて再計算
- * - 自動クリーンアップ設定（MB上限）に応じて詳細キャッシュ/サムネイルを整理
+ * - 自動クリーンアップ設定（パーセンテージ優先・旧MB設定をフォールバック）に応じて詳細キャッシュ/サムネイルを整理
  * - アイテム削除、全削除の操作に応じて履歴・キャッシュ・関連ワーカーを後始末
  */
 class HistoryActivity : BaseActivity() {
@@ -63,7 +63,7 @@ class HistoryActivity : BaseActivity() {
                     val base = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         HistoryManager.getAll(this@HistoryActivity)
                     }
-                    // 自動クリーンアップ: ユーザー設定の上限(MB)を超えないよう、
+                    // 自動クリーンアップ: ユーザー設定の上限（パーセンテージ設定を優先し、旧MB設定をフォールバック）を超えないよう、
                     // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
                     val cleanedEntries = mutableListOf<com.valoser.futaburakari.HistoryEntry>()
                     try {

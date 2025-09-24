@@ -82,6 +82,9 @@ data class DownloadConflictRequest(
  *   これにより ID がない投稿でも No が安定して解決され、UI 側の「そうだね」判定・送信に利用できる。
  *   なお UI 側（DetailList）では表示テキストの正規化により、`ID:` と `No` の隣接や日付直後の `No` 隣接へ空白補正を行い、
  *   可読性とクリック検出の安定化を図っている（ViewModel は生HTMLを保持し、検出はHTML/プレーン双方から頑健に行う）。
+ * - 画像一括ダウンロード: 既存ファイル検出や競合ダイアログ、進捗共有の仕組みを提供。
+ * - メモリ監視と NG フィルタキャッシュ: 利用状況に応じてキャッシュ縮小や Coil キャッシュのクリーンアップを実施。
+ * - 検索状態と「そうだね」送信のフローを管理し、Compose UI へ即時反映する。
  */
 @HiltViewModel
 class DetailViewModel @Inject constructor(
@@ -263,7 +266,7 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * メモリ使用量を強制的にチェックして警告を表示する
+     * メモリ使用量を即時に測定し、デバッグ表示用の概要文字列を返す。
      */
     fun forceMemoryCheck(): String {
         val runtime = Runtime.getRuntime()

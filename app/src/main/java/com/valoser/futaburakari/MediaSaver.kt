@@ -144,6 +144,7 @@ object MediaSaver {
     }
 
     // 共通の保存処理（画像/動画）。呼び出し元で種別に応じたURIとベースディレクトリを指定する。
+    // subfolder はレガシー互換の名残で、実際の保存先は Futaburakari フォルダ配下で固定。
     private suspend fun saveMedia(
         context: Context,
         url: String,
@@ -245,6 +246,7 @@ object MediaSaver {
     }
 
     // 重複チェック付きの共通保存処理（画像/動画）。既存ファイルがある場合は false を返す。
+    // subfolder 引数は互換目的で維持されているのみで、保存先は Futaburakari フォルダ固定。
     private suspend fun saveMediaIfNotExists(
         context: Context,
         url: String,

@@ -2,7 +2,7 @@ package com.valoser.futaburakari
 
 /**
  * スレ詳細画面（Composeリスト）およびキャッシュ層で扱うコンテンツの共通モデル。
- * Image/Text/Video/ThreadEndTime などの種類を識別するための sealed クラス。
+ * 各要素は `id` を安定キーとして持ち、Image/Text/Video/ThreadEndTime などの種別を sealed クラスで表現する。
  */
 sealed class DetailContent {
     abstract val id: String
@@ -15,8 +15,8 @@ sealed class DetailContent {
         val fileName: String? = null
     ) : DetailContent()
 
-        /** HTML本文を含むテキストコンテンツ。`resNum` は投稿番号等（任意）。 */
-        data class Text(
+    /** HTML本文を含むテキストコンテンツ。`resNum` は投稿番号等（任意）。 */
+    data class Text(
         override val id: String,
         val htmlContent: String,
         val resNum: String? = null

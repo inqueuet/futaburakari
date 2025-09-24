@@ -108,9 +108,10 @@ object HistoryManager {
     /**
      * すべての履歴を取得。
      *
-     * - 未読ありを優先
-     * - 未読あり同士: `lastUpdatedAt` 降順
-     * - 未読なし同士: `lastViewedAt` 降順
+     * - 未読がある項目（`unreadCount > 0`）を優先
+     * - 未読あり同士: `lastUpdatedAt` の降順で並べ、同値は `lastViewedAt` で安定化
+     * - 未読なし同士: `lastViewedAt` の降順
+     * - いずれの場合も最終的に `lastViewedAt` を比較して既知の閲覧順を維持
      */
     fun getAll(context: Context): List<HistoryEntry> {
         val list = load(context)

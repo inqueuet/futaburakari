@@ -43,7 +43,7 @@ object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定（ユーザー設定で可変） ======
-    // AppPreferences の並列度(1..4)を粗く 1 接続に写像して、
+    // AppPreferences の並列度(1..4)を最大3接続に丸めて適用し、
     // HEAD/Range リクエストの同時実行を抑制する（端末/サーバ負荷のバランスを優先）。
     @Volatile
     private var currentPermits: Int = 1

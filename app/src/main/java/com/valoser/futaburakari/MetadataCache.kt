@@ -18,7 +18,7 @@ import kotlin.jvm.Volatile
  * メタデータ抽出結果の永続キャッシュ（uriOrUrl -> prompt）。
  *
  * - SharedPreferences を利用し JSON 形式で key -> Entry(value, ts) を管理
- * - 最大エントリ数を超過時はタイムスタンプベースの LRU 削除を実行
+ * - 最大エントリ数を超過した場合は保存時刻が古い順に削除（タイムスタンプを LRU 代替として利用）
  * - 頻繁な SharedPreferences アクセスを避けるためインメモリ LRU キャッシュを併用
  */
 class MetadataCache(context: Context) {

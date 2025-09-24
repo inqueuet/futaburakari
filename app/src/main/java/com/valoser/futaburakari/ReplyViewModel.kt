@@ -20,7 +20,7 @@ import java.util.zip.CRC32
  * 返信画面の ViewModel。
  *
  * - 最初は最低限のフィールドのみで送信し、失敗した場合に（URL が指定されていれば）
- *   TokenProvider から hidden/token を取得して再送を試みます。
+ *   TokenProvider から hidden/token を取得して再送を試みます（未設定の場合はその時点でエラーとする）。
  * - 「操作が早すぎます。あとN秒」を検出した場合は自動的に待機して、その段階内で 1 回だけ再試行します。
  *  （初回送信と再送のそれぞれで一度ずつ自動再試行の可能性があります。）
  * - 全体処理は添付ファイルの有無とサイズに応じて 15〜120 秒で打ち切ります。トークン取得自体には 5 秒の個別タイムアウトを設けています。
@@ -46,7 +46,7 @@ class ReplyViewModel @Inject constructor(
     sealed interface UiState {
         data object Idle : UiState
         data object Loading : UiState
-        /** 成功時にサーバーから受領したメッセージ（例: 送信完了 No.xxx）。 */
+        /** 成功時にサーバーから受領した本文（HTML や "送信完了" のテキストなど）。 */
         data class Success(val html: String) : UiState
         /** 失敗時のメッセージ。 */
         data class Error(val message: String) : UiState

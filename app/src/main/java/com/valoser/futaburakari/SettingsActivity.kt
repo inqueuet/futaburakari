@@ -7,7 +7,8 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 
 /**
  * アプリの設定画面を表示する `Activity`。
- * Jetpack Compose の `SettingsScreen` を表示し、戻る操作は `onBackPressedDispatcher` に委譲する。
+ * `FutaburakariTheme(expressive = true)` 上で `SettingsScreen` を描画し、戻る操作は
+ * `onBackPressedDispatcher` に委譲する。
  */
 class SettingsActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

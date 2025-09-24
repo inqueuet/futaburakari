@@ -50,6 +50,7 @@ import com.valoser.futaburakari.search.RecentSearchStore
  * - `DetailViewModel` を用いてスレッドの詳細を読み込み、更新を監視
  * - スレッドURLごとにリストのスクロール位置を保存/復元
  * - 返信・削除・NGフィルタ更新・検索・ソーダネの操作を処理
+ * - 画像一括ダウンロードと競合解決ダイアログをトリガーし、進捗フローをUIへ渡す
  * - 履歴（最新レス番号とサムネイル）を更新し、スナップショット取得をトリガー
  * - ユーザー設定（テーマ/広告）や戻る操作のUXを反映
  * - 画像編集の起動（トップバーの「画像編集」アクションから `ImagePickerActivity` へ遷移）
@@ -317,8 +318,7 @@ class DetailActivity : BaseActivity() {
      */
     override fun onStart() {
         super.onStart()
-        // 設定変更（広告ON/OFF）を戻り時にも反映
-        // レガシーUI使用時のみバナー制御（Compose移行時はCompose側で表示）
+        // 設定変更（広告ON/OFF）を戻り時にも反映し、Compose 側のバナー表示状態を最新化
         setupAdBanner()
         // 設定変更の監視を開始
         prefs.registerOnSharedPreferenceChangeListener(prefListener)

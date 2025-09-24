@@ -98,8 +98,8 @@ class DetailCacheManager(private val context: Context) {
 
     /**
      * 大量データ向けのメモリ効率的なJSON書き込み処理
-     * - 真のストリーミング：JsonWriter使用でメモリ使用量を大幅削減
-     * - 各要素をGson個別処理せず、直接JSON構造を出力
+     * - JsonWriter を使った逐次書き込みでメモリ使用量を抑制
+     * - 各要素を Gson の型アダプタでシリアライズしつつ、適宜 flush してメモリ保持時間を短縮
      */
     private fun writeJsonStreamOptimized(cacheFile: File, cachedData: CachedDetails) {
         try {

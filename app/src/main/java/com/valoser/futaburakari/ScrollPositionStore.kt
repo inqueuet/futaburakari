@@ -5,7 +5,7 @@ import android.content.Context
 /**
  * リストのスクロール位置を `SharedPreferences` に保存・復元するためのストア。
  * URL をキーに、先頭可視アイテムの位置とピクセルオフセットを保持します。
- * 旧仕様で保存されたキー（ドメイン無し）にもフォールバックして読み出します。
+ * 旧仕様で保存されたキー（スキーム無しのキー形式）にもフォールバックして読み出します。
  */
 class ScrollPositionStore(context: Context) {
     // スクロール位置専用の SharedPreferences。名前は "scroll_position_prefs"。
@@ -34,14 +34,14 @@ class ScrollPositionStore(context: Context) {
      * 保存されたスクロール状態を取得します。
      * @param url 取得したいスクロール状態の URL
      * @return 位置とオフセットのペア。
-     * 保存が存在しない場合はドメイン無しの旧キーへフォールバックし、
+     * 保存が存在しない場合はスキーム無しの旧キーへフォールバックし、
      * それでも見つからなければ (0, 0) を返します。
      */
     fun getScrollState(url: String): Pair<Int, Int> {
         var position = prefs.getInt(KEY_PREFIX_POSITION + url, Int.MIN_VALUE)
         var offset = prefs.getInt(KEY_PREFIX_OFFSET + url, Int.MIN_VALUE)
         if (position == Int.MIN_VALUE || offset == Int.MIN_VALUE) {
-            // 旧キー（ドメイン無し）へのフォールバック
+            // 旧キー（スキーム無し形式）へのフォールバック
             val legacy = try { UrlNormalizer.legacyThreadKey(url) } catch (_: Exception) { url }
             position = prefs.getInt(KEY_PREFIX_POSITION + legacy, 0)
             offset = prefs.getInt(KEY_PREFIX_OFFSET + legacy, 0)

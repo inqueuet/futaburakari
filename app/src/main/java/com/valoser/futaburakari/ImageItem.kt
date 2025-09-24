@@ -39,6 +39,7 @@ data class ImageItem(
      * 1) `lastVerifiedFullUrl` があれば最優先
      * 2) `fullImageUrl` が未失敗かつ `preferPreviewOnly` が無効ならそれを採用
      * 3) それ以外は `previewUrl`
+     * `preferPreviewOnly` は一時的にプレビュー固定するためのフラグで、実描画が確認できた URL (`lastVerifiedFullUrl`) には適用しない。
      */
     fun getEffectiveUrl(): String {
         return when {

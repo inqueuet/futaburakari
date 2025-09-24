@@ -63,7 +63,7 @@ import java.net.URL
  * - NGルール、グリッド列数、フォントスケール、配色モードなどの設定変更を反映。
  * - Futaba の catset（カタログ表示設定）を板単位で適用し、3日間の TTL で再適用を抑制。
  * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応。
- * - TopBar: タイトルは表示せず、サブタイトル（選択中ブックマーク名）のみを大きめに表示する。
+ * - TopBar: Compose 側 (`MainCatalogScreen`) でタイトル非表示、サブタイトル（選択中ブックマーク名）のみを大きめに表示。
  *
  * 関連:
  * - UI: `ui.compose.MainCatalogScreen`

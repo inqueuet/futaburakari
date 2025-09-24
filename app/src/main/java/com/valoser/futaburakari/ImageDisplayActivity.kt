@@ -9,8 +9,9 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 /**
  * 単一画像を Compose で表示するアクティビティ。
  *
- * - 画像URI（`EXTRA_IMAGE_URI`）と補助テキスト（`EXTRA_PROMPT_INFO`）を受け取り表示
- * - 上部UIは Compose 側で提供。戻る操作は `onBackPressedDispatcher` に委譲
+ * - 画像URI（`EXTRA_IMAGE_URI`）と補助テキスト（`EXTRA_PROMPT_INFO`）を受け取り `null`/空文字でも安全に扱う
+ * - `FutaburakariTheme(expressive = true)` 上で `ImageDisplayScreen` を構築し、トップバーやコピー操作はコンポーズ側へ委譲
+ * - 戻る操作は `onBackPressedDispatcher` に委譲してシステム戻ると一貫させる
  */
 class ImageDisplayActivity : BaseActivity() {
 

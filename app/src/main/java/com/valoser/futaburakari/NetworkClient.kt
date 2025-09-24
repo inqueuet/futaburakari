@@ -357,7 +357,7 @@ class NetworkClient(
     /**
      * カタログ設定を POST で適用する。
      *
-     * @param boardBaseUrl 板名のベース URL（末尾は `futaba.php` まで）
+     * @param boardBaseUrl 板名のベース URL。末尾は `/` など `futaba.php` の手前までを指定し、この関数側で `futaba.php?mode=catset` を付加します。
      * @param settings `catset` に渡すパラメータ群
      */
     suspend fun applySettings(boardBaseUrl: String, settings: Map<String, String>) {
