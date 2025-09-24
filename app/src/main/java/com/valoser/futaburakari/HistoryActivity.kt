@@ -22,17 +22,23 @@ import com.valoser.futaburakari.ui.compose.HistoryScreen
 import com.valoser.futaburakari.ui.compose.HistorySortMode
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import kotlinx.coroutines.launch
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import com.valoser.futaburakari.cache.DetailCacheManager
 
 /**
  * 履歴一覧画面のアクティビティ。
  *
- * - UI状態（未読のみ/ソート種別）を `SharedPreferences` に保存・復元
- * - `HistoryManager` から履歴を取得し、フィルタ/ソートして表示
- * - 変更ブロードキャスト（`ACTION_HISTORY_CHANGED`）を受けて再計算
- * - 自動クリーンアップ設定（パーセンテージ優先・旧MB設定をフォールバック）に応じて詳細キャッシュ/サムネイルを整理
- * - アイテム削除、全削除の操作に応じて履歴・キャッシュ・関連ワーカーを後始末
+ * - UI状態（未読のみ/ソート種別）を専用 `SharedPreferences` に保存し、復帰時に復元。
+ * - `HistoryManager` から履歴を取得して未読/ソート条件を適用し、合間でキャッシュクリーンアップ結果に応じたサムネイル整理も行う。
+ * - `ACTION_HISTORY_CHANGED` ブロードキャストやライフサイクルの ON_RESUME で再計算して最新状態を表示。
+ * - 項目削除/全削除では履歴・キャッシュ・`ThreadMonitorWorker` を連動して後始末する。
  */
+@AndroidEntryPoint
 class HistoryActivity : BaseActivity() {
+
+    @Inject
+    lateinit var detailCacheManager: DetailCacheManager
 
     /**
      * 履歴画面のCompose UIを初期化し、
@@ -81,7 +87,7 @@ class HistoryActivity : BaseActivity() {
                         }
 
                         if (limitBytes > 0) {
-                            val cm = com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity)
+                            val cm = detailCacheManager
                             // ディスク走査/削除はIOスレッドで実行
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                 cm.enforceLimit(limitBytes, base) { entry ->
@@ -198,7 +204,7 @@ class HistoryActivity : BaseActivity() {
                         // 当該URLのキャッシュ/アーカイブを無効化・削除してから再計算。
                         HistoryManager.delete(this@HistoryActivity, item.key)
                         com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
-                        com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).apply {
+                        detailCacheManager.apply {
                             invalidateCache(item.url)
                             clearArchiveForUrl(item.url)
                         }
@@ -219,7 +225,7 @@ class HistoryActivity : BaseActivity() {
                                 showConfirm = false
                                 HistoryManager.clear(this@HistoryActivity)
                                 com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
-                                com.valoser.futaburakari.cache.DetailCacheManager(this@HistoryActivity).clearAllCache()
+                                detailCacheManager.clearAllCache()
                                 this@HistoryActivity.lifecycleScope.launch {
                                     computeAndSet()
                                 }

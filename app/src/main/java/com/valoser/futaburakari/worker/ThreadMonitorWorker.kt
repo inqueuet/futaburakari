@@ -1,7 +1,7 @@
 /**
  * スレ URL を監視してレス内容と媒体をアーカイブする WorkManager 用 Worker。
- * - 定期監視と単発スナップショットの両方を受け付け、キャッシュ/履歴を更新します。
- * - 取得したメディアはローカルへ保存し、既存の `prompt` を温存したままマージします。
+ * - 定期監視と単発スナップショットの両方を受け付け、常時有効なバックグラウンド監視としてキャッシュ/履歴を更新。
+ * - 取得したメディアはローカルへ保存し、既存の `prompt` を温存したままマージする。
  */
 package com.valoser.futaburakari.worker
 
@@ -34,8 +34,8 @@ import java.io.File
  * 背景でスレ URL を監視し、媒体のアーカイブとキャッシュ/履歴更新を行う Worker。
  *
  * スケジューリング:
- * - URL ごとにユニークな OneTimeWork として起動。成功後は設定が有効なら再スケジュール。
- * - 即時スナップショット取得にも対応（設定 ON/OFF に関係なく実行）。
+ * - URL ごとにユニークな OneTimeWork として起動し、完了後は one-shot でない限り自動で再スケジュール。
+ * - 即時スナップショット取得にも対応（監視設定の有無に関係なく実行）。
  *
  * 主な処理:
  * 1) HTML を取得・パースして Text/Image/Video の直列リストを作成
@@ -52,6 +52,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val networkClient: NetworkClient,
+    private val cacheManager: DetailCacheManager,
 ) : CoroutineWorker(appContext, params) {
 
     /**
@@ -91,7 +92,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val parsed = parseContentFromDocument(doc, url)
 
             // 1.5) 既存キャッシュ/スナップショットのプロンプトをマージ（nullでの上書きを防止）
-            val cacheMgr = DetailCacheManager(applicationContext)
+            val cacheMgr = cacheManager
             val existing: List<DetailContent>? = cacheMgr.loadDetails(url) ?: cacheMgr.loadArchiveSnapshot(url)
             val merged = if (existing.isNullOrEmpty()) parsed else run {
                 val promptByName: Map<String, String> = existing.mapNotNull { dc ->
@@ -121,7 +122,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             }
 
             // 2) メディアを内部保存し、ローカル file: URI に差し替え（マージ後のリストを使用）
-            val archived = archiveMedia(applicationContext, url, merged)
+            val archived = archiveMedia(url, merged)
 
             // 3) キャッシュへ保存（置き換え保存） + アーカイブスナップショット保存
             val cm = cacheMgr
@@ -355,9 +356,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
      * 媒体をスレッド別のアーカイブディレクトリに保存し、URLをローカル file URI に差し替える。
      * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略。
      */
-    private suspend fun archiveMedia(context: Context, threadUrl: String, list: List<DetailContent>): List<DetailContent> {
-        val cache = DetailCacheManager(context)
-        val dir = cache.getArchiveDirForUrl(threadUrl)
+    private suspend fun archiveMedia(threadUrl: String, list: List<DetailContent>): List<DetailContent> {
+        val dir = cacheManager.getArchiveDirForUrl(threadUrl)
         fun fileFor(url: String): File {
             val ext = url.substringAfterLast('.', "")
             val name = url.sha256() + if (ext.isNotBlank()) ".${ext.lowercase()}" else ""

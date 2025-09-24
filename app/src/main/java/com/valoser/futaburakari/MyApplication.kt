@@ -26,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import androidx.preference.PreferenceManager
+import com.valoser.futaburakari.cache.DetailCacheManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import com.valoser.futaburakari.HistoryManager
 import okio.Path.Companion.toPath
@@ -34,13 +35,10 @@ import okio.Path.Companion.toPath
 /**
  * アプリ全体の初期化を担う `Application` 実装。
  *
- * - WorkManager の設定（HiltWorkerFactory/ログレベル/デフォルトプロセス名）
- * - OkHttp の安全なウォームアップ（初回リクエストの遅延を軽減）
- *   - DI の共有クライアントとは独立したダミー `OkHttpClient` を生成し、
- *     内部コンポーネント（例: PublicSuffixDatabase）を初期化するのみ（実通信なし）
- * - Coil 用 ImageLoader の提供（GIF/動画フレーム/SVG のデコードを有効化）
- *   - OkHttp クライアントは `@Named("coil")` の用途別クライアントを使用
- *   - Dispatcher はユーザー設定値（AppPreferences）で制御、2chan 系は軽い遅延（約 1ms）
+ * - WorkManager の設定（HiltWorkerFactory/ログレベル/デフォルトプロセス名）。
+ * - OkHttp の安全なウォームアップ（ダミークライアントで内部コンポーネントを先行初期化）。
+ * - Coil 用 ImageLoader の提供（用途別 OkHttp クライアントとメモリ/ディスクキャッシュ構成、デバッグビルド時のロガー対応）。
+ * - 起動時に履歴へ登録済みのスレッド監視を再スケジュールし、キャッシュ操作用のユーティリティも公開。
  */
 class MyApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
@@ -51,12 +49,12 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
     @Named("coil")
     lateinit var coilOkHttpClient: OkHttpClient // Coil 専用の OkHttpClient（Dispatcher は設定値、2chan は 遅延）
 
+    @Inject
+    lateinit var detailCacheManager: DetailCacheManager
+
     // アプリケーションスコープ（初期化の非同期実行に使用）
     private val supervisorJob = SupervisorJob()
     private val applicationScope = CoroutineScope(supervisorJob + Dispatchers.Default)
-
-    // グローバルリソース管理
-    private val cacheManager by lazy { com.valoser.futaburakari.cache.DetailCacheManager(this) }
 
     // Coilのメモリキャッシュクリア機能を追加
     companion object {
@@ -242,7 +240,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
         super.onTerminate()
         // アプリケーション終了時にリソースクリーンアップ
         try {
-            cacheManager.cleanup()
+            detailCacheManager.cleanup()
             supervisorJob.cancel()
         } catch (e: Exception) {
             Log.w("MyApplication", "Error during resource cleanup", e)

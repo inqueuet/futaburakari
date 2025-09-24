@@ -4,13 +4,15 @@ import android.content.Context
 import android.util.Log
 import com.valoser.futaburakari.DetailContent
 import com.google.gson.Gson
-import com.google.gson.GsonBuilder // GsonBuilder import
+import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
-// DetailContentTypeAdapterFactory が同一パッケージ or 適切にインポートされていることを前提に使用します。
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.Executors
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import javax.inject.Singleton
 import com.valoser.futaburakari.UrlNormalizer
 
 /**
@@ -25,13 +27,19 @@ data class CachedDetails(
 
 /**
  * スレッドの詳細内容および媒体アーカイブのオンディスクキャッシュを管理するクラス。
- * - 正規化済みスレURL（SHA-256）をキーに `DetailContent` のリストを JSON で保存/読込。
- * - 旧版との互換のためレガシーキー（ドメイン非含有）も読み込み・移行をサポート。
- * - スレ単位で媒体をアーカイブし、スナップショットが無い場合はファイルから最小限の詳細を再構成。
+ * - 正規化済みスレURL（SHA-256）をキーに `DetailContent` を保存し、チェックサムで差分検知して不要な書き換えを抑止。
+ * - 旧版との互換のためレガシーキー（ドメイン非含有）も読み込み・移行しつつ、存在すれば削除して整理する。
+ * - 大量データは `JsonWriter` によるストリーミング書き込みを用いてメモリ消費を抑制。
+ * - 媒体アーカイブ/スナップショットを扱い、必要に応じて再構成フォールバックや総容量の上限制御を行う。
  */
-class DetailCacheManager(private val context: Context) {
+@Singleton
+class DetailCacheManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
 
-    private val gson: Gson // ★ 初期化を init ブロックに移動
+    private val gson: Gson = GsonBuilder()
+        .registerTypeAdapterFactory(DetailContentTypeAdapterFactory())
+        .create()
     private val writeExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "DetailCacheManager-Writer").apply {
             isDaemon = true // デーモンスレッドとして設定
@@ -42,16 +50,6 @@ class DetailCacheManager(private val context: Context) {
     }
     private val archiveRoot: File by lazy {
         File(context.filesDir, "archive_media").apply { mkdirs() }
-    }
-
-    /**
-     * `DetailContent` の（逆）シリアライズに対応した Gson を生成する。
-     */
-    init {
-        gson = GsonBuilder()
-            .registerTypeAdapterFactory(DetailContentTypeAdapterFactory()) // Factory を登録
-            // .serializeNulls() // 必要であれば null も JSON に出力する設定
-            .create()
     }
 
     /**

@@ -67,30 +67,24 @@ data class DownloadConflictRequest(
 )
 
 /**
- * スレ詳細用の ViewModel。
+ * スレ詳細表示に関する状態と非同期処理を束ねる ViewModel。
  *
  * 機能概要:
- * - HTML を `DetailContent` 列（Text / Image / Video / ThreadEndTime）へパースし、NG適用後を `detailContent` に公開。
- * - キャッシュ戦略: 生データはディスクへ保存、表示はNG適用後。スナップショット（アーカイブ用）も併用。
- * - プロンプト永続化: 画像メタデータの段階抽出→反映ごとにキャッシュ/スナップショットを更新。
- *   - 表示状態（NG適用＋取得済みプロンプト）でスナップショットを保存し、dat落ち/オフライン復元性を向上。
- *   - `file://` のローカル画像には EXIF(UserComment) にも書き戻し（上書き）して再抽出の成功率を高める。
- * - 再取得時の揺れ対策: 既存表示のプロンプトを新リストへマージしてから表示更新（空で潰さない）。
- * - フォールバック: キャッシュ/スナップショット/アーカイブ再構成の各経路でも再抽出を走らせ、段階反映。
- * - 履歴更新: サムネイル/既読序数の更新、そうだね投稿、削除、検索状態の管理。
- * - レス番号抽出: OP はURL末尾、返信は本文HTML内の「No」表記から抽出（ドット有無/全角・空白/改行の差異に頑健）。
- *   これにより ID がない投稿でも No が安定して解決され、UI 側の「そうだね」判定・送信に利用できる。
- *   なお UI 側（DetailList）では表示テキストの正規化により、`ID:` と `No` の隣接や日付直後の `No` 隣接へ空白補正を行い、
- *   可読性とクリック検出の安定化を図っている（ViewModel は生HTMLを保持し、検出はHTML/プレーン双方から頑健に行う）。
- * - 画像一括ダウンロード: 既存ファイル検出や競合ダイアログ、進捗共有の仕組みを提供。
- * - メモリ監視と NG フィルタキャッシュ: 利用状況に応じてキャッシュ縮小や Coil キャッシュのクリーンアップを実施。
- * - 検索状態と「そうだね」送信のフローを管理し、Compose UI へ即時反映する。
+ * - HTML を `DetailContent` 列（Text / Image / Video / ThreadEndTime）へパースし、NG 適用後のリストを `detailContent` で公開。
+ * - キャッシュ戦略: `DetailCacheManager` と連携して生データをディスクへ保存しつつ、表示用は NG 適用済みを保持。スナップショットやアーカイブ再構成も活用。
+ * - プロンプト永続化: 画像メタデータを段階的に抽出してキャッシュ/スナップショットへ反映し、`file://` の場合は EXIF(UserComment) へも書き戻す。
+ * - 差分マージ: 再取得やバックグラウンド更新時に既存のプロンプトやレス状態をマージし、空値での上書きを避ける。
+ * - 履歴・フォールバック: 履歴サムネイル/未読数を更新しつつ、キャッシュ→スナップショット→アーカイブ復元の順でフォールバック読込を行う。
+ * - レス番号抽出と「そうだね」: OP/返信双方のレス番号を正規化し、送信・取得結果をフローで UI に反映。
+ * - 画像一括ダウンロード: 既存ファイル検出、競合解決ダイアログ、進捗共有を備えたダウンロードロジックを提供。
+ * - メモリ保護: 利用状況に応じて NG フィルタキャッシュの縮小や Coil キャッシュのクリーンアップを行い、検索状態も Compose へ共有する。
  */
 @HiltViewModel
 class DetailViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val networkClient: NetworkClient,
     private val metadataCache: MetadataCache,
+    private val cacheManager: DetailCacheManager,
 ) : ViewModel() {
 
     /** NG適用後の表示用リストを流すフロー（UI購読用）。 */
@@ -127,7 +121,6 @@ class DetailViewModel @Inject constructor(
     // 参照（Referer）は現在のスレURL（currentUrl）を使用し、成功時は更新通知でUIを反映。
     // resNum は parse 時に DetailContent.Text.resNum として保持しており、UI 側での行内パースが難しい場合のフォールバックに利用可能。
 
-    private val cacheManager = DetailCacheManager(appContext)
     private var currentUrl: String? = null
     // NG フィルタ適用前の生コンテンツを保持
     private var rawContent: List<DetailContent> = emptyList()

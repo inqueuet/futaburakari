@@ -1,7 +1,7 @@
 /**
  * アプリ設定画面の Compose 実装。
- * - 表示/ネットワーク/投稿/キャッシュ/広告/その他の各カテゴリの設定をまとめて提供します。
- * - 選択した項目は `SharedPreferences` やアプリ固有プリファレンスへ保存し、必要に応じて再描画します。
+ * - 表示/ネットワーク/投稿/キャッシュ/広告/その他の設定を1画面に集約し、必要に応じてアクティビティ再生成やトースト通知で反映。
+ * - 選択した項目は `SharedPreferences` や `AppPreferences` へ保存し、ストレージ上限のパーセンテージ変換などもその場で行う。
  */
 package com.valoser.futaburakari.ui.compose
 
@@ -73,7 +73,7 @@ import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.RuleType
-import com.valoser.futaburakari.cache.DetailCacheManager
+import com.valoser.futaburakari.cache.DetailCacheManagerProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,8 +84,8 @@ import kotlin.math.roundToInt
  * アプリの設定画面コンポーザブル。
  *
  * 概要:
- * - 表示/NG/投稿/キャッシュ/広告/その他の各セクションで設定を編集し、`SharedPreferences` に保存します。
- * - テーマやフォント倍率の変更は `Activity#recreate()` を呼び即時反映します。
+ * - 表示/NG/投稿/ネットワーク/キャッシュ/広告/その他の各セクションから `SharedPreferences` や `AppPreferences` の値を編集。
+ * - テーマやフォント倍率、Expressive×Dynamic Color の切替は `Activity#recreate()` で即時反映し、同時接続数などはトーストで案内。
  *
  * パラメータ:
  * - `onBack`: 上部ナビゲーション「戻る」押下時に呼ばれるハンドラ（画面を閉じる等）。
@@ -363,7 +363,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 scope.launch(Dispatchers.IO) {
                                     runCatching { imageLoader.memoryCache?.clear() }
                                     runCatching { imageLoader.diskCache?.clear() }
-                                    runCatching { DetailCacheManager(ctx).clearAllCache() }
+                                    runCatching { DetailCacheManagerProvider.get(ctx).clearAllCache() }
                                     withContext(Dispatchers.Main) {
                                         android.widget.Toast.makeText(ctx, "すべてのキャッシュを削除しました", android.widget.Toast.LENGTH_SHORT).show()
                                         clearingCache = false
