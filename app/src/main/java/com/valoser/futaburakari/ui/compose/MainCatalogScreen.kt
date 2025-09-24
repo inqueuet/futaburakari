@@ -5,6 +5,7 @@
  * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
  * - 体験: 可視範囲＋先読みの軽量プリフェッチでスクロールを滑らかに。
  * - 表示: カード下部にグラデーション＋タイトル、右下に返信数バッジ。
+ * - フィルタリング: OP画像なしスレッドは常時非表示に設定。
  * - エラー: フル画像の取得が失敗した場合は可能ならプレビューへフォールバックし、
  *          それも不可の場合は簡易プレースホルダを表示。
  *          404 検知時は `onImageLoadHttp404` を介して ViewModel に通知し、URL 補正を試みる。
@@ -74,7 +75,7 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  *         右上メニューには「ブックマーク管理 → 設定 → ローカル画像を開く → 画像編集」を用意。
  * - トップバー: 通常時はサブタイトル（選択中ブックマーク名）のみを大きく表示。タイトルは非表示。
  *               検索中はタイトル領域を検索ボックスに切り替える。
- * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
+ * - 絞込: NG タイトルルール、検索クエリ、画像有無（常時適用）で一覧をフィルタし、グリッド表示。
  * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
  * - エラー: フル画像が失敗した場合はプレビューへフォールバックし、プレビューも不可の場合は簡易プレースホルダを表示。
@@ -124,7 +125,7 @@ fun MainCatalogScreen(
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
 
-    // NG タイトルルールとクエリで絞り込み
+    // NG タイトルルールとクエリ、画像有無で絞り込み（常時OP画像なしスレッドを非表示）
     val filtered = remember(items, query, ngRules) {
         val titleRules = ngRules.filter { it.type == RuleType.TITLE }
         items.asSequence()
@@ -134,6 +135,9 @@ fun MainCatalogScreen(
             }
             .filter { item ->
                 if (query.isBlank()) true else item.title.contains(query, ignoreCase = true)
+            }
+            .filter { item ->
+                hasImages(item)
             }
             .toList()
     }
@@ -613,6 +617,14 @@ private fun CatalogCard(
             }
         }
     }
+}
+
+/**
+ * アイテムが画像を持っているかどうかを判定する。
+ * プレビュー画像が利用不可の場合は画像なしと判定し、それ以外は画像ありとする。
+ */
+private fun hasImages(item: ImageItem): Boolean {
+    return !item.previewUnavailable
 }
 
 /**

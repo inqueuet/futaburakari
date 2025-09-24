@@ -1,7 +1,9 @@
 /*
  * カタログ一覧を表示するメインアクティビティ。
  * - ブックマーク選択/管理、設定・履歴・画像編集への遷移を提供。
- * - カタログの取得・表示と、設定項目（NGルール/列数/フォントスケール等）の反映を行う。
+ * - カタログの取得・表示と、設定項目（NGルール/列数/フォントスケール/カタログモード設定等）の反映を行う。
+ * - OP画像なしスレッドは常時非表示に設定。
+ * - カタログモード設定（cx/cy/cl）は設定画面で変更可能で、catset適用時に反映される。
  */
 package com.valoser.futaburakari
 
@@ -60,8 +62,9 @@ import java.net.URL
  *
  * - ブックマーク選択・管理、設定/履歴/画像編集への遷移を提供。
  * - カタログ（画像リスト）を取得・表示し、アイテムタップで詳細画面へ遷移。
- * - NGルール、グリッド列数、フォントスケール、配色モードなどの設定変更を反映。
- * - Futaba の catset（カタログ表示設定）を板単位で適用し、3日間の TTL で再適用を抑制。
+ * - NGルール、グリッド列数、フォントスケール、配色モード、カタログモード設定（cx/cy/cl）などの設定変更を反映。
+ * - OP画像なしスレッドは常時非表示に設定。
+ * - Futaba の catset（カタログ表示設定）を板単位で適用し、3日間の TTL で再適用を抑制。設定画面で指定したcx/cy/cl値を使用。
  * - 端末内画像のメタデータ抽出→表示（ImageDisplayActivity）にも対応。
  * - TopBar: Compose 側 (`MainCatalogScreen`) でタイトル非表示、サブタイトル（選択中ブックマーク名）のみを大きめに表示。
  *
@@ -80,7 +83,7 @@ class MainActivity : BaseActivity() {
     // 自動更新機能用のフィールド（改良版）
     private var isAutoUpdateEnabled = false
     private lateinit var prefs: SharedPreferences
-    // 設定変更の反映（列数/フォントスケール/NGルール/配色モード）
+    // 設定変更の反映（列数/フォントスケール/NGルール/配色モード/カタログモード設定）
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "pref_key_grid_span" -> {
@@ -93,6 +96,10 @@ class MainActivity : BaseActivity() {
             // NGルール変更（設定画面など）
             "ng_rules_json" -> {
                 ngRulesState.value = ngStore.getRules()
+            }
+            // カタログモード設定変更時は現在の板のTTLをクリアして次回リロード時に新設定を適用
+            "pref_key_catalog_cx", "pref_key_catalog_cy", "pref_key_catalog_cl" -> {
+                clearCurrentBoardCatsetState()
             }
             // 旧カラー設定は廃止（現在はテーマ側で動的/既定に統合）
         }
@@ -394,11 +401,18 @@ class MainActivity : BaseActivity() {
     /**
      * 板のカタログ設定(catset)を適用し、適用済み情報を永続化する。
      * TTL 内に適用済みであれば再適用をスキップする。
+     * 設定画面で指定されたcx（横サイズ）、cy（縦サイズ）、cl（文字数）の値を使用する。
      */
     private suspend fun applyCatalogSettings(boardBaseUrl: String) {
         val boardKey = boardBaseUrl.trimEnd('/')
         if (isCatsetAppliedRecent(boardKey)) return
-        val settings = mapOf("mode" to "catset", "cx" to "20", "cy" to "10", "cl" to "10")
+
+        // 設定から値を取得
+        val cx = prefs.getString("pref_key_catalog_cx", "20") ?: "20"
+        val cy = prefs.getString("pref_key_catalog_cy", "10") ?: "10"
+        val cl = prefs.getString("pref_key_catalog_cl", "10") ?: "10"
+
+        val settings = mapOf("mode" to "catset", "cx" to cx, "cy" to cy, "cl" to cl)
         withContext(Dispatchers.IO) {
             networkClient.applySettings(boardBaseUrl, settings)
         }
@@ -453,6 +467,25 @@ class MainActivity : BaseActivity() {
     private fun isCatsetAppliedRecent(boardKey: String): Boolean {
         val ts = catsetAppliedTimestamps[boardKey] ?: return false
         return (System.currentTimeMillis() - ts) < CATSET_TTL_MS
+    }
+
+    /**
+     * 現在選択中の板のcatset適用済み状態をクリアする。
+     * カタログモード設定（cx/cy/cl）変更時に呼ばれ、次回のプルリフレッシュや再選択時に新しい設定が適用される。
+     * 他の板のTTLは維持され、不要な通信を避けられる。
+     */
+    private fun clearCurrentBoardCatsetState() {
+        val url = currentSelectedUrl
+        if (!url.isNullOrBlank()) {
+            val boardBaseUrl = url.substringBefore("futaba.php")
+            if (boardBaseUrl.isNotEmpty() && url.contains("futaba.php")) {
+                val boardKey = boardBaseUrl.trimEnd('/')
+                // 現在の板のみTTLをクリア
+                catsetAppliedBoards.remove(boardKey)
+                catsetAppliedTimestamps.remove(boardKey)
+                persistAppliedBoards()
+            }
+        }
     }
 
     /**
