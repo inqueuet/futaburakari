@@ -33,8 +33,11 @@ import org.jsoup.nodes.Element
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
@@ -87,17 +90,21 @@ class DetailViewModel @Inject constructor(
     private val cacheManager: DetailCacheManager,
 ) : ViewModel() {
 
-    /** NG適用後の表示用リストを流すフロー（UI購読用）。 */
-    private val _detailContent = MutableStateFlow<List<DetailContent>>(emptyList())
-    val detailContent: StateFlow<List<DetailContent>> = _detailContent.asStateFlow()
+    // Event-Sourcing アーキテクチャの中央イベントストア
+    private val eventStore = DetailEventStore()
+    val detailScreenState: StateFlow<DetailScreenState> = eventStore.currentState
 
-    /** 画面に表示するエラーメッセージ。null はエラーなし。 */
+    // 後方互換性のための表示用フロー（新アーキテクチャから算出）
+    val detailContent: StateFlow<List<DetailContent>> = detailScreenState
+        .map { state -> state.computeDisplayContent() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _error = MutableLiveData<String?>()
     val error: LiveData<String?> = _error
 
-    /** 通信・更新の進行中を表すフロー。 */
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+    val isLoading: StateFlow<Boolean> = detailScreenState
+        .map { state -> state.uiState.isLoading }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** ダウンロード進捗を表すフロー。 */
     private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
@@ -139,6 +146,17 @@ class DetailViewModel @Inject constructor(
     // データ整合性管理用のアトミックカウンタ
     private val contentUpdateCounter = AtomicLong(0)
     private val metadataUpdateCounter = AtomicInteger(0)
+
+    init {
+        viewModelScope.launch {
+            detailScreenState.collect { state ->
+                val errorMessage = state.uiState.error
+                if (_error.value != errorMessage) {
+                    _error.value = errorMessage
+                }
+            }
+        }
+    }
 
     /** デバイスメモリに基づいた最適なキャッシュサイズを計算 */
     private fun calculateOptimalCacheSize(): Int {
@@ -297,239 +315,104 @@ class DetailViewModel @Inject constructor(
      */
     fun fetchDetails(url: String, forceRefresh: Boolean = false) {
         Log.d("DetailViewModel", "fetchDetails: Called with forceRefresh: $forceRefresh for URL: $url")
-        val updateId = contentUpdateCounter.incrementAndGet()
+        contentUpdateCounter.incrementAndGet()
         viewModelScope.launch(Dispatchers.IO) {
-            suspend fun setLoading(value: Boolean) {
-                withContext(Dispatchers.Main) { _isLoading.value = value }
-            }
-
-            suspend fun setError(message: String?) {
-                withContext(Dispatchers.Main) { _error.value = message }
-            }
-
-            // データ整合性チェック：更新中の競合状態を防ぐ
-            if (contentUpdateCounter.get() != updateId) {
-                Log.d("DetailViewModel", "Newer update detected, canceling this fetch")
-                return@launch
-            }
-
-            // スレ移動時に「そうだね」状態を正しくリセットするため、
-            // 代入前のURLと比較してページ遷移を判定する。
-            withContext(Dispatchers.Main) {
-                val isNewPage = this@DetailViewModel.currentUrl != url
-                if (forceRefresh || isNewPage) {
-                    resetSodaNeStates()
-                }
-                this@DetailViewModel.currentUrl = url
-                _isLoading.value = true
-                _error.value = null
-                _promptLoadingIds.value = emptySet()
-            }
-            var itemIdCounter = 0L
-
-
             try {
-                // メモリ使用量をチェック
-                checkMemoryUsage()
-
-                if (!forceRefresh) {
-                    val cachedDetails = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
-                    if (cachedDetails != null) {
-                        val sanitized = setRawContentSanitized(cachedDetails)
-                        applyNgAndPostAsync()
-                        // 即時表示後に、キャッシュ由来でも不足メタデータ（画像プロンプト等）を並行取得して段階反映
-                        updateMetadataInBackground(sanitized, url)
-                        setLoading(false)
-                        return@launch
-                    }
-                    // 履歴がアーカイブ済みで、アーカイブスナップショットがあれば即時表示してネットワークを避ける
-                    val archived = runCatching {
-                        HistoryManager.getAll(appContext).any { it.url == url && it.isArchived }
-                    }.getOrDefault(false)
-                    if (archived) {
-                        val snap = withContext(Dispatchers.IO) { cacheManager.loadArchiveSnapshot(url) }
-                        if (!snap.isNullOrEmpty()) {
-                            setRawContentSanitized(snap)
-                            applyNgAndPostAsync()
-                            setLoading(false)
-                            return@launch
-                        }
-                    }
-                }
-
-                val document = withContext(Dispatchers.IO) {
-                    networkClient.fetchDocument(url).apply {
-                        // (D) HTMLシリアライズのオーバーヘッドを抑制
-                        outputSettings().prettyPrint(false)
-                    }
-                }
-
-                val progressivelyLoadedContent = parseContentFromDocument(document, url)
-
-                // 既存表示のプロンプト等を引き継ぐ（ネット更新で一時的に消えないように）
-                val prior = _detailContent.value
-                val merged = if (prior.isEmpty()) progressivelyLoadedContent else mergePrompts(progressivelyLoadedContent, prior)
-
-                // キャッシュは生データを保存し、表示はNG適用後
-                val sanitizedMerged = setRawContentSanitized(merged)
-                val sanitizedProgressive = sanitizePrompts(progressivelyLoadedContent)
-                applyNgAndPostAsync()
-                setLoading(false)
-
-                // バックグラウンドでメタデータを取得し、完了後に段階反映
-                updateMetadataInBackground(sanitizedProgressive, url)
-
+                fetchDetailsWithEventStore(url, forceRefresh)
             } catch (e: Exception) {
-                // ネットワーク失敗時はキャッシュへフォールバック（アーカイブ閲覧時など）
-                Log.e("DetailViewModel", "Error fetching details for $url", e)
-                val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
-                if (cached != null) {
-                    // 404（dat落ち）相当なら履歴をアーカイブ扱いにする（BG監視OFF時の救済）
-                    if (e is IOException && (e.message?.contains("404") == true)) {
-                        runCatching { HistoryManager.markArchived(appContext, url) }
-                    }
-                    val sanitizedCached = setRawContentSanitized(cached)
+                Log.e("DetailViewModel", "Error in fetchDetails: ${e.message}", e)
+                eventStore.setError("詳細の取得に失敗しました: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun fetchDetailsWithEventStore(url: String, forceRefresh: Boolean) {
+        eventStore.applyEvent(DetailEvent.LoadingStateChanged(true))
+        currentUrl = url
+
+        try {
+            if (!forceRefresh) {
+                val cachedDetails = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
+                if (cachedDetails != null) {
+                    Log.d("DetailViewModel", "Loading from cache with new architecture: ${cachedDetails.size} items")
+                    val sanitized = setRawContentSanitized(cachedDetails)
+                    val merged = mergeWithExistingPrompts(sanitized)
+                    rawContent = merged
+                    eventStore.loadFromOldContent(merged, url)
                     applyNgAndPostAsync()
-                    // キャッシュ由来でも画像プロンプト抽出を再試行（オフライン時の復元用）
-                    updateMetadataInBackground(sanitizedCached, url)
-                    // キャッシュ（ローカル保存済み）からサムネイルを拾って履歴に反映（OPの画像のみ）
-                    try {
-                        val firstTextIndex = cached.indexOfFirst { it is DetailContent.Text }
-                        val media = if (firstTextIndex >= 0) {
-                            // OPレスに直接関連付けられた画像/動画のみを取得
-                            // parseContentFromDocument と同じロジック：OPの直後で次のTextレスより前のメディアを探す
-                            val afterOP = cached.drop(firstTextIndex + 1)
-                            val nextTextIndex = afterOP.indexOfFirst { it is DetailContent.Text }
-                            val opMediaRange = if (nextTextIndex >= 0) {
-                                afterOP.take(nextTextIndex)
-                            } else {
-                                afterOP
-                            }
+                    updateMetadataWithEventStore(merged, url)
+                    return
+                }
 
-                            // OPに属する最初のメディアのみを取得（空のURLを持つプレースホルダーは除外）
-                            val opMedia = opMediaRange.firstOrNull {
-                                when (it) {
-                                    is DetailContent.Image -> it.imageUrl.isNotBlank()
-                                    is DetailContent.Video -> it.videoUrl.isNotBlank()
-                                    else -> false
-                                }
-                            }
+                val archived = runCatching {
+                    HistoryManager.getAll(appContext).any { it.url == url && it.isArchived }
+                }.getOrDefault(false)
 
-                            // OPレスの番号を確認してより厳密にチェック
-                            val opText = cached[firstTextIndex] as DetailContent.Text
-                            val opResNum = opText.resNum
-
-                            // メディアのIDがOPレス番号と関連しているかチェック
-                            if (opMedia != null && opResNum != null) {
-                                val mediaId = when (opMedia) {
-                                    is DetailContent.Image -> opMedia.id
-                                    is DetailContent.Video -> opMedia.id
-                                    else -> null
-                                }
-                                // IDの末尾がOPレス番号と一致するかチェック
-                                if (mediaId != null && mediaId.endsWith("#$opResNum")) {
-                                    opMedia
-                                } else {
-                                    Log.d("DetailViewModel", "Skipping thumbnail - media ID '$mediaId' doesn't match OP resNum '$opResNum'")
-                                    null
-                                }
-                            } else {
-                                opMedia
-                            }
-                        } else null
-                        val thumb = when (media) {
-                            is DetailContent.Image -> media.imageUrl
-                            is DetailContent.Video -> media.videoUrl
-                            else -> null
-                        }
-                        if (!thumb.isNullOrBlank()) {
-                            Log.d("DetailViewModel", "Updating thumbnail for OP: $thumb")
-                            HistoryManager.updateThumbnail(appContext, url, thumb)
-                        } else {
-                            Log.d("DetailViewModel", "No OP thumbnail found - clearing history thumbnail")
-                            HistoryManager.clearThumbnail(appContext, url)
-                        }
-                    } catch (_: Exception) {
-                        Log.w("DetailViewModel", "Failed to update cached thumbnail for $url")
-                    }
-                    setError(null)
-                } else {
-                    // キャッシュも無い → アーカイブスナップショット or 媒体のみで再構成
-                    val reconstructed = withContext(Dispatchers.IO) {
-                        cacheManager.loadArchiveSnapshot(url) ?: cacheManager.reconstructFromArchive(url)
-                    }
-                    if (!reconstructed.isNullOrEmpty()) {
-                        // アーカイブ扱いにしてサムネも反映
-                        runCatching { HistoryManager.markArchived(appContext, url) }
-                        try {
-                            val firstTextIndex = reconstructed.indexOfFirst { it is DetailContent.Text }
-                            val media = if (firstTextIndex >= 0) {
-                                // OPレスに直接関連付けられた画像/動画のみを取得
-                                val afterOP = reconstructed.drop(firstTextIndex + 1)
-                                val nextTextIndex = afterOP.indexOfFirst { it is DetailContent.Text }
-                                val opMediaRange = if (nextTextIndex >= 0) {
-                                    afterOP.take(nextTextIndex)
-                                } else {
-                                    afterOP
-                                }
-
-                                // OPに属する最初のメディアのみを取得（空のURLを持つプレースホルダーは除外）
-                                val opMedia = opMediaRange.firstOrNull {
-                                    when (it) {
-                                        is DetailContent.Image -> it.imageUrl.isNotBlank()
-                                        is DetailContent.Video -> it.videoUrl.isNotBlank()
-                                        else -> false
-                                    }
-                                }
-
-                                // OPレスの番号を確認してより厳密にチェック
-                                val opText = reconstructed[firstTextIndex] as DetailContent.Text
-                                val opResNum = opText.resNum
-
-                                // メディアのIDがOPレス番号と関連しているかチェック
-                                if (opMedia != null && opResNum != null) {
-                                    val mediaId = when (opMedia) {
-                                        is DetailContent.Image -> opMedia.id
-                                        is DetailContent.Video -> opMedia.id
-                                        else -> null
-                                    }
-                                    // IDの末尾がOPレス番号と一致するかチェック
-                                    if (mediaId != null && mediaId.endsWith("#$opResNum")) {
-                                        opMedia
-                                    } else {
-                                        Log.d("DetailViewModel", "Skipping archive thumbnail - media ID '$mediaId' doesn't match OP resNum '$opResNum'")
-                                        null
-                                    }
-                                } else {
-                                    opMedia
-                                }
-                            } else null
-                            val thumb = when (media) {
-                                is DetailContent.Image -> media.imageUrl
-                                is DetailContent.Video -> media.videoUrl
-                                else -> null
-                            }
-                            if (!thumb.isNullOrBlank()) {
-                                Log.d("DetailViewModel", "Updating archive thumbnail for OP: $thumb")
-                                HistoryManager.updateThumbnail(appContext, url, thumb)
-                            } else {
-                                Log.d("DetailViewModel", "No OP archive thumbnail found - clearing history thumbnail")
-                                HistoryManager.clearThumbnail(appContext, url)
-                            }
-                        } catch (_: Exception) {
-                            Log.w("DetailViewModel", "Failed to update archive thumbnail for $url")
-                        }
-                        val sanitizedReconstructed = setRawContentSanitized(reconstructed)
+                if (archived) {
+                    val snapshot = withContext(Dispatchers.IO) { cacheManager.loadArchiveSnapshot(url) }
+                    if (!snapshot.isNullOrEmpty()) {
+                        Log.d("DetailViewModel", "Loading from archive snapshot with new architecture: ${snapshot.size} items")
+                        val sanitized = setRawContentSanitized(snapshot)
+                        val merged = mergeWithExistingPrompts(sanitized)
+                        rawContent = merged
+                        eventStore.loadFromOldContent(merged, url)
                         applyNgAndPostAsync()
-                        // スナップショット/再構成からも画像プロンプト抽出を実施（file:// を対象）
-                        updateMetadataInBackground(sanitizedReconstructed, url)
-                        setError(null)
-                    } else {
-                        setError("詳細の取得に失敗しました: ${e.message}")
+                        updateMetadataWithEventStore(merged, url)
+                        return
                     }
                 }
-                setLoading(false)
             }
+
+            val document = withContext(Dispatchers.IO) {
+                networkClient.fetchDocument(url).apply {
+                    outputSettings().prettyPrint(false)
+                }
+            }
+
+            val parsedContent = parseContentFromDocument(document, url)
+            val sanitized = setRawContentSanitized(parsedContent)
+            val merged = mergeWithExistingPrompts(sanitized)
+            rawContent = merged
+
+            eventStore.loadFromOldContent(merged, url)
+
+            withContext(Dispatchers.IO) { cacheManager.saveDetails(url, merged) }
+
+            applyNgAndPostAsync()
+            updateMetadataWithEventStore(merged, url)
+
+        } catch (e: Exception) {
+            Log.e("DetailViewModel", "Error fetching details for $url", e)
+            eventStore.setError("詳細の取得に失敗しました: ${e.message}")
+
+            val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
+            if (cached != null) {
+                if (e is IOException && (e.message?.contains("404") == true)) {
+                    runCatching { HistoryManager.markArchived(appContext, url) }
+                }
+                val sanitized = setRawContentSanitized(cached)
+                val merged = mergeWithExistingPrompts(sanitized)
+                rawContent = merged
+                eventStore.loadFromOldContent(merged, url)
+                applyNgAndPostAsync()
+                updateMetadataWithEventStore(merged, url)
+                eventStore.applyEvent(DetailEvent.ErrorSet(null))
+            } else {
+                val reconstructed = withContext(Dispatchers.IO) {
+                    cacheManager.reconstructFromArchive(url)
+                }
+                if (!reconstructed.isNullOrEmpty()) {
+                    val sanitized = setRawContentSanitized(reconstructed)
+                    val merged = mergeWithExistingPrompts(sanitized)
+                    rawContent = merged
+                    eventStore.loadFromOldContent(merged, url)
+                    applyNgAndPostAsync()
+                    updateMetadataWithEventStore(merged, url)
+                    eventStore.applyEvent(DetailEvent.ErrorSet(null))
+                }
+            }
+        } finally {
+            eventStore.applyEvent(DetailEvent.LoadingStateChanged(false))
         }
     }
 
@@ -555,8 +438,11 @@ class DetailViewModel @Inject constructor(
                     val updatedRaw = rawContent + sanitizedNewItems
                     rawContent = updatedRaw
                     withContext(Dispatchers.IO) { cacheManager.saveDetails(url, updatedRaw) }
+
+                    // 新しいアーキテクチャへ反映
+                    eventStore.loadFromOldContent(updatedRaw, url)
                     applyNgAndPostAsync()
-                    updateMetadataInBackground(sanitizedNewItems, url)
+                    updateMetadataWithEventStore(sanitizedNewItems, url)
                     callback(true)
                 } else {
                     callback(false)
@@ -569,7 +455,6 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** HTMLドキュメントから `DetailContent` の一覧を構築する。OPと返信を順に処理。 */
     private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> =
         withContext(Dispatchers.Default) {
         val progressivelyLoadedContent = mutableListOf<DetailContent>()
@@ -769,162 +654,7 @@ class DetailViewModel @Inject constructor(
      * - 動画は対象外。
      */
     private suspend fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
-        // 段階反映: 各ジョブ完了ごとにチャンネルへ送り、一定間隔でまとめて適用
-        // バッファサイズを制限してメモリ使用量を制御
-        val maxBufferSize = maxOf(100, contentList.size / 10) // 最小100、最大でアイテム数の10%
-        val updates = Channel<Pair<String, String?>>(maxBufferSize)
-        val sendJobs = mutableListOf<Deferred<Unit>>()
-
-        contentList.forEach { content ->
-            when (content) {
-                is DetailContent.Image -> {
-                    val hasPrompt = !content.prompt.isNullOrBlank()
-                    val cachedPrompt = if (hasPrompt) {
-                        withContext(Dispatchers.IO) {
-                            runCatching { metadataCache.get(content.imageUrl) }.getOrNull()
-                        }
-                    } else null
-
-                    if (hasPrompt) {
-                        if (!cachedPrompt.isNullOrBlank()) {
-                            Log.d("DetailViewModel", "Skipping metadata extraction for ${content.imageUrl} - has prompt and cache")
-                            return@forEach
-                        } else {
-                            Log.d("DetailViewModel", "Re-extracting metadata for ${content.imageUrl} - prompt exists but no cache")
-                        }
-                    }
-
-                    markPromptLoading(content.id, true)
-
-                    val limitedIO = Dispatchers.IO.limitedParallelism(AppPreferences.getConcurrencyLevel(appContext))
-                    val job = viewModelScope.async(limitedIO) {
-                        val prompt = try {
-                            /*  画像プロンプトの取得タイムアウト時間はここを変更  */
-                            withTimeoutOrNull(15000L) { MetadataExtractor.extract(appContext, content.imageUrl, networkClient) }
-                        } catch (e: Exception) {
-                            Log.e("DetailViewModel", "Metadata task error for ${content.imageUrl}", e)
-                            null
-                        }
-                        if (prompt == null) {
-                            Log.w("DetailViewModel", "Metadata for ${content.imageUrl} was null (timeout or null)")
-                        }
-                        val normalized = normalizePrompt(prompt)
-                        updates.send(content.id to normalized)
-                    }
-                    job.invokeOnCompletion { throwable ->
-                        if (throwable != null) {
-                            markPromptLoading(content.id, false)
-                        }
-                    }
-                    sendJobs.add(job)
-                }
-                is DetailContent.Video -> {
-                    // 動画のプロンプト取得は行わない（既にプロンプトがある場合もスキップログを出力）
-                    if (!content.prompt.isNullOrBlank()) {
-                        Log.d("DetailViewModel", "Skipping metadata extraction for ${content.videoUrl} - already has prompt")
-                    }
-                }
-                else -> {}
-            }
-        }
-
-        if (sendJobs.isEmpty()) return
-
-        // クローズ処理: 全送信ジョブ完了後にチャネルを閉じる
-        viewModelScope.launch {
-            try {
-                sendJobs.joinAll()
-            } finally {
-                updates.close()
-            }
-        }
-
-        // 受信・段階反映（即座に反映 + バッチング最適化）
-        viewModelScope.launch(Dispatchers.Default) {
-            val batch = mutableMapOf<String, String?>()
-            var lastFlush = System.currentTimeMillis()
-            val flushIntervalMs = 250L // 250msに短縮（より即座な反映）
-
-            suspend fun flush(force: Boolean = false) {
-                val now = System.currentTimeMillis()
-                val due = (now - lastFlush) >= flushIntervalMs
-                if (batch.isNotEmpty() && (force || due)) {
-                    val current = _detailContent.value.toMutableList()
-                    var changed = false
-                    batch.forEach { (id, prompt) ->
-                        val idx = current.indexOfFirst { it.id == id }
-                        if (idx >= 0) {
-                            val it = current[idx]
-                            val upd = when (it) {
-                                is DetailContent.Image -> it.copy(prompt = prompt)
-                                is DetailContent.Video -> it.copy(prompt = prompt)
-                                else -> it
-                            }
-                            if (upd != it) { current[idx] = upd; changed = true }
-                        }
-                        markPromptLoading(id, false)
-                    }
-                    if (changed) {
-                        val snapshot = current.toList()
-                        // UIは即座に更新
-                        withContext(Dispatchers.Main) {
-                            _detailContent.value = snapshot
-                        }
-                        // ディスク保存は非同期で実行
-                        withContext(Dispatchers.IO) {
-                            runCatching {
-                                cacheManager.saveDetails(url, snapshot)
-                                // 抽出完了ごとにアーカイブスナップショットも更新（オフライン時の即時反映用）
-                                cacheManager.saveArchiveSnapshot(url, snapshot)
-                                // 取得済みプロンプトをローカルのアーカイブ画像へも書き戻し（上書き許容）
-                                batch.forEach { (id, p) ->
-                                    val prompt = p ?: return@forEach
-                                    val idx = snapshot.indexOfFirst { it.id == id }
-                                    if (idx < 0) return@forEach
-                                    when (val it = snapshot[idx]) {
-                                        is DetailContent.Image -> {
-                                            val u = it.imageUrl
-                                            if (u.startsWith("file:")) {
-                                                val path = android.net.Uri.parse(u).path
-                                                if (!path.isNullOrBlank()) {
-                                                    try {
-                                                        val exif = androidx.exifinterface.media.ExifInterface(path)
-                                                        exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_USER_COMMENT, prompt)
-                                                        exif.saveAttributes()
-                                                    } catch (_: Exception) {
-                                                        // ignore write failure per-file
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        is DetailContent.Video -> { /* not supported */ }
-                                        else -> {}
-                                    }
-                                }
-                            }.onFailure { e ->
-                                Log.w("DetailViewModel", "Failed to save metadata updates", e)
-                            }
-                        }
-                    }
-                    batch.clear()
-                    lastFlush = now
-                }
-            }
-
-            // 受信ループ
-            for (pair in updates) {
-                batch[pair.first] = pair.second
-                // より積極的な反映: 3件溜まったら即座に反映
-                if (batch.size >= 3) {
-                    flush(force = true)
-                } else {
-                    // 定期的に反映
-                    flush(force = false)
-                }
-            }
-            // 終了時の最終反映
-            flush(force = true)
-        }
+        updateMetadataWithEventStore(contentList, url)
     }
 
     /**
@@ -935,7 +665,9 @@ class DetailViewModel @Inject constructor(
     fun postSodaNe(resNum: String) {
         val url = currentUrl
         if (url == null) {
-            _error.value = "「そうだね」の投稿に失敗しました: 対象のURLが不明です。"
+            val message = "「そうだね」の投稿に失敗しました: 対象のURLが不明です。"
+            _error.value = message
+            viewModelScope.launch { eventStore.setError(message) }
             return
         }
         viewModelScope.launch {
@@ -945,12 +677,17 @@ class DetailViewModel @Inject constructor(
                     // 成功: 次回以降押下を抑止
                     sodaNeStates[resNum] = true
                     _sodaneUpdate.tryEmit(resNum to count)
+                    eventStore.applyEvent(DetailEvent.ErrorSet(null))
                 } else {
-                    _error.value = "「そうだね」の投稿に失敗しました。"
+                    val message = "「そうだね」の投稿に失敗しました。"
+                    _error.value = message
+                    eventStore.setError(message)
                 }
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Error in postSodaNe: ${e.message}", e)
-                _error.value = "「そうだね」の投稿中にエラーが発生しました: ${e.message}"
+                val message = "「そうだね」の投稿中にエラーが発生しました: ${e.message}"
+                _error.value = message
+                eventStore.setError(message)
             }
         }
     }
@@ -978,7 +715,8 @@ class DetailViewModel @Inject constructor(
     fun deletePost(postUrl: String, referer: String, resNum: String, pwd: String, onlyImage: Boolean) {
         viewModelScope.launch {
             try {
-                _isLoading.value = true
+                // 新アーキテクチャでローディング状態を設定
+                eventStore.applyEvent(DetailEvent.LoadingStateChanged(true))
 
                 // 念のため直前にスレGETしてCookieを埋める（posttime等）
                 withContext(Dispatchers.IO) { networkClient.fetchDocument(referer) }
@@ -997,12 +735,14 @@ class DetailViewModel @Inject constructor(
                     // 成功したらスレ再取得（forceRefresh）
                     currentUrl?.let { fetchDetails(it, forceRefresh = true) }
                 } else {
-                    _error.postValue("削除に失敗しました。削除キーが違う可能性があります。")
+                    val errorMsg = "削除に失敗しました。削除キーが違う可能性があります。"
+                    eventStore.setError(errorMsg)
                 }
             } catch (e: Exception) {
-                _error.postValue("削除中にエラーが発生しました: ${e.message}")
+                val errorMsg = "削除中にエラーが発生しました: ${e.message}"
+                eventStore.setError(errorMsg)
             } finally {
-                _isLoading.value = false
+                eventStore.applyEvent(DetailEvent.LoadingStateChanged(false))
             }
         }
     }
@@ -1015,7 +755,7 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val url = currentUrl ?: return@launch
-                _isLoading.value = true
+                eventStore.applyEvent(DetailEvent.LoadingStateChanged(true))
 
                 // 事前に参照スレをGETしてCookie類を確実に用意
                 withContext(Dispatchers.IO) { networkClient.fetchDocument(url) }
@@ -1032,12 +772,14 @@ class DetailViewModel @Inject constructor(
                     // 成功したら最新状態を取得
                     fetchDetails(url, forceRefresh = true)
                 } else {
-                    _error.postValue("del の実行に失敗しました。権限やCookieを確認してください。")
+                    val errorMsg = "del の実行に失敗しました。権限やCookieを確認してください。"
+                    eventStore.setError(errorMsg)
                 }
             } catch (e: Exception) {
-                _error.postValue("del 実行中にエラーが発生しました: ${e.message}")
+                val errorMsg = "del 実行中にエラーが発生しました: ${e.message}"
+                eventStore.setError(errorMsg)
             } finally {
-                _isLoading.value = false
+                eventStore.applyEvent(DetailEvent.LoadingStateChanged(false))
             }
         }
     }
@@ -1081,48 +823,38 @@ class DetailViewModel @Inject constructor(
      */
     private suspend fun applyNgAndPostAsync() {
         val rules = ngStore.cleanupAndGetRules()
-        if (rules.isEmpty()) {
-            postRawContent()
-            return
+        val source = rawContent
+
+        val filtered = if (rules.isEmpty()) {
+            source
+        } else {
+            withContext(Dispatchers.Default) { filterByNgRulesOptimized(source, rules) }
         }
 
-        val filtered = withContext(Dispatchers.Default) {
-            filterByNgRulesOptimized(rawContent, rules)
+        val hiddenIds = if (rules.isEmpty()) {
+            emptySet()
+        } else {
+            val sourceIds = source.asSequence().map { it.id }.toSet()
+            val filteredIds = filtered.asSequence().map { it.id }.toSet()
+            sourceIds - filteredIds
         }
 
-        postFilteredContent(filtered)
-    }
+        eventStore.applyEvent(DetailEvent.NgFilterApplied(rules, hiddenIds))
 
-    private suspend fun postRawContent() {
-        val list = rawContent
-        val cache = buildPlainTextCache(list)
-        withContext(Dispatchers.Main) {
-            _plainTextCache.value = cache
-            _detailContent.value = list
-            recomputeSearchState()
-        }
-    }
-
-    private suspend fun postFilteredContent(filtered: List<DetailContent>) {
         val cache = buildPlainTextCache(filtered)
         withContext(Dispatchers.Main) {
             _plainTextCache.value = cache
-            _detailContent.value = filtered
-            recomputeSearchState()
-            // 生データはキャッシュへ保存 + アーカイブスナップショットも保存（オフライン復元用）
-            currentUrl?.let { url ->
-                val snapshot = filtered
-                viewModelScope.launch(Dispatchers.IO) {
-                    cacheManager.saveDetails(url, rawContent)
-                    cacheManager.saveArchiveSnapshot(url, snapshot)
-                }
+        }
+
+        recomputeSearchState(filtered)
+
+        currentUrl?.let { url ->
+            val snapshot = filtered
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { cacheManager.saveDetails(url, source) }
+                runCatching { cacheManager.saveArchiveSnapshot(url, snapshot) }
             }
         }
-    }
-
-    // 互換: 既存呼び出し箇所があるため、非suspend版はバックグラウンドで実行
-    private fun applyNgAndPost() {
-        viewModelScope.launch { applyNgAndPostAsync() }
     }
 
     /**
@@ -1130,6 +862,12 @@ class DetailViewModel @Inject constructor(
      * - Image/Video のプロンプト情報を積極的にマージ（既存のプロンプトも保持）。
      * - 照合キーは `fileName` 優先、無い場合は URL 末尾（ファイル名相当）、最後に完全URL。
      */
+    private suspend fun mergeWithExistingPrompts(base: List<DetailContent>): List<DetailContent> {
+        val current = detailContent.value
+        if (current.isEmpty()) return base
+        return mergePrompts(base, current)
+    }
+
     private suspend fun mergePrompts(base: List<DetailContent>, prior: List<DetailContent>): List<DetailContent> {
         if (base.isEmpty() || prior.isEmpty()) return base
 
@@ -1477,14 +1215,14 @@ class DetailViewModel @Inject constructor(
     }
 
     /** 現在の表示リストから検索ヒット位置を再計算して公開。 */
-    private fun recomputeSearchState() {
+    private fun recomputeSearchState(contentOverride: List<DetailContent>? = null) {
         val q = currentSearchQuery?.trim().orEmpty()
         searchResultPositions.clear()
         if (q.isBlank()) {
             publishSearchState()
             return
         }
-        val contentList = _detailContent.value
+        val contentList = contentOverride ?: detailContent.value
         viewModelScope.launch(Dispatchers.Default) {
             val hits = mutableListOf<Int>()
             contentList.forEachIndexed { index, content ->
@@ -1562,12 +1300,73 @@ class DetailViewModel @Inject constructor(
         return now
     }
 
+    // ===== 新アーキテクチャ対応のメタデータ更新処理 =====
+
+    /**
+     * 新しいアーキテクチャでメタデータを更新
+     */
+    private suspend fun updateMetadataWithEventStore(contentList: List<DetailContent>, url: String) {
+        contentList.forEach { content ->
+            when (content) {
+                is DetailContent.Image -> {
+                    if (!content.prompt.isNullOrBlank()) {
+                        // 既にプロンプトがある場合はキャッシュにも反映しておく
+                        viewModelScope.launch(Dispatchers.IO) {
+                            runCatching { metadataCache.put(content.imageUrl, content.prompt!!) }
+                        }
+                        return@forEach
+                    }
+
+                    markPromptLoading(content.id, true)
+                    eventStore.applyEvent(DetailEvent.MetadataExtractionStarted(content.id))
+
+                    viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            val cachedPrompt = runCatching { metadataCache.get(content.imageUrl) }.getOrNull()
+                            val prompt = if (!cachedPrompt.isNullOrBlank()) {
+                                cachedPrompt
+                            } else {
+                                withTimeoutOrNull(15000L) {
+                                    MetadataExtractor.extract(appContext, content.imageUrl, networkClient)
+                                }
+                            }
+
+                            val normalized = normalizePrompt(prompt)
+
+                            eventStore.updateMetadataProgressively(content.id, normalized)
+
+                            if (!normalized.isNullOrBlank()) {
+                                runCatching { metadataCache.put(content.imageUrl, normalized) }
+                                runCatching { cacheManager.saveDetails(url, rawContent) }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("DetailViewModel", "Metadata extraction error for ${content.imageUrl}", e)
+                            eventStore.updateMetadataProgressively(content.id, null)
+                        } finally {
+                            markPromptLoading(content.id, false)
+                        }
+                    }
+                }
+                is DetailContent.Video -> {
+                    if (content.prompt.isNullOrBlank()) {
+                        Log.d("DetailViewModel", "Video metadata extraction not yet implemented for ${content.videoUrl}")
+                    }
+                }
+                else -> {}
+            }
+        }
+    }
+
     /** 検索UI表示用の集計（アクティブ/現在位置/総数）をフローに反映。 */
     private fun publishSearchState() {
         val active = (currentSearchQuery != null) && searchResultPositions.isNotEmpty()
         val currentDisp = if (active && currentSearchHitIndex in searchResultPositions.indices) currentSearchHitIndex + 1 else 0
         val total = searchResultPositions.size
-        _searchState.value = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)
+        val newState = SearchState(active = active, currentIndexDisplay = currentDisp, total = total)
+        _searchState.value = newState
+        viewModelScope.launch {
+            eventStore.applyEvent(DetailEvent.SearchStateUpdated(if (active) newState else null))
+        }
     }
 
     private data class PendingDownloadRequest(
