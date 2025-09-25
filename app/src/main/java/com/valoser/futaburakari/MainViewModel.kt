@@ -584,12 +584,20 @@ class MainViewModel @Inject constructor(
                             else -> null
                         }
 
+                        // プレビューが取得できなかった新着スレッドは常に画像なし扱いとし、
+                        // 過去に付いていたフラグも合わせて継承する（後段でプレビューが復活したら解除される）。
+                        val mergedPreviewUnavailable = if (fresh.previewUnavailable) {
+                            true
+                        } else {
+                            old?.previewUnavailable ?: false
+                        }
+
                         fresh.copy(
                             fullImageUrl = determinedFullUrl,
                             preferPreviewOnly = preferPreview && existingVerifiedFull.isNullOrBlank(), // 検証済みURLがあればpreferPreviewを解除
                             hadFullSuccess = hadFull || !existingVerifiedFull.isNullOrBlank(),
                             urlFixNote = old?.urlFixNote,
-                            previewUnavailable = old?.previewUnavailable ?: false,
+                            previewUnavailable = mergedPreviewUnavailable,
                             lastVerifiedFullUrl = existingVerifiedFull,
                             failedUrls = old?.failedUrls ?: emptySet()
                         )
@@ -632,7 +640,7 @@ class MainViewModel @Inject constructor(
     }
 
     // #cattable 用パーサ（旧実装の整理版）。
-    // <img> が無い行は res/{id}.htm からIDを抜き、候補URLを1つ構築（後段で検証）。
+    // <img> が無い行は res/{id}.htm からIDを抜き、候補URLを構築すると同時に previewUnavailable を立てる。
     private fun parseFromCattable(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
         val cells = document.select("#cattable td")
@@ -644,6 +652,7 @@ class MainViewModel @Inject constructor(
             // 1) まず通常通り <img> があればそれを使う
             val imgTag = linkTag.selectFirst("img")
             var imageUrl: String? = imgTag?.absUrl("src")
+            var missingPreview = false
 
             // 2) <img> が無い（今回のHTMLのような）場合、res/{id}.htm から id を抜いて推測構築（候補列挙は行うが選定は後段の検証に委譲）
             if (imageUrl.isNullOrEmpty()) {
@@ -656,6 +665,7 @@ class MainViewModel @Inject constructor(
                     // 2chan のカタログは "cat/{id}s.{ext}" 形式が基本（小サムネ）。
                     // まずもっとも一般的な jpg を既定にし、後段の HEAD 検証と 404 修正で適正化する。
                     imageUrl = "$boardBase/cat/${id}s.jpg"
+                    missingPreview = true
                 }
             }
 
@@ -672,7 +682,8 @@ class MainViewModel @Inject constructor(
                     title = title,
                     replyCount = replies,
                     detailUrl = detailUrl,
-                    fullImageUrl = null
+                    fullImageUrl = null,
+                    previewUnavailable = missingPreview
                 )
             )
         }
