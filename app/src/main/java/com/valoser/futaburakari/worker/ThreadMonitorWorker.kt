@@ -297,9 +297,16 @@ class ThreadMonitorWorker @AssistedInject constructor(
      */
     private fun parseContentFromDocument(document: Document, baseUrl: String): List<DetailContent> {
         val result = mutableListOf<DetailContent>()
-        var textId = 0L
 
         val threadContainer = document.selectFirst("div.thre") ?: return emptyList()
+
+        // スレッドIDを抽出（DetailViewModelと同じロジック）
+        val threadId = baseUrl.substringAfterLast('/').substringBefore(
+            ".htm",
+            missingDelimiterValue = baseUrl.substringAfterLast('/')
+        ).ifBlank {
+            baseUrl.hashCode().toUInt().toString(16)
+        }
 
         val postBlocks = mutableListOf<Element>()
         postBlocks.add(threadContainer)
@@ -314,8 +321,24 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 val rtd = block.selectFirst(".rtd")
                 rtd?.clone()?.apply { select("img").remove() }?.html().orEmpty()
             }
+
             if (html.isNotBlank()) {
-                result += DetailContent.Text(id = "text_${textId++}", htmlContent = html)
+                // レス番号を抽出（DetailViewModelと同じロジック）
+                val resNum = if (isOp) {
+                    threadId
+                } else {
+                    Regex("""No\.?\s*(\n?\s*)?(\d+)""").find(html)?.groupValues?.getOrNull(2)
+                        ?: Regex("""No\.?\s*(\d+)""").find(html)?.groupValues?.getOrNull(1)
+                }
+
+                // DetailViewModelと同じID形式
+                val stableId = if (isOp) {
+                    "text_op_$threadId"
+                } else {
+                    "text_${resNum ?: "reply_${threadId}_${index}"}"
+                }
+
+                result += DetailContent.Text(id = stableId, htmlContent = html, resNum = resNum)
             }
 
             val a = block.select("a[target=_blank][href]").firstOrNull { el -> isMediaUrl(el.attr("href")) }
@@ -326,9 +349,9 @@ class ThreadMonitorWorker @AssistedInject constructor(
                     val fileName = absolute.substringAfterLast('/')
                     val lower = href.lowercase()
                     if (lower.endsWith(".mp4") || lower.endsWith(".webm")) {
-                        result += DetailContent.Video(id = absolute, videoUrl = absolute, prompt = null, fileName = fileName)
+                        result += DetailContent.Video(id = "video_${absolute.hashCode().toUInt().toString(16)}", videoUrl = absolute, prompt = null, fileName = fileName)
                     } else {
-                        result += DetailContent.Image(id = absolute, imageUrl = absolute, prompt = null, fileName = fileName)
+                        result += DetailContent.Image(id = "image_${absolute.hashCode().toUInt().toString(16)}", imageUrl = absolute, prompt = null, fileName = fileName)
                     }
                 } catch (_: MalformedURLException) { /* ignore */ }
             }
@@ -343,7 +366,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 val m = t.find(data)
                 val end = m?.groupValues?.getOrNull(1)
                 if (!end.isNullOrBlank()) {
-                    result += DetailContent.ThreadEndTime(id = "thread_end_time_${textId++}", endTime = end)
+                    result += DetailContent.ThreadEndTime(id = "thread_end_time_${end.hashCode().toUInt().toString(16)}", endTime = end)
                     break
                 }
             }

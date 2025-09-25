@@ -385,9 +385,9 @@ class DetailCacheManager @Inject constructor(
             val uri = f.toURI().toString()
             val name = f.name
             if (isVideoName(name)) {
-                list += DetailContent.Video(id = "$uri#cache_$index", videoUrl = uri, prompt = null, fileName = name)
+                list += DetailContent.Video(id = "video_${uri.hashCode().toUInt().toString(16)}", videoUrl = uri, prompt = null, fileName = name)
             } else {
-                list += DetailContent.Image(id = "$uri#cache_$index", imageUrl = uri, prompt = null, fileName = name)
+                list += DetailContent.Image(id = "image_${uri.hashCode().toUInt().toString(16)}", imageUrl = uri, prompt = null, fileName = name)
             }
         }
         return list

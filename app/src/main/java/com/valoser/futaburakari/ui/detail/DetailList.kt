@@ -113,6 +113,30 @@ import androidx.compose.foundation.layout.Column
 import androidx.collection.LruCache
 
 /**
+ * ID変更に影響されない安定したキーを生成。スクロール位置保存/復元のため。
+ */
+private fun stableKey(item: DetailContent, index: Int): String {
+    return when (item) {
+        is DetailContent.Text -> {
+            // resNumがある場合はそれを使用、ない場合は順序ベース
+            item.resNum?.let { "text_$it" } ?: "text_index_$index"
+        }
+        is DetailContent.Image -> {
+            // 画像URLのハッシュ値で安定化
+            "image_${item.imageUrl.hashCode()}"
+        }
+        is DetailContent.Video -> {
+            // 動画URLのハッシュ値で安定化
+            "video_${item.videoUrl.hashCode()}"
+        }
+        is DetailContent.ThreadEndTime -> {
+            // 終了時刻のハッシュ値で安定化
+            "thread_end_${item.endTime.hashCode()}"
+        }
+    }
+}
+
+/**
  * スレ詳細のコンテンツを表示する Compose リスト。
  *
  * 概要:
@@ -393,7 +417,7 @@ fun DetailListCompose(
     }
 
     LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
-        itemsIndexed(items, key = { index, it -> "${it.id}#$index" }) { index, item ->
+        itemsIndexed(items, key = { index, it -> stableKey(it, index) }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
                     val plainState = produceState<String?>(
