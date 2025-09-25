@@ -330,6 +330,9 @@ fun DetailScreenScaffold(
             // 下のダイアログ/シートからも参照できるよう items / listState を上位に保持
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
+            val itemsVersion = remember(items) {
+                items.fold(0) { acc, item -> (acc * 31) xor item.id.hashCode() }
+            }
             val plainTextCache = plainTextCacheFlow?.collectAsStateWithLifecycle(emptyMap())?.value ?: emptyMap()
 
             LaunchedEffect(items, plainTextCache) {
@@ -372,16 +375,29 @@ fun DetailScreenScaffold(
             // 検索ナビ（Compose 内でリストに吸着）を上位スコープで保持
             var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
             var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
+            var imagesLoadedVersion by remember { mutableIntStateOf(0) }
+            val externalOnImageLoaded = rememberUpdatedState(onImageLoaded)
+            val handleImageLoaded: () -> Unit = {
+                imagesLoadedVersion = if (imagesLoadedVersion == Int.MAX_VALUE) 0 else imagesLoadedVersion + 1
+                externalOnImageLoaded.value?.invoke()
+            }
             if (itemsFlow != null) {
                 val searchQuery = currentQueryFlow?.collectAsStateWithLifecycle(null)?.value
                 val refreshing = isRefreshingFlow?.collectAsStateWithLifecycle(false)?.value ?: false
                 val pullState = rememberPullToRefreshState()
                 var fastScrollActive by remember { mutableStateOf(false) }
+                var bottomPaddingVersion by remember { mutableIntStateOf(0) }
+                LaunchedEffect(itemsVersion) {
+                    imagesLoadedVersion = 0
+                }
                 // 下部余白: 既存の Flow があればそれを優先。無ければ広告の実測高さから算出
                 val legacyPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value
                 var adPx by remember { mutableStateOf(0) }
                 val bottomPx = legacyPx ?: adPx
                 val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
+                LaunchedEffect(bottomPx) {
+                    bottomPaddingVersion = if (bottomPaddingVersion == Int.MAX_VALUE) 0 else bottomPaddingVersion + 1
+                }
                 var deleteTarget by remember { mutableStateOf<String?>(null) }
 
                 // 無限スクロール検知: 末尾のコンテンツ（Text/Image/Video）近辺に到達したら通知。
@@ -497,12 +513,15 @@ fun DetailScreenScaffold(
                         getSodaneState = getSodaneState,
                         sodaneCounts = sodaneCounts,
                         onSetSodaneCount = { rn, c -> sodaneCounts[rn] = c },
-                        onImageLoaded = onImageLoaded,
+                        onImageLoaded = handleImageLoaded,
                         onVisibleMaxOrdinal = onVisibleMaxOrdinal,
                         listState = listState,
                         initialScrollIndex = initialScrollIndex,
                         initialScrollOffset = initialScrollOffset,
                         initialScrollAnchorId = initialScrollAnchorId,
+                        itemsVersion = itemsVersion,
+                        bottomPaddingVersion = bottomPaddingVersion,
+                        imagesLoadedVersion = imagesLoadedVersion,
                         onSaveScroll = onSaveScroll,
                         // 左端に 8dp の余白を追加
                         contentPadding = PaddingValues(start = LocalSpacing.current.s, end = endPadding, bottom = bottomDp),
@@ -802,7 +821,7 @@ fun DetailScreenScaffold(
                             getSodaneState = { false },
                             sodaneCounts = emptyMap(),
                             onSetSodaneCount = null,
-                            onImageLoaded = onImageLoaded,
+                            onImageLoaded = handleImageLoaded,
                             onVisibleMaxOrdinal = null,
                             contentPadding = PaddingValues(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.s)
                         )
@@ -843,7 +862,7 @@ fun DetailScreenScaffold(
                             getSodaneState = { false },
                             sodaneCounts = emptyMap(),
                             onSetSodaneCount = null,
-                            onImageLoaded = onImageLoaded,
+                            onImageLoaded = handleImageLoaded,
                             onVisibleMaxOrdinal = null,
                             contentPadding = PaddingValues(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.s)
                         )

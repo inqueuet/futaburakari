@@ -107,6 +107,8 @@ import androidx.compose.foundation.clickable
 import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
@@ -150,6 +152,7 @@ private val imageRequestCache = LruCache<String, ImageRequest>(2000)
 private val headersCache = LruCache<String, NetworkHeaders>(100)
 
 private data class ScrollSnapshot(val index: Int, val offset: Int, val anchorId: String?)
+private data class RestoreSignature(val anchorId: String, val key: Triple<Int, Int, Int>)
 
 private fun createImageRequest(
     context: android.content.Context,
@@ -225,6 +228,9 @@ fun DetailListCompose(
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
     initialScrollAnchorId: String? = null,
+    itemsVersion: Int = 0,
+    bottomPaddingVersion: Int = 0,
+    imagesLoadedVersion: Int = 0,
     onSaveScroll: ((Int, Int, String?) -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Compose側で検索Prev/Nextナビを提供するためのコールバック
@@ -251,27 +257,48 @@ fun DetailListCompose(
     var bodyForDialog by remember { mutableStateOf<DetailContent.Text?>(null) }
     // "そうだね" 表示カウントは親から受け取る
 
-    val safeIndex = if (initialScrollIndex >= 0) initialScrollIndex else 0
-    val safeOffset = if (initialScrollOffset >= 0) initialScrollOffset else 0
+    val initialAnchor = initialScrollAnchorId?.takeIf { it.isNotBlank() }
+    val hasInitialAnchor = initialAnchor != null
+    val safeIndex = if (hasInitialAnchor) 0 else initialScrollIndex.coerceAtLeast(0)
+    val safeOffset = if (hasInitialAnchor) 0 else initialScrollOffset.coerceAtLeast(0)
     val internalState = listState ?: rememberLazyListState(
         initialFirstVisibleItemIndex = safeIndex,
         initialFirstVisibleItemScrollOffset = safeOffset
     )
 
-    var pendingAnchorId by remember(initialScrollAnchorId) { mutableStateOf(initialScrollAnchorId) }
-    LaunchedEffect(items, pendingAnchorId, internalState) {
-        val anchorId = pendingAnchorId ?: return@LaunchedEffect
+    var anchorRequestId by remember(initialAnchor) { mutableStateOf(initialAnchor) }
+    var lastRestoreSignature by remember(initialAnchor) { mutableStateOf<RestoreSignature?>(null) }
+    var lastRestoredAnchorId by remember(initialAnchor) { mutableStateOf<String?>(null) }
+    var restoring by remember { mutableStateOf(false) }
+    var skipNextSave by remember(initialAnchor) { mutableStateOf(false) }
+
+    LaunchedEffect(items, anchorRequestId, itemsVersion, bottomPaddingVersion, imagesLoadedVersion) {
+        val anchorId = anchorRequestId ?: return@LaunchedEffect
         if (items.isEmpty()) return@LaunchedEffect
         val targetIndex = items.indexOfFirst { it.id == anchorId }
-        if (targetIndex >= 0) {
-            val currentIndex = internalState.firstVisibleItemIndex
-            val currentOffset = internalState.firstVisibleItemScrollOffset
-            val currentAnchor = items.getOrNull(currentIndex)?.id
-            if (currentAnchor != anchorId || currentOffset != safeOffset) {
-                internalState.scrollToItem(targetIndex, safeOffset)
-            }
+        if (targetIndex < 0) return@LaunchedEffect
+
+        val signature = RestoreSignature(anchorId, Triple(itemsVersion, bottomPaddingVersion, imagesLoadedVersion))
+        if (lastRestoreSignature == signature) return@LaunchedEffect
+
+        val currentIndex = internalState.firstVisibleItemIndex
+        val currentOffset = internalState.firstVisibleItemScrollOffset
+        val currentAnchor = items.getOrNull(currentIndex)?.id
+        if (currentAnchor == anchorId && currentOffset == safeOffset) {
+            lastRestoreSignature = signature
+            lastRestoredAnchorId = anchorId
+            return@LaunchedEffect
         }
-        pendingAnchorId = null
+
+        skipNextSave = true
+        restoring = true
+        try {
+            internalState.scrollToItem(targetIndex, safeOffset)
+        } finally {
+            restoring = false
+        }
+        lastRestoreSignature = signature
+        lastRestoredAnchorId = anchorId
     }
 
     // スクロール外の画像を先読み（プリフェッチ）
@@ -420,16 +447,52 @@ fun DetailListCompose(
             .collectLatest { ord -> if (ord > 0) onVisibleMaxOrdinal?.invoke(ord) }
     }
 
-    // スクロール位置の変化を親へ保存通知（index + offset）
-    LaunchedEffect(items, internalState) {
-        snapshotFlow {
-            val index = internalState.firstVisibleItemIndex
-            val offset = internalState.firstVisibleItemScrollOffset
-            val anchorId = items.getOrNull(index)?.id
-            ScrollSnapshot(index, offset, anchorId)
+    // スクロール位置の変化を親へ保存通知（index + offset） — 復元直後は一時的に抑制
+    LaunchedEffect(items, internalState, anchorRequestId) {
+        coroutineScope {
+            var lastSnapshot: ScrollSnapshot? = null
+
+            launch {
+                snapshotFlow {
+                    val index = internalState.firstVisibleItemIndex
+                    val offset = internalState.firstVisibleItemScrollOffset
+                    val anchorId = items.getOrNull(index)?.id
+                    ScrollSnapshot(index, offset, anchorId)
+                }
+                    .distinctUntilChanged()
+                    .collect { snapshot ->
+                        lastSnapshot = snapshot
+                        val restoredAnchor = lastRestoredAnchorId
+                        val requestAnchor = anchorRequestId
+                        if (!restoring && restoredAnchor != null && requestAnchor == restoredAnchor && snapshot.anchorId != requestAnchor) {
+                            anchorRequestId = null
+                        }
+                    }
+            }
+
+            launch {
+                snapshotFlow { internalState.isScrollInProgress }
+                    .distinctUntilChanged()
+                    .collectLatest { inProgress ->
+                        if (!inProgress) {
+                            delay(32L)
+                            val snapshot = lastSnapshot ?: run {
+                                val index = internalState.firstVisibleItemIndex
+                                val offset = internalState.firstVisibleItemScrollOffset
+                                val anchorId = items.getOrNull(index)?.id
+                                ScrollSnapshot(index, offset, anchorId)
+                            }
+                            if (skipNextSave) {
+                                skipNextSave = false
+                                return@collectLatest
+                            }
+                            if (!restoring) {
+                                onSaveScroll?.invoke(snapshot.index, snapshot.offset, snapshot.anchorId)
+                            }
+                        }
+                    }
+            }
         }
-            .distinctUntilChanged()
-            .collectLatest { snapshot -> onSaveScroll?.invoke(snapshot.index, snapshot.offset, snapshot.anchorId) }
     }
 
     LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
