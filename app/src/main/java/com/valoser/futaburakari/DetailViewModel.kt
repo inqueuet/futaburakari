@@ -422,7 +422,9 @@ class DetailViewModel @Inject constructor(
             try {
                 // 現在のHTMLを取得
                 val document = withContext(Dispatchers.IO) {
-                    networkClient.fetchDocument(url)
+                    networkClient.fetchDocument(url).apply {
+                        outputSettings().prettyPrint(false)
+                    }
                 }
 
                 // 新しいコンテンツをパース
