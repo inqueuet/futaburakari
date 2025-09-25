@@ -377,7 +377,7 @@ class MainViewModel @Inject constructor(
                         }
                     }
 
-                    // 停止条件はプレビューと同じく「閾値を超えたら停止」（>）。
+                    // フル画像側は「閾値を超えたら停止」（>）とする。
                     // inc404 は 1 始まりのため、MAX_404_RETRY=2 なら 3 回目で停止。
                     if (count > MAX_404_RETRY) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
@@ -406,7 +406,7 @@ class MainViewModel @Inject constructor(
                         }
                     }
                 } else {
-                    // プレビューも同一条件（>）で統一
+                    // プレビュー側は閾値超過で停止。候補が尽きた場合は即停止する。
                     if (count > MAX_404_RETRY) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
                         val limited = itemNow.copy(previewUnavailable = true, urlFixNote = "URL停止: プレビュー候補の全滅")
@@ -416,13 +416,23 @@ class MainViewModel @Inject constructor(
                         return@launch
                     }
                     val candidates = buildCatalogThumbCandidates(detailUrl).filter { it != target.previewUrl }
-                    // 404検証の高速化: 直列→限定並列（最大2並列）で探索
+                    // 404検証の高速化: 直列→限定並列（呼び出し側指定）で探索
                     val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 1)
                     if (!next.isNullOrBlank() && next != target.previewUrl) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
                         val updated = itemNow.copy(previewUrl = next, urlFixNote = "URL修正: サムネイル候補に置換", previewUnavailable = false)
                         val newMap = LinkedHashMap(_imageMap.value)
                         newMap[detailUrl] = updated
+                        _imageMap.value = newMap
+                        clear404ForDetail(detailUrl)
+                    } else if (!target.previewUnavailable) {
+                        val itemNow = _imageMap.value[detailUrl] ?: target
+                        val limited = itemNow.copy(
+                            previewUnavailable = true,
+                            urlFixNote = "URL停止: サムネイル候補が存在せず"
+                        )
+                        val newMap = LinkedHashMap(_imageMap.value)
+                        newMap[detailUrl] = limited
                         _imageMap.value = newMap
                         clear404ForDetail(detailUrl)
                     }
@@ -700,7 +710,7 @@ class MainViewModel @Inject constructor(
 
     /**
      * 候補URL群の中から、存在確認が取れた最初の1件を返す。
-     * - バッチ単位で最大 `maxParallel` 並列（既定: 2）で検証し、各バッチ内で最初に成功したものを採用。
+     * - バッチ単位で最大 `maxParallel` 並列（既定: 1）で検証し、各バッチ内で最初に成功したものを採用。
      * - バッチに成功なしの場合は次バッチへ進む。
      */
     private suspend fun findFirstExistingUrlLimitedParallel(
