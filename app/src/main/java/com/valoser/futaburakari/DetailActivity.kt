@@ -152,10 +152,10 @@ class DetailActivity : BaseActivity() {
         currentUrl = intent.getStringExtra(EXTRA_URL)
         // スクロール位置の保存/復元に用いるストアを先に初期化（Compose へ初期状態を渡す）
         scrollStore = ScrollPositionStore(this)
-        val initialScroll: Pair<Int, Int> = currentUrl?.let { url ->
+        val initialScroll: ScrollPositionStore.SavedScrollState = currentUrl?.let { url ->
             val key = UrlNormalizer.threadKey(url)
             scrollStore.getScrollState(key)
-        } ?: (0 to 0)
+        } ?: ScrollPositionStore.SavedScrollState()
         // Compose のコンテナへ切替（トップバー含む）。
         // メモ: カラーモード設定の個別制御は廃止（テーマに準拠）
         val showAdsPref = PreferenceManager.getDefaultSharedPreferences(this)
@@ -208,12 +208,13 @@ class DetailActivity : BaseActivity() {
                     adUnitId = adUnitId,
                     onBottomPaddingChange = { h -> bottomOffsetFlowInternal.value = h },
                     // Compose リストのスクロール状態を保存/復元
-                    initialScrollIndex = initialScroll.first,
-                    initialScrollOffset = initialScroll.second,
-                    onSaveScroll = { pos, off ->
+                    initialScrollIndex = initialScroll.position,
+                    initialScrollOffset = initialScroll.offset,
+                    initialScrollAnchorId = initialScroll.anchorId,
+                    onSaveScroll = { pos, off, anchorId ->
                         val url = currentUrl ?: return@DetailScreenScaffold
                         val key = UrlNormalizer.threadKey(url)
-                        scrollStore.saveScrollState(key, pos, off)
+                        scrollStore.saveScrollState(key, pos, off, anchorId)
                     },
                     itemsFlow = viewModel.detailContent,
                     plainTextCacheFlow = viewModel.plainTextCache,

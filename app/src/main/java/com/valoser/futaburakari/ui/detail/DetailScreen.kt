@@ -159,7 +159,8 @@ fun DetailScreenScaffold(
     threadUrl: String? = null,
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
-    onSaveScroll: ((Int, Int) -> Unit)? = null,
+    initialScrollAnchorId: String? = null,
+    onSaveScroll: ((Int, Int, String?) -> Unit)? = null,
     itemsFlow: StateFlow<List<DetailContent>>? = null,
     plainTextCacheFlow: StateFlow<Map<String, String>>? = null,
     onEnsurePlainTextCache: ((List<DetailContent>) -> Unit)? = null,
@@ -501,6 +502,7 @@ fun DetailScreenScaffold(
                         listState = listState,
                         initialScrollIndex = initialScrollIndex,
                         initialScrollOffset = initialScrollOffset,
+                        initialScrollAnchorId = initialScrollAnchorId,
                         onSaveScroll = onSaveScroll,
                         // 左端に 8dp の余白を追加
                         contentPadding = PaddingValues(start = LocalSpacing.current.s, end = endPadding, bottom = bottomDp),

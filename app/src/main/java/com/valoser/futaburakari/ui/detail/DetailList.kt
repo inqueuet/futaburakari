@@ -149,6 +149,8 @@ private fun stableKey(item: DetailContent, index: Int): String {
 private val imageRequestCache = LruCache<String, ImageRequest>(2000)
 private val headersCache = LruCache<String, NetworkHeaders>(100)
 
+private data class ScrollSnapshot(val index: Int, val offset: Int, val anchorId: String?)
+
 private fun createImageRequest(
     context: android.content.Context,
     url: String,
@@ -222,7 +224,8 @@ fun DetailListCompose(
     listState: LazyListState? = null,
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
-    onSaveScroll: ((Int, Int) -> Unit)? = null,
+    initialScrollAnchorId: String? = null,
+    onSaveScroll: ((Int, Int, String?) -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Compose側で検索Prev/Nextナビを提供するためのコールバック
     onProvideSearchNavigator: (((() -> Unit), (() -> Unit)) -> Unit)? = null,
@@ -254,6 +257,22 @@ fun DetailListCompose(
         initialFirstVisibleItemIndex = safeIndex,
         initialFirstVisibleItemScrollOffset = safeOffset
     )
+
+    var pendingAnchorId by remember(initialScrollAnchorId) { mutableStateOf(initialScrollAnchorId) }
+    LaunchedEffect(items, pendingAnchorId, internalState) {
+        val anchorId = pendingAnchorId ?: return@LaunchedEffect
+        if (items.isEmpty()) return@LaunchedEffect
+        val targetIndex = items.indexOfFirst { it.id == anchorId }
+        if (targetIndex >= 0) {
+            val currentIndex = internalState.firstVisibleItemIndex
+            val currentOffset = internalState.firstVisibleItemScrollOffset
+            val currentAnchor = items.getOrNull(currentIndex)?.id
+            if (currentAnchor != anchorId || currentOffset != safeOffset) {
+                internalState.scrollToItem(targetIndex, safeOffset)
+            }
+        }
+        pendingAnchorId = null
+    }
 
     // スクロール外の画像を先読み（プリフェッチ）
     // - 現在の可視範囲から前後に数件分のメディア(Image/Video)をCoilへ事前リクエスト
@@ -402,10 +421,15 @@ fun DetailListCompose(
     }
 
     // スクロール位置の変化を親へ保存通知（index + offset）
-    LaunchedEffect(internalState) {
-        snapshotFlow { internalState.firstVisibleItemIndex to internalState.firstVisibleItemScrollOffset }
+    LaunchedEffect(items, internalState) {
+        snapshotFlow {
+            val index = internalState.firstVisibleItemIndex
+            val offset = internalState.firstVisibleItemScrollOffset
+            val anchorId = items.getOrNull(index)?.id
+            ScrollSnapshot(index, offset, anchorId)
+        }
             .distinctUntilChanged()
-            .collectLatest { (pos, off) -> onSaveScroll?.invoke(pos, off) }
+            .collectLatest { snapshot -> onSaveScroll?.invoke(snapshot.index, snapshot.offset, snapshot.anchorId) }
     }
 
     LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
