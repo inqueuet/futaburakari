@@ -113,26 +113,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.collection.LruCache
 
 /**
- * ID変更に影響されない安定したキーを生成。スクロール位置保存/復元のため。
+ * Compose の LazyColumn で利用する安定キー。
+ * DetailContent の各要素は ViewModel/Worker 層で衝突しない ID を付与しているため、
+ * 原則としてそのまま利用する。空文字の場合のみ型＋indexでフォールバック。
  */
 private fun stableKey(item: DetailContent, index: Int): String {
+    val id = item.id
+    if (id.isNotBlank()) return id
     return when (item) {
-        is DetailContent.Text -> {
-            // resNumがある場合はそれを使用、ない場合は順序ベース
-            item.resNum?.let { "text_$it" } ?: "text_index_$index"
-        }
-        is DetailContent.Image -> {
-            // 画像URLのハッシュ値で安定化
-            "image_${item.imageUrl.hashCode()}"
-        }
-        is DetailContent.Video -> {
-            // 動画URLのハッシュ値で安定化
-            "video_${item.videoUrl.hashCode()}"
-        }
-        is DetailContent.ThreadEndTime -> {
-            // 終了時刻のハッシュ値で安定化
-            "thread_end_${item.endTime.hashCode()}"
-        }
+        is DetailContent.Text -> "text_fallback_$index"
+        is DetailContent.Image -> "image_fallback_$index"
+        is DetailContent.Video -> "video_fallback_$index"
+        is DetailContent.ThreadEndTime -> "thread_end_fallback_$index"
     }
 }
 
