@@ -430,9 +430,30 @@ class DetailViewModel @Inject constructor(
                 // 新しいコンテンツをパース
                 val newContentList = parseContentFromDocument(document, url)
 
-                // 現在の表示（生データ）のID集合を作成し、差分のみ抽出
+                // 現在の表示（生データ）のID集合と内容ハッシュ集合を作成し、重複チェックを強化
                 val currentIds = rawContent.map { it.id }.toSet()
-                val newItems = newContentList.filter { it.id !in currentIds }
+                val currentContentHashes = rawContent.map { contentHash(it) }.toSet()
+
+                val newItems = newContentList.filter { item ->
+                    val itemId = item.id
+                    val itemContentHash = contentHash(item)
+
+                    // ID一致もしくは内容ハッシュ一致で既存判定（重複を防ぐ）
+                    itemId !in currentIds && itemContentHash !in currentContentHashes
+                }
+
+                // デバッグログ：IDの重複状況と内容重複を確認
+                val duplicateIds = newContentList.map { it.id }.groupBy { it }.filter { it.value.size > 1 }
+                val duplicateContent = newContentList.map { contentHash(it) }.groupBy { it }.filter { it.value.size > 1 }
+
+                if (duplicateIds.isNotEmpty()) {
+                    Log.w("DetailViewModel", "checkForUpdates: Duplicate IDs found: ${duplicateIds.keys}")
+                }
+                if (duplicateContent.isNotEmpty()) {
+                    Log.w("DetailViewModel", "checkForUpdates: Duplicate content found: ${duplicateContent.size} groups")
+                }
+
+                Log.d("DetailViewModel", "checkForUpdates: Current items=${rawContent.size}, New parsed=${newContentList.size}, New items=${newItems.size}")
 
                 if (newItems.isNotEmpty()) {
                     // 生データを更新してキャッシュ保存、表示はNG適用後
@@ -526,14 +547,15 @@ class DetailViewModel @Inject constructor(
             // OPはスレID、返信は本文内の No. からレス番号を抽出
 
             if (html.isNotBlank()) {
-                // HTMLの変動に依存しない安定したID生成のため、プレーンテキストでハッシュ化
-                val plainText = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
-                val contentHash = extractPlainBodyFromPlain(plainText).hashCode().toUInt().toString(16)
-                val resSegment = resNum ?: "op"
-                // レス番号と本文内容ハッシュを組み合わせてTextのIDを安定化
+                // レス番号ベースの安定ID（機能互換性を保持）
+                val stableId = if (isOp) {
+                    "text_op_$threadId"
+                } else {
+                    "text_${resNum ?: "reply_${threadId}_${index}"}"
+                }
                 progressivelyLoadedContent.add(
                     DetailContent.Text(
-                        id = "text_${resSegment}_$contentHash",
+                        id = stableId,
                         htmlContent = html,
                         resNum = resNum
                     )
@@ -569,17 +591,7 @@ class DetailViewModel @Inject constructor(
                 }
             }
 
-            // レス番号が取れなかった場合は返信ブロックのHTMLやスレIDで補完
-            val blockResNum: String? = if (resNum != null) {
-                resNum
-            } else if (!isOp) {
-                val rtd = block.selectFirst(".rtd")
-                val htmlForRes = rtd?.html().orEmpty()
-                NO_PATTERN.find(htmlForRes)?.groupValues?.getOrNull(2)
-                    ?: NO_PATTERN_FALLBACK.find(htmlForRes)?.groupValues?.getOrNull(1)
-            } else {
-                threadId
-            }
+            // メディアコンテンツのID生成ではblockResNumを使わない（URL固定のため）
 
             if (mediaLinkNode != null) {
                 val link = mediaLinkNode
@@ -592,18 +604,18 @@ class DetailViewModel @Inject constructor(
                     val extension = hrefAttr.substringAfterLast('.', "").lowercase()
                     val mediaContent = when {
                         extension in IMAGE_EXTENSIONS -> {
-                            // メディアURLとレス番号を結合し、欠損時はファイル名やURLハッシュで安定IDを生成
+                            // URLのみでID生成し、HTML解析の影響を排除
                             DetailContent.Image(
-                                id = "$absoluteUrl#${blockResNum ?: deriveResFromFileName(fileName) ?: absoluteUrl.hashCode().toUInt().toString(16)}",
+                                id = "image_${absoluteUrl.hashCode().toUInt().toString(16)}",
                                 imageUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
                             )
                         }
                         extension in VIDEO_EXTENSIONS -> {
-                            // 動画も同様にレス番号優先でIDを固定し、欠損時はファイル名やURLハッシュで補完
+                            // URLのみでID生成し、HTML解析の影響を排除
                             DetailContent.Video(
-                                id = "$absoluteUrl#${blockResNum ?: deriveResFromFileName(fileName) ?: absoluteUrl.hashCode().toUInt().toString(16)}",
+                                id = "video_${absoluteUrl.hashCode().toUInt().toString(16)}",
                                 videoUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
@@ -626,8 +638,8 @@ class DetailViewModel @Inject constructor(
                 // OPに画像がない場合は「画像なし」プレースホルダーを追加
                 progressivelyLoadedContent.add(
                     DetailContent.Image(
-                        // スレIDに紐づいたプレースホルダーIDで再読込時も同一定義
-                        id = "no_image_op_$threadId",
+                        // スレURLに基づく安定したプレースホルダーID
+                        id = "no_image_op_${url.hashCode().toUInt().toString(16)}",
                         imageUrl = "", // 空のURLで「画像なし」を表現
                         prompt = null,
                         fileName = null
@@ -673,6 +685,32 @@ class DetailViewModel @Inject constructor(
     private fun deriveResFromFileName(fileName: String): String? {
         val candidate = fileName.substringBeforeLast('.', "").takeIf { it.isNotBlank() }
         return candidate?.takeIf { it.any(Char::isDigit) }
+    }
+
+    /**
+     * DetailContentの内容ハッシュを生成し、重複判定に使用する。
+     * IDとは独立して、実際のコンテンツの同一性を判定する。
+     */
+    private fun contentHash(content: DetailContent): String {
+        return when (content) {
+            is DetailContent.Text -> {
+                // 本文内容から「そうだね数」等の可変要素を除外してハッシュ化
+                val plainText = android.text.Html.fromHtml(content.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+                extractPlainBodyFromPlain(plainText).hashCode().toString()
+            }
+            is DetailContent.Image -> {
+                // 画像URLでハッシュ化（プロンプトは変動するため除外）
+                content.imageUrl.hashCode().toString()
+            }
+            is DetailContent.Video -> {
+                // 動画URLでハッシュ化
+                content.videoUrl.hashCode().toString()
+            }
+            is DetailContent.ThreadEndTime -> {
+                // 終了時刻でハッシュ化
+                content.endTime.hashCode().toString()
+            }
+        }
     }
 
     /**
