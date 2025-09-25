@@ -42,6 +42,7 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,6 +61,7 @@ import coil3.network.httpHeaders
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.valoser.futaburakari.HistoryEntry
+import com.valoser.futaburakari.HistoryManager
 import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -70,6 +72,9 @@ import androidx.compose.ui.platform.LocalContext
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.theme.LocalSpacing
+import com.valoser.futaburakari.cache.DetailCacheManagerProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 履歴の並び替えモード。
@@ -302,8 +307,34 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
             .clip(MaterialTheme.shapes.medium)
             .background(MaterialTheme.colorScheme.surfaceVariant)
 
-        // サムネイルが無い場合は明示的に「画像なし」を表示
-        if (entry.thumbnailUrl.isNullOrBlank()) {
+        val context = LocalContext.current
+        val appContext = context.applicationContext
+        val cacheManager = remember(appContext) { DetailCacheManagerProvider.get(appContext) }
+
+        val localFallbackPath by produceState<String?>(initialValue = null, entry.url) {
+            value = withContext(Dispatchers.IO) {
+                val dir = cacheManager.getArchiveDirForUrl(entry.url)
+                val files = dir.listFiles { file ->
+                    file.isFile && (file.name.endsWith(".jpg", ignoreCase = true) ||
+                        file.name.endsWith(".jpeg", ignoreCase = true) ||
+                        file.name.endsWith(".png", ignoreCase = true) ||
+                        file.name.endsWith(".webp", ignoreCase = true) ||
+                        file.name.endsWith(".avif", ignoreCase = true))
+                } ?: emptyArray()
+                files.maxByOrNull { it.lastModified() }?.absolutePath
+            }
+        }
+
+        LaunchedEffect(entry.url, localFallbackPath) {
+            if (entry.thumbnailUrl.isNullOrBlank() && !localFallbackPath.isNullOrBlank()) {
+                HistoryManager.updateThumbnail(context, entry.url, "file://${localFallbackPath}")
+            }
+        }
+
+        val effectiveThumbUrl = entry.thumbnailUrl?.takeIf { it.isNotBlank() }
+            ?: localFallbackPath?.let { "file://$it" }
+
+        if (effectiveThumbUrl == null) {
             Box(thumbModifier, contentAlignment = Alignment.Center) {
                 Text(
                     text = "画像なし",
@@ -312,14 +343,12 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
                 )
             }
         } else {
-            val context = LocalContext.current
-            val thumbUrl = entry.thumbnailUrl!!
             AsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(thumbUrl)
-                    .memoryCacheKey(ImageKeys.thumb(thumbUrl))
-                    .placeholderMemoryCacheKey(ImageKeys.thumb(thumbUrl))
-                    .diskCacheKey(thumbUrl)
+                    .data(effectiveThumbUrl)
+                    .memoryCacheKey(ImageKeys.thumb(effectiveThumbUrl))
+                    .placeholderMemoryCacheKey(ImageKeys.thumb(effectiveThumbUrl))
+                    .diskCacheKey(effectiveThumbUrl)
                     .memoryCachePolicy(CachePolicy.ENABLED)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .networkCachePolicy(CachePolicy.ENABLED)
