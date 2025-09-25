@@ -76,7 +76,7 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  * - トップバー: 通常時はサブタイトル（選択中ブックマーク名）のみを大きく表示。タイトルは非表示。
  *               検索中はタイトル領域を検索ボックスに切り替える。
  * - 絞込: NG タイトルルール、検索クエリ、画像有無（常時適用）で一覧をフィルタし、グリッド表示。
- * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
+ * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチし、`onPrefetchHint` で呼び出し側へ通知。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
  * - エラー: フル画像が失敗した場合はプレビューへフォールバックし、プレビューも不可の場合は簡易プレースホルダを表示。
  *
@@ -88,6 +88,7 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  * - `spanCount`: グリッド列数。
  * - `query`/`onQueryChange`: 検索クエリと変更ハンドラ。
  * - `onReload`: 更新アクション（プル/バウンス発火時も呼ぶ）。
+ * - `onPrefetchHint`: 可視範囲＋先読み分のプリフェッチ要求を通知するコールバック。
  * - `onSelectBookmark`: ブックマーク選択ダイアログ等を開くアクション。
  * - `onManageBookmarks`: ブックマーク管理画面を開くアクション（メニューから呼び出し）。
  * - `onOpenSettings`: 設定画面を開くアクション（メニューから呼び出し）。
@@ -97,6 +98,7 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
  *                         ViewModel 側で URL 補正（代替URLの探索・差し替え）を行うために使用。
+ * - `onImageLoadSuccess`: フル画像が取得できた際に呼ばれるコールバック。検証済み URL の保持に使用。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

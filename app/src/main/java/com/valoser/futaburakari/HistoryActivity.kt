@@ -64,13 +64,13 @@ class HistoryActivity : BaseActivity() {
                 var entries by remember { mutableStateOf(listOf<HistoryEntry>()) }
                 val lifecycleOwner = LocalLifecycleOwner.current
 
-                // 履歴を取得し、必要に応じてクリーンアップ/フィルタ/ソートして `entries` を更新する
+                // 履歴を取得し、ディスク制限に応じたクリーンアップ→フィルタ→ソートまで実施して `entries` を更新する
                 suspend fun computeAndSet() {
                     val base = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         HistoryManager.getAll(this@HistoryActivity)
                     }
                     // 自動クリーンアップ: ユーザー設定の上限（パーセンテージ設定を優先し、旧MB設定をフォールバック）を超えないよう、
-                    // 詳細キャッシュをサイズ制限し、必要に応じてサムネイルも削除する。
+                    // enforceLimit で削除されたエントリを控えておき、後段で対応するサムネイルも削除する。
                     val cleanedEntries = mutableListOf<com.valoser.futaburakari.HistoryEntry>()
                     try {
                         val p = PreferenceManager.getDefaultSharedPreferences(this@HistoryActivity)

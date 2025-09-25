@@ -7,7 +7,8 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 
 /**
- * `DetailCacheManager` をアクティビティ外から取得するための Hilt エントリーポイント。
+ * `DetailCacheManager` をアクティビティや Hilt 非対応のクラス（Worker/Compose など）から
+ * 取得するための `EntryPoint`。アプリケーションコンテキスト経由で解決する。
  */
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -16,7 +17,8 @@ interface DetailCacheManagerEntryPoint {
 }
 
 /**
- * Hilt が直接インジェクションできない場所（Compose など）から `DetailCacheManager` を取得するヘルパー。
+ * Hilt が直接インジェクションできない場所（Compose、WorkManager など）から
+ * `DetailCacheManager` を取得するヘルパー。`EntryPointAccessors.fromApplication` を利用する。
  */
 object DetailCacheManagerProvider {
     fun get(context: Context): DetailCacheManager {

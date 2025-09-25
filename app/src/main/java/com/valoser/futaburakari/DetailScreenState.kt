@@ -18,7 +18,7 @@ import com.valoser.futaburakari.ui.detail.SearchState
  * 設計思想:
  * - staticContent: パース時に決定される不変コンテンツ（テキスト、画像URL等）
  * - dynamicMetadata: 非同期で取得される追加情報（プロンプト、メタデータ等）
- * - uiState: UI表示に関する状態（ローディング、エラー等）
+ * - uiState: UI表示に関する状態（ローディング、エラー、検索情報、参照URL等）
  */
 data class DetailScreenState(
     /** パース時に決定される不変のコンテンツリスト */
@@ -30,7 +30,7 @@ data class DetailScreenState(
     /** NGフィルタ適用状態 */
     val ngFilterState: NgFilterState = NgFilterState(),
 
-    /** UI表示状態 */
+    /** UI表示状態（ローディング、エラー、現在URL、検索状態などを集約） */
     val uiState: DetailUiState = DetailUiState()
 ) {
     /**
@@ -116,7 +116,7 @@ sealed class StaticDetailContent {
 
 /**
  * 非同期で取得される動的メタデータ
- * 後から追加・更新される情報
+ * 後から追加・更新される情報と、その抽出状態/最終反映時刻を保持する。
  */
 data class DynamicMetadata(
     val prompt: String? = null,
@@ -161,7 +161,7 @@ data class DetailUiState(
  * すべての状態変更はイベントを通じて行われる
  */
 sealed class DetailEvent {
-    /** 静的コンテンツの読み込み完了 */
+    /** 静的コンテンツの読み込み完了（併せて現在の参照URLを更新） */
     data class StaticContentLoaded(
         val content: List<StaticDetailContent>,
         val url: String

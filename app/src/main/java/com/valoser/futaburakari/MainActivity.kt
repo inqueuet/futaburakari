@@ -78,9 +78,10 @@ class MainActivity : BaseActivity() {
     // 検索クエリ（Compose 側で双方向バインド）
     private val queryState = mutableStateOf("")
     private var lastIsLoading: Boolean = false
+    // 自動更新インジケータの互換用フラグ（Compose 版では視覚表示なし）
     private var autoIndicatorShown: Boolean = false
 
-    // 自動更新機能用のフィールド（改良版）
+    // RecyclerView 時代の自動更新判定の名残。Compose 版では true にならず互換維持のみ。
     private var isAutoUpdateEnabled = false
     private lateinit var prefs: SharedPreferences
     // 設定変更の反映（列数/フォントスケール/NGルール/配色モード/カタログモード設定）

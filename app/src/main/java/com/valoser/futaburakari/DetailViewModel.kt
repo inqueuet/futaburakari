@@ -645,13 +645,13 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * 画像メタデータ（主にプロンプト/説明）をバックグラウンドで抽出し、250ms間隔でバッチ適用する。
+     * 画像メタデータ（主にプロンプト/説明）をバックグラウンドで抽出し、EventStore に反映する。
      *
      * 挙動:
-     * - 画像ごとに `MetadataExtractor.extract` を実行（HTTP/ローカル file:// 対応）。
-     * - 反映時にキャッシュ/スナップショットへ都度保存。
-     * - `file://` の場合、EXIF(UserComment) にも書き戻し（上書き）し、後続の再抽出を安定化。
-     * - 動画は対象外。
+     * - 画像ごとにキャッシュを確認し、未取得の場合のみ `MetadataExtractor.extract` を実行。
+     * - 結果は EventStore を通じて InProgress → Completed/Failed へ遷移させる。
+     * - 取得できたプロンプトはメタデータキャッシュと詳細キャッシュへ書き戻す。
+     * - 動画は現在対象外（ログ出力のみ）。
      */
     private suspend fun updateMetadataInBackground(contentList: List<DetailContent>, url: String) {
         updateMetadataWithEventStore(contentList, url)
@@ -1303,7 +1303,9 @@ class DetailViewModel @Inject constructor(
     // ===== 新アーキテクチャ対応のメタデータ更新処理 =====
 
     /**
-     * 新しいアーキテクチャでメタデータを更新
+     * EventStore 連携でメタデータを更新する内部処理。
+     * 画像は既存プロンプトを尊重しつつ、キャッシュ→抽出→Completed/Failed のイベントを発行し、
+     * 成功時にはメタデータキャッシュと保存済み詳細も更新する。動画は現状ログのみ。
      */
     private suspend fun updateMetadataWithEventStore(contentList: List<DetailContent>, url: String) {
         contentList.forEach { content ->

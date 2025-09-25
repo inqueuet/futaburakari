@@ -482,7 +482,7 @@ class MainViewModel @Inject constructor(
     /**
      * URL の存在確認を行う。
      * - まず UA 付き HEAD で確認し、失敗時は GET Range(0-0) にフォールバック
-     * - 一時的エラーを考慮し、短い遅延を挟みつつ既定2回まで試行
+     * - 一時的エラーを考慮し、呼び出し元が指定した回数だけ短い遅延を挟みつつ試行する（既定は1回）
      */
     private suspend fun urlExists(
         url: String,

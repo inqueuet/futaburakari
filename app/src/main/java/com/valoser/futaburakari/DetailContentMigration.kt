@@ -12,6 +12,8 @@ object DetailContentMigration {
 
     /**
      * 既存のDetailContentリストを新しいアーキテクチャに変換
+     * 静的要素は `StaticDetailContent`、既存プロンプトなどの動的要素は
+     * Completed 状態と抽出時刻付きの `DynamicMetadata` として分離する。
      *
      * @param oldContent 既存のDetailContentリスト
      * @return Pair of (StaticDetailContent, DynamicMetadata map)
@@ -108,7 +110,9 @@ object DetailContentMigration {
     }
 
     /**
-     * 既存のparseContentFromDocument関数の結果を新形式に変換
+     * 既存の parseContentFromDocument 結果を静的コンテンツ/メタデータ/イベントへ変換する。
+     * メタデータが存在する項目には `MetadataUpdated` イベントを組み立て、
+     * EventStore 側で即時反映できるようにする。
      */
     fun migrateParseResult(
         parsedContent: List<DetailContent>
@@ -132,7 +136,8 @@ object DetailContentMigration {
  */
 
 /**
- * 既存のコンテンツリストをEventStoreに読み込む
+ * 既存のコンテンツリストを EventStore に投入し、ロード状態と既存メタデータを一括反映する。
+ * Loading → StaticContentLoaded → MetadataUpdated… → Loading(false) の順でイベントを適用する。
  */
 suspend fun DetailEventStore.loadFromOldContent(
     oldContent: List<DetailContent>,
@@ -153,6 +158,8 @@ suspend fun DetailEventStore.loadFromOldContent(
 
 /**
  * プロンプトの段階的更新（旧APIとの互換性）
+ * 新イベントフローの `updateMetadataProgressively` を呼び出し、
+ * InProgress → Completed/Failed までの遷移を適用する。
  */
 suspend fun DetailEventStore.updatePromptCompatible(
     contentId: String,

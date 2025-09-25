@@ -130,8 +130,9 @@ suspend fun DetailEventStore.setError(error: String?): DetailScreenState {
 }
 
 /**
- * メタデータの段階的更新
- * プロンプト抽出の開始から完了まで
+ * メタデータの段階的更新。
+ * `MetadataExtractionStarted` で InProgress に遷移させ、結果の有無に応じて
+ * Completed / Failed を含む `MetadataUpdated` を連続適用する。
  */
 suspend fun DetailEventStore.updateMetadataProgressively(
     contentId: String,

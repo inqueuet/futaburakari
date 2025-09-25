@@ -539,7 +539,7 @@ class DetailCacheManager @Inject constructor(
     }
 
     /**
-     * ファイナライザ：GC時の安全策としてリソースクリーンアップ
+     * finalize 互換の後始末。ART では呼ばれない可能性があるため、明示的な `cleanup()` 呼び出しが前提。
      */
     protected fun finalize() {
         cleanup()

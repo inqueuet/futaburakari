@@ -198,7 +198,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
 
     /**
      * Coil の ImageLoader を構築して提供する。
-     * - GIF/動画フレーム/SVG のデコードを有効化
+     * - GIF/動画フレーム/SVG のデコードは対応モジュールの自動登録に任せる構成
      * - メモリ/ディスクキャッシュを調整し、再利用性を高める
      * - デバッグロガーを有効化（失敗理由の追跡に有用）
      *

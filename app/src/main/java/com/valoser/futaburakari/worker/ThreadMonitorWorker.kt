@@ -1,7 +1,7 @@
 /**
  * スレ URL を監視してレス内容と媒体をアーカイブする WorkManager 用 Worker。
  * - 定期監視と単発スナップショットの両方を受け付け、常時有効なバックグラウンド監視としてキャッシュ/履歴を更新。
- * - 取得したメディアはローカルへ保存し、既存の `prompt` を温存したままマージする。
+ * - 取得したメディアは可能な限りローカルへ保存し、既存の `prompt` を温存したままマージする。
  */
 package com.valoser.futaburakari.worker
 
@@ -209,7 +209,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
         /**
          * 指定したスレURLの監視を一回分スケジュールする。
-         * - 正規化したスレッドキーからユニーク名を生成し、既存の同名Workを置き換える。
+         * - 正規化したスレッドキーからユニーク名を生成し、既存チェーンの末尾に Work を追加する（APPEND）。
          * - 短い初期待機を設定し、ネットワーク接続（CONNECTED）を要求する。
          */
         fun schedule(context: Context, url: String) {
@@ -354,7 +354,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
     /**
      * 媒体をスレッド別のアーカイブディレクトリに保存し、URLをローカル file URI に差し替える。
-     * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略。
+     * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略し、
+     * ダウンロードに失敗した場合は元のURLを維持する。
      */
     private suspend fun archiveMedia(threadUrl: String, list: List<DetailContent>): List<DetailContent> {
         val dir = cacheManager.getArchiveDirForUrl(threadUrl)
