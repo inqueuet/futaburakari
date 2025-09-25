@@ -458,7 +458,13 @@ class DetailViewModel @Inject constructor(
     private suspend fun parseContentFromDocument(document: Document, url: String): List<DetailContent> =
         withContext(Dispatchers.Default) {
         val progressivelyLoadedContent = mutableListOf<DetailContent>()
-        var itemIdCounter = 0L
+        val threadId = url.substringAfterLast('/').substringBefore(
+            ".htm",
+            missingDelimiterValue = url.substringAfterLast('/')
+        ).ifBlank {
+            url.hashCode().toUInt().toString(16)
+        }
+        // URL末尾を基準にスレIDを決定し、欠損時はURLハッシュで安定化
 
         val threadContainer = document.selectFirst("div.thre")
 
@@ -509,17 +515,24 @@ class DetailViewModel @Inject constructor(
                 }
             }
 
+            val resNum = if (isOp) {
+                threadId
+            } else {
+                NO_PATTERN.find(html)?.groupValues?.getOrNull(2)
+                    ?: NO_PATTERN_FALLBACK.find(html)?.groupValues?.getOrNull(1)
+            }
+            // OPはスレID、返信は本文内の No. からレス番号を抽出
+
             if (html.isNotBlank()) {
-                // レス番号の抽出: OP はURL末尾、返信は HTML 内の "No."（改行/空白やドットの有無に頑健）から取得
-                val resNum = if (isOp) {
-                    url.substringAfterLast('/').substringBefore(".htm")
-                } else {
-                    // Futaba系の "No."（または一部で「No」）に続く数値を安定抽出（改行や余分な空白を許容）
-                    NO_PATTERN.find(html)?.groupValues?.getOrNull(2)
-                        ?: NO_PATTERN_FALLBACK.find(html)?.groupValues?.getOrNull(1)
-                }
+                val htmlHash = html.hashCode().toUInt().toString(16)
+                val resSegment = resNum ?: "op"
+                // レス番号と本文ハッシュを組み合わせてTextのIDを安定化
                 progressivelyLoadedContent.add(
-                    DetailContent.Text(id = "text_${itemIdCounter++}", htmlContent = html, resNum = resNum)
+                    DetailContent.Text(
+                        id = "text_${resSegment}_$htmlHash",
+                        htmlContent = html,
+                        resNum = resNum
+                    )
                 )
             }
 
@@ -552,14 +565,16 @@ class DetailViewModel @Inject constructor(
                 }
             }
 
-            // ループ先頭で isOp を見た後に、そのブロックの resNum を必ず計算しておく
-            val blockResNum: String? = if (isOp) {
-                url.substringAfterLast('/').substringBefore(".htm")
-            } else {
+            // レス番号が取れなかった場合は返信ブロックのHTMLやスレIDで補完
+            val blockResNum: String? = if (resNum != null) {
+                resNum
+            } else if (!isOp) {
                 val rtd = block.selectFirst(".rtd")
                 val htmlForRes = rtd?.html().orEmpty()
                 NO_PATTERN.find(htmlForRes)?.groupValues?.getOrNull(2)
                     ?: NO_PATTERN_FALLBACK.find(htmlForRes)?.groupValues?.getOrNull(1)
+            } else {
+                threadId
             }
 
             if (mediaLinkNode != null) {
@@ -573,16 +588,18 @@ class DetailViewModel @Inject constructor(
                     val extension = hrefAttr.substringAfterLast('.', "").lowercase()
                     val mediaContent = when {
                         extension in IMAGE_EXTENSIONS -> {
+                            // メディアURLとレス番号を結合し、欠損時はファイル名やURLハッシュで安定IDを生成
                             DetailContent.Image(
-                                id = "$absoluteUrl#${blockResNum ?: index}",
+                                id = "$absoluteUrl#${blockResNum ?: deriveResFromFileName(fileName) ?: absoluteUrl.hashCode().toUInt().toString(16)}",
                                 imageUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
                             )
                         }
                         extension in VIDEO_EXTENSIONS -> {
+                            // 動画も同様にレス番号優先でIDを固定し、欠損時はファイル名やURLハッシュで補完
                             DetailContent.Video(
-                                id = "$absoluteUrl#${blockResNum ?: index}",
+                                id = "$absoluteUrl#${blockResNum ?: deriveResFromFileName(fileName) ?: absoluteUrl.hashCode().toUInt().toString(16)}",
                                 videoUrl = absoluteUrl,
                                 prompt = null,
                                 fileName = fileName
@@ -605,7 +622,8 @@ class DetailViewModel @Inject constructor(
                 // OPに画像がない場合は「画像なし」プレースホルダーを追加
                 progressivelyLoadedContent.add(
                     DetailContent.Image(
-                        id = "no_image_op_${itemIdCounter++}",
+                        // スレIDに紐づいたプレースホルダーIDで再読込時も同一定義
+                        id = "no_image_op_$threadId",
                         imageUrl = "", // 空のURLで「画像なし」を表現
                         prompt = null,
                         fileName = null
@@ -637,11 +655,20 @@ class DetailViewModel @Inject constructor(
 
         threadEndTime?.let {
             progressivelyLoadedContent.add(
-                DetailContent.ThreadEndTime(id = "thread_end_time_${itemIdCounter++}", endTime = it)
+                DetailContent.ThreadEndTime(
+                    // 時刻文字列のハッシュでThreadEndTimeのIDを固定
+                    id = "thread_end_time_${it.hashCode().toUInt().toString(16)}",
+                    endTime = it
+                )
             )
         }
 
         return@withContext progressivelyLoadedContent.toList()
+    }
+
+    private fun deriveResFromFileName(fileName: String): String? {
+        val candidate = fileName.substringBeforeLast('.', "").takeIf { it.isNotBlank() }
+        return candidate?.takeIf { it.any(Char::isDigit) }
     }
 
     /**
