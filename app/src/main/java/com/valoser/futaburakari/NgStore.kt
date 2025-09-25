@@ -5,6 +5,8 @@ import androidx.preference.PreferenceManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * NG ルールを永続化・取得するためのシンプルなストア。
@@ -23,7 +25,10 @@ class NgStore(private val context: Context) {
      *
      * 保存がない場合や JSON パースに失敗した場合は空リストを返します。
      */
-    fun getRules(): List<NgRule> {
+    fun getRules(): List<NgRule> = loadRules()
+
+    /** JSON から NG ルール一覧を読み出す内部ヘルパー。 */
+    private fun loadRules(): List<NgRule> {
         val json = prefs.getString(key, null) ?: return emptyList()
         return runCatching {
             val type = object : TypeToken<List<NgRule>>() {}.type
@@ -59,7 +64,7 @@ class NgStore(private val context: Context) {
             sourceKey = sourceKey,
             ephemeral = ephemeral
         )
-        val updated = getRules() + new
+        val updated = loadRules() + new
         save(updated)
         return new
     }
@@ -68,7 +73,7 @@ class NgStore(private val context: Context) {
      * 指定 ID の NG ルールを削除して保存します。
      */
     fun removeRule(ruleId: String) {
-        val updated = getRules().filterNot { it.id == ruleId }
+        val updated = loadRules().filterNot { it.id == ruleId }
         save(updated)
     }
 
@@ -76,7 +81,7 @@ class NgStore(private val context: Context) {
      * 指定 ID の NG ルールのパターン／照合方式を更新して保存します。
      */
     fun updateRule(ruleId: String, pattern: String, match: MatchType?) {
-        val updated = getRules().map {
+        val updated = loadRules().map {
             if (it.id == ruleId) it.copy(pattern = pattern, match = match) else it
         }
         save(updated)
@@ -97,12 +102,34 @@ class NgStore(private val context: Context) {
      * - 一時ルール以外は対象外です。
      */
     fun cleanup() {
-        val rules = getRules()
-        if (rules.isEmpty()) return
-        val keys = HistoryManager.getAll(context).map { it.key }.toSet()
+        val rules = loadRules()
+        val filtered = applyCleanup(rules)
+        if (filtered.size != rules.size) save(filtered)
+    }
+
+    /**
+     * SharedPreferences からの読み書きと、履歴参照を IO スレッドへ逃がしたい場合のユーティリティ。
+     * cleanup → 最新ルール取得を同一ディスパッチャでまとめて行う。
+     */
+    suspend fun cleanupAndGetRules(): List<NgRule> = withContext(Dispatchers.IO) {
+        val rules = loadRules()
+        val filtered = applyCleanup(rules)
+        if (filtered.size != rules.size) save(filtered)
+        filtered
+    }
+
+    /** 同様に、ルール取得だけを IO 上で実行したい場合に利用するヘルパー。 */
+    suspend fun getRulesAsync(): List<NgRule> = withContext(Dispatchers.IO) { loadRules() }
+
+    /** ルール一覧へ一時 NG の削除を適用した結果を返す。 */
+    private fun applyCleanup(rules: List<NgRule>): List<NgRule> {
+        if (rules.isEmpty()) return rules
+
         val now = System.currentTimeMillis()
         val ttl = 3L * 24 * 60 * 60 * 1000 // 3 日（ミリ秒）
-        val filtered = rules.filterNot { r ->
+        val keys = HistoryManager.getAll(context).map { it.key }.toSet()
+
+        return rules.filterNot { r ->
             val isEphemeral = r.ephemeral == true
             if (!isEphemeral) return@filterNot false
 
@@ -118,6 +145,5 @@ class NgStore(private val context: Context) {
                 else -> tooOld
             }
         }
-        if (filtered.size != rules.size) save(filtered)
     }
 }

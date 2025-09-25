@@ -14,7 +14,7 @@ import javax.inject.Inject
 
 /**
  * ブックマーク管理画面のViewModel（Hilt DI 対応）。
- * BookmarkManager を介してブックマークのCRUD操作を行い、UI状態をフローで公開する。
+ * BookmarkManager を介した CRUD 操作を `Dispatchers.IO` 上で実行し、結果を StateFlow として公開する。
  */
 @HiltViewModel
 class BookmarkViewModel @Inject constructor(

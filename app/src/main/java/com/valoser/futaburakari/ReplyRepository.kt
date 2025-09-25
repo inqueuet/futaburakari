@@ -272,7 +272,7 @@ class ReplyRepository @Inject constructor(
     }
 
     /**
-     * スレHTMLから hash を抽出する（Shift_JIS）。
+     * スレHTMLから hash を抽出する（文字コードは `EncodingUtils` で推定して復号）。
      *
      * - HTML を取得して `form#fm`（なければ最初の `form`）から `input[name=hash]` を探します。
      * - 見つからない場合は失敗（`IllegalStateException`）として返します。

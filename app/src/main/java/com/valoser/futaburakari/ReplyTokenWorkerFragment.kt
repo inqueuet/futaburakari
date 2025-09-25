@@ -11,6 +11,10 @@ import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
+/**
+ * 非表示の `WebView` で投稿ページを開き、hidden/token を抽出して `TokenProvider` として返すフラグメント。
+ * 投稿ページと同じベースドメイン（ホスト名の末尾2ラベル）に限定してナビゲーションし、抽出結果は JSON から `Map` に変換する。
+ */
 class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
 
     private lateinit var webView: WebView
@@ -110,7 +114,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
         }?.invoke(Result.failure(IllegalStateException("cancelled by new fetchTokens")))
 
         webView.post {
-            // restrict navigation to the same base domain as the post page
+            // restrict navigation to hosts whose base domain（末尾2ラベル） matches the post page
             runCatching {
                 val host = android.net.Uri.parse(postPageUrl).host
                 // base domain = 最後の2ラベル（例: may.2chan.net → 2chan.net）

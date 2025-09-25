@@ -10,10 +10,11 @@ package com.valoser.futaburakari
  *   - API 用（デフォルト DI）
  *     - 共通 UA 付与、タイムアウト、CookieJar/ConnectionPool/HTTP キャッシュ（約50MB）を設定
  *     - Dispatcher: ユーザー設定に基づく `maxRequests = N`, `maxRequestsPerHost = N`（N は 1..4）
- *     - 2chan 系ホストへは軽い遅延（約 2ms）でレート抑制
+ *     - 2chan 系ホストへは軽い遅延（約 1ms）でレート抑制
  *     - 例外発生時は段階的にフォールバック（最小構成→完全デフォルト）
  *   - 画像取得用（`@Named("coil")`）
- *     - 設定は API 用と同等（Dispatcher はユーザー設定値、2chan は ~2ms 遅延、UA/Timeout/CookieJar/ConnectionPool）
+ *     - UA/CookieJar/ConnectionPool/Dispatcher は API 用と共通だが、読み取り・コールタイムアウトは短め（約 8 秒）に設定
+ *     - 2chan 系ホストへは ~1ms の遅延を挟みアクセス頻度を抑制
  * - `NetworkClient`: API 用 OkHttpClient を用いるシングルトンの HTML/Bytes フェッチラッパー
  */
 
@@ -75,7 +76,7 @@ object NetworkModule {
          * API 用の `OkHttpClient` を生成して提供する。
          * - UA/タイムアウト/HTTPキャッシュ/共有ConnectionPool/Cookie を設定
          * - 同時接続数はユーザー設定値（1..4）を Dispatcher に反映
-         * - 2chan 系ホストへは軽い遅延（約 2ms）を入れてアクセス頻度を抑制
+         * - 2chan 系ホストへは軽い遅延（約 1ms）を入れてアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
          *
          * @param context 設定参照用のアプリケーションコンテキスト
@@ -116,7 +117,7 @@ object NetworkModule {
                 .build()
         } catch (e: Exception) {
             Log.e("NetworkModule", "Failed to create OkHttpClient with full configuration", e)
-            // フォールバック：最小構成のクライアントで再試行（Cookie/Timeout のみ）
+            // フォールバック：Cookie/HTTP キャッシュ/タイムアウトのみを備えた縮退構成で再試行
             try {
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
@@ -127,7 +128,7 @@ object NetworkModule {
                     .build()
             } catch (fallbackException: Exception) {
                 Log.e("NetworkModule", "Fallback OkHttpClient creation also failed", fallbackException)
-                // 最後の手段：完全デフォルトのクライアント
+                // 最後の手段：共有 ConnectionPool のみを設定した素のクライアント
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
                     .build()
@@ -146,9 +147,9 @@ object NetworkModule {
     ): OkHttpClient {
         /**
          * 画像取得（Coil）用の `OkHttpClient` を生成して提供する。
-         * - 設定は API 用と同等（UA/Timeout/Cookie/ConnectionPool）
-         * - Dispatcher はユーザー設定の同時接続数（1..4）
-         * - 2chan 系ホストへは軽い遅延（約 2ms）でアクセス頻度を抑制
+         * - UA/Cookie/ConnectionPool/Dispatcher は API 用と同じ構成
+         * - 読み取り・コールタイムアウトは短め（約 8 秒）に設定し、失敗を素早く検知
+         * - 2chan 系ホストへは軽い遅延（約 1ms）でアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
          *
          * @param context 設定参照用のアプリケーションコンテキスト
@@ -195,7 +196,7 @@ object NetworkModule {
                     .cookieJar(cookieJar)
                     .cache(cache)
                     .connectTimeout(30.seconds)
-                    // 縮退時もタイムアウト方針は維持（さらに短め）
+                    // 縮退時も同じ 8 秒タイムアウトを維持
                     .readTimeout(8.seconds)
                     .callTimeout(8.seconds)
                     .build()
@@ -208,6 +209,7 @@ object NetworkModule {
         }
     }
 
+    /** 共通 OkHttpClient を用いる `NetworkClient` を DI コンテナへ提供する。 */
     @Provides
     @Singleton
     fun provideNetworkClient(okHttpClient: OkHttpClient): NetworkClient = NetworkClient(okHttpClient)

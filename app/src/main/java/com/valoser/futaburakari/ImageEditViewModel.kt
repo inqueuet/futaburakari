@@ -10,6 +10,7 @@ import com.valoser.futaburakari.edit.EditingEngine
  * - 元画像（Bitmap）と編集エンジン（EditingEngine）のライフサイクルを管理
  * - Activity/Composeからの編集操作に用いるエンジンを提供
  * - 非UIスレッドで準備したエンジンを適用する手段も提供
+ * - 既存エンジンの差し替え（setPreparedEngine）にも対応し、事前計算結果を再利用できる
  * - ViewModel破棄時にBitmapを明示的にrecycleしてメモリを解放
  */
 class ImageEditViewModel : ViewModel() {

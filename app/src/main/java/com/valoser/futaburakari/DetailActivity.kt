@@ -50,6 +50,7 @@ import com.valoser.futaburakari.search.RecentSearchStore
  * - `DetailViewModel` を用いてスレッドの詳細を読み込み、更新を監視
  * - スレッドURLごとにリストのスクロール位置を保存/復元
  * - 返信・削除・NGフィルタ更新・検索・ソーダネの操作を処理
+ * - 画像一括ダウンロードと競合解決ダイアログをトリガーし、進捗フローをUIへ渡す
  * - 履歴（最新レス番号とサムネイル）を更新し、スナップショット取得をトリガー
  * - ユーザー設定（テーマ/広告）や戻る操作のUXを反映
  * - 画像編集の起動（トップバーの「画像編集」アクションから `ImagePickerActivity` へ遷移）
@@ -151,10 +152,10 @@ class DetailActivity : BaseActivity() {
         currentUrl = intent.getStringExtra(EXTRA_URL)
         // スクロール位置の保存/復元に用いるストアを先に初期化（Compose へ初期状態を渡す）
         scrollStore = ScrollPositionStore(this)
-        val initialScroll: Pair<Int, Int> = currentUrl?.let { url ->
+        val initialScroll: ScrollPositionStore.SavedScrollState = currentUrl?.let { url ->
             val key = UrlNormalizer.threadKey(url)
             scrollStore.getScrollState(key)
-        } ?: (0 to 0)
+        } ?: ScrollPositionStore.SavedScrollState()
         // Compose のコンテナへ切替（トップバー含む）。
         // メモ: カラーモード設定の個別制御は廃止（テーマに準拠）
         val showAdsPref = PreferenceManager.getDefaultSharedPreferences(this)
@@ -207,14 +208,17 @@ class DetailActivity : BaseActivity() {
                     adUnitId = adUnitId,
                     onBottomPaddingChange = { h -> bottomOffsetFlowInternal.value = h },
                     // Compose リストのスクロール状態を保存/復元
-                    initialScrollIndex = initialScroll.first,
-                    initialScrollOffset = initialScroll.second,
-                    onSaveScroll = { pos, off ->
+                    initialScrollIndex = initialScroll.position,
+                    initialScrollOffset = initialScroll.offset,
+                    initialScrollAnchorId = initialScroll.anchorId,
+                    onSaveScroll = { pos, off, anchorId ->
                         val url = currentUrl ?: return@DetailScreenScaffold
                         val key = UrlNormalizer.threadKey(url)
-                        scrollStore.saveScrollState(key, pos, off)
+                        scrollStore.saveScrollState(key, pos, off, anchorId)
                     },
                     itemsFlow = viewModel.detailContent,
+                    plainTextCacheFlow = viewModel.plainTextCache,
+                    onEnsurePlainTextCache = { list -> viewModel.ensurePlainTextCachedFor(list) },
                     plainTextOf = { t -> viewModel.plainTextOf(t) },
                     currentQueryFlow = viewModel.currentQuery,
                     getSodaneState = { rn -> viewModel.getSodaNeState(rn) },
@@ -261,7 +265,8 @@ class DetailActivity : BaseActivity() {
                     downloadConflictFlow = viewModel.downloadConflictRequests,
                     onDownloadConflictSkip = { id -> viewModel.confirmDownloadSkip(id) },
                     onDownloadConflictOverwrite = { id -> viewModel.confirmDownloadOverwrite(id) },
-                    onDownloadConflictCancel = { id -> viewModel.cancelDownloadRequest(id) }
+                    onDownloadConflictCancel = { id -> viewModel.cancelDownloadRequest(id) },
+                    promptLoadingIdsFlow = viewModel.promptLoadingIds
                 )
             }
         }
@@ -314,8 +319,7 @@ class DetailActivity : BaseActivity() {
      */
     override fun onStart() {
         super.onStart()
-        // 設定変更（広告ON/OFF）を戻り時にも反映
-        // レガシーUI使用時のみバナー制御（Compose移行時はCompose側で表示）
+        // 設定変更（広告ON/OFF）を戻り時にも反映し、Compose 側のバナー表示状態を最新化
         setupAdBanner()
         // 設定変更の監視を開始
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
@@ -331,11 +335,11 @@ class DetailActivity : BaseActivity() {
         if (this::prefs.isInitialized) {
             prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         }
-        // 画像プロンプトキャッシュを強制的にディスクに保存
-        try {
-            MetadataCache(this).flush()
-        } catch (e: Exception) {
-            android.util.Log.e("DetailActivity", "Failed to flush metadata cache", e)
+        // アプリ共通の画像プロンプトキャッシュに対しフラッシュを要求
+        metadataCache.flush().invokeOnCompletion { error ->
+            if (error != null) {
+                android.util.Log.e("DetailActivity", "Failed to flush metadata cache", error)
+            }
         }
         super.onStop()
     }
@@ -361,28 +365,56 @@ class DetailActivity : BaseActivity() {
                 viewModel.detailContent.collect { list ->
 
             // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
-            runCatching {
+            try {
                 val latestReplyNo = list.count { it is DetailContent.Text }
                 val threadUrl = currentUrl
                 if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
                     HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
                 }
+            } catch (_: Exception) {
+                // 例外は無視して UI 更新継続
             }
 
-            // 履歴のサムネイル更新（最初のメディアを採用）
-            runCatching {
-                val media = list.firstOrNull {
-                    it is DetailContent.Image || it is DetailContent.Video
+            // 履歴のサムネイル更新（OPの画像のみを採用）
+            try {
+                val firstTextIndex = list.indexOfFirst { it is DetailContent.Text }
+                val media = if (firstTextIndex >= 0) {
+                    // OPレスの直後の画像/動画を探す（次のTextレスが現れるまで）
+                    // 空のURLを持つプレースホルダー画像は除外
+                    list.drop(firstTextIndex + 1).takeWhile { it !is DetailContent.Text }
+                        .firstOrNull {
+                            when (it) {
+                                is DetailContent.Image -> it.imageUrl.isNotBlank()
+                                is DetailContent.Video -> it.videoUrl.isNotBlank()
+                                else -> false
+                            }
+                        }
+                } else null
+                val opResNum = (list.getOrNull(firstTextIndex) as? DetailContent.Text)?.resNum
+                val mediaId = when (media) {
+                    is DetailContent.Image -> media.id
+                    is DetailContent.Video -> media.id
+                    else -> null
                 }
-                val url = when (media) {
+                // OPレス番号とメディアIDの末尾が一致する場合のみ OP のサムネとみなす
+                val isOpMedia = if (!opResNum.isNullOrBlank() && !mediaId.isNullOrBlank()) {
+                    mediaId.endsWith("#$opResNum")
+                } else media != null
+                val url = if (isOpMedia) when (media) {
                     is DetailContent.Image -> media.imageUrl
                     is DetailContent.Video -> media.videoUrl
                     else -> null
-                }
+                } else null
                 val threadUrl = currentUrl
-                if (!url.isNullOrBlank() && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
+                if (!threadUrl.isNullOrBlank()) {
+                    if (!url.isNullOrBlank()) {
+                        HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
+                    } else {
+                        HistoryManager.clearThumbnail(this@DetailActivity, threadUrl)
+                    }
                 }
+            } catch (_: Exception) {
+                // 例外は無視して UI 更新継続
             }
 
             // Compose側は LiveData を直接購読しているため、ここでのAdapter更新は不要
@@ -487,6 +519,11 @@ class DetailActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    // Hilt のシングルトン MetadataCache を EntryPoint 経由で解決
+    private val metadataCache: MetadataCache by lazy {
+        MetadataCacheEntryPoint.resolve(applicationContext)
     }
 
     // 既読更新（Compose版）は onVisibleMaxOrdinal -> markViewedByOrdinal に統一

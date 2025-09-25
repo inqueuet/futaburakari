@@ -2,7 +2,7 @@ package com.valoser.futaburakari
 
 /**
  * ブックマーク管理画面の Activity（Compose ベース）。
- * 追加・更新・削除・選択の操作を提供し、BookmarkManager を通じて永続化する。
+ * Hilt 経由で取得した BookmarkViewModel を通じて永続化層へアクセスする。
  */
 
 import android.os.Bundle
@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 
 /**
  * ブックマークを管理するアクティビティ（Jetpack Compose ベース）。
- * 追加/更新/削除/選択の操作を提供し、`BookmarkManager` を通じて永続化する。
+ * 追加/更新/削除/選択の操作を `BookmarkViewModel` に委譲し、その先で `BookmarkManager` へ反映する。
  */
 @AndroidEntryPoint
 class BookmarkActivity : BaseActivity() {

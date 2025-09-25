@@ -14,8 +14,8 @@ import java.io.IOException
 
 /**
  * Gson factory for polymorphic (de)serialization of `DetailContent` sealed types.
- * Adds a discriminator field `contentType` when writing, and selects the concrete
- * subtype based on that field when reading.
+ * Adds a discriminator field `contentType` when writing, and expects the same field when reading;
+ * unknown or missing discriminator values result in a `JsonParseException`.
  */
 class DetailContentTypeAdapterFactory : TypeAdapterFactory {
     /**

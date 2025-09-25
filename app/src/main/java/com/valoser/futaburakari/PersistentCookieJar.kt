@@ -182,7 +182,7 @@ object PersistentCookieJar : CookieJar {
             sharedPreferences.edit().remove(COOKIES_KEY_PREFIX + domain).apply()
             Log.d("PersistentCookieJar", "Cleared cookies for domain pattern: $domain (related to host $host)")
         }
-        // Ensure changes are persisted if a domain was actually removed
+        // SharedPreferences 側は個別に remove 済みのため追加保存処理は不要
         if (domainsToRemove.isNotEmpty()) {
             // saveCookiesToPrefs() // cookieStore is already modified, this might save an empty list for removed domains.
             // The removal from sharedPreferences is direct.

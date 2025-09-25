@@ -1,7 +1,7 @@
 package com.valoser.futaburakari
 
 /**
- * Immutable model representing a single bookmark item.
+ * Immutable model representing a single bookmark item shared between persistence and UI layers.
  *
  * @property name Display label for the bookmark.
  * @property url Absolute or relative URL the bookmark points to.

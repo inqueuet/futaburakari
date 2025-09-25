@@ -5,9 +5,9 @@ import org.junit.Test
 import org.junit.Assert.*
 
 /**
- * Example local unit test, which will execute on the development machine (host).
+ * 足し算のサンプル単体テスト。開発マシン上で実行される。
  *
- * See [testing documentation](http://d.android.com/tools/testing).
+ * `2 + 2` が `4` になることを検証する。
  */
 class ExampleUnitTest {
     @Test

@@ -1,6 +1,7 @@
 /*
  * 画像・動画・テキストの表示を行うメディアビューア。
  * - 保存操作（API 28以下は書込権限の確認）や戻る操作を提供。
+ * - 保存処理は MediaSaver に委譲し、共有の NetworkClient でリモート取得にも対応。
  */
 package com.valoser.futaburakari
 

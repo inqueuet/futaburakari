@@ -1,7 +1,7 @@
 /**
  * 画像/動画/テキストを共通UIで表示するメディアビューのCompose実装。
  * - 画像のズーム、動画再生、テキストのコピー/保存などを提供します。
- * - コメントの追記のみを行い、コードの挙動は変更しません。
+ * - テキストは必要に応じてメタデータ抽出で補完し、メディア保存アクションも制御します。
  */
 package com.valoser.futaburakari.ui.compose
 
@@ -199,7 +199,7 @@ fun MediaViewScreen(
 }
 
 /**
- * ズーム可能な画像表示。1:1 のエリアに収め、ピンチやダブルタップで拡大縮小可。
+ * ズーム可能な画像表示。画面全体を使い ContentScale.Fit で縦横比を保ったまま描画する。
  */
 @Composable
 private fun ImageContent(url: String?, referer: String? = null, modifier: Modifier = Modifier) {

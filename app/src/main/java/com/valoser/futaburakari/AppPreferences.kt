@@ -8,7 +8,8 @@ import java.security.SecureRandom
 
 /**
  * アプリ共通の設定値にアクセスするユーティリティ（`SharedPreferences` バックエンド）。
- * `pthc`・`pwd`・GUID 付与フラグ・並列度設定などを保存/取得する。
+ * `pthc`・`pwd`・GUID 付与フラグ・並列度設定などの永続化に加え、キャッシュ制限や空き容量に関する
+ * ヘルパー関数も提供する。
  */
 object AppPreferences {
     /** `SharedPreferences` のファイル名。 */
@@ -105,6 +106,7 @@ object AppPreferences {
 
     /**
      * 端末の内部ストレージの利用可能容量をGB単位で取得する。
+     * 取得に失敗した場合はフォールバックとして 32GB を返す。
      */
     fun getAvailableStorageGB(context: Context): Double {
         return try {
@@ -119,7 +121,7 @@ object AppPreferences {
 
     /**
      * パーセンテージベースの自動クリーンアップ設定のためのユーティリティ。
-     * 利用可能容量に対する割合から実際のバイト数を計算する。
+     * "0"/"5"/"10"/"20"/"30" のキーを受け取り、利用可能容量に対する割合から実際のバイト数を計算する。
      */
     fun calculateCacheLimitBytes(context: Context, percentageKey: String): Long {
         val availableGB = getAvailableStorageGB(context)
