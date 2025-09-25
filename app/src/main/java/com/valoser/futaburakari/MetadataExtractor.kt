@@ -43,7 +43,7 @@ object MetadataExtractor {
     private const val TAG = "MetadataExtractor"
 
     // ====== 同時接続数制限設定（ユーザー設定で可変） ======
-    // AppPreferences の並列度(1..4)を粗く 1 接続に写像して、
+    // AppPreferences の並列度(1..4)を最大3接続に丸めて適用し、
     // HEAD/Range リクエストの同時実行を抑制する（端末/サーバ負荷のバランスを優先）。
     @Volatile
     private var currentPermits: Int = 1
@@ -148,8 +148,9 @@ object MetadataExtractor {
 
             // 1) in-memory LRU
             cacheGet(uriOrUrl)?.let { return@withContext it }
-            // 2) persistent cache
-            runCatching { MetadataCache(context).get(uriOrUrl) }.getOrNull()?.let { cached ->
+            // 2) persistent cache（Hilt シングルトンを EntryPoint で取得）
+            val metadataCache = MetadataCacheEntryPoint.resolve(context)
+            runCatching { metadataCache.get(uriOrUrl) }.getOrNull()?.let { cached ->
                 cachePut(uriOrUrl, cached)
                 return@withContext cached
             }
@@ -187,7 +188,7 @@ object MetadataExtractor {
                     return@withContext null
                 }
                 cachePut(uriOrUrl, result)
-                runCatching { MetadataCache(context).put(uriOrUrl, result) }
+                runCatching { metadataCache.put(uriOrUrl, result) }
             }
             result
         } catch (_: Exception) {

@@ -55,7 +55,7 @@ class ReplyActivity : BaseActivity() {
         val boardUrl = intent.getStringExtra(EXTRA_BOARD_URL) ?: "" // .../futaba.php
         val quote = intent.getStringExtra(EXTRA_QUOTE_TEXT).orEmpty()
 
-        // コメント欄 初期引用
+        // 設定画面で保存している削除パスワードを取得
         val savedPwd = AppPreferences.getPwd(this)
 
 

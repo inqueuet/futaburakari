@@ -3,12 +3,12 @@ package com.valoser.futaburakari
 /**
  * 履歴一覧で扱う1エントリの情報。
  *
- * - スレッドの識別/表示/未読数/サムネイル等のメタ情報を保持
+ * - 正規化キー（例: `https://host/board#threadNo`）と表示用メタ情報を保持
  * - 並び替えに用いる時刻（最終閲覧/最終更新）を保持
  * - 互換性のため一部フィールドはデフォルト値を持つ
  */
 data class HistoryEntry(
-    val key: String,           // 正規化キー（board/thread）
+    val key: String,           // 正規化キー（例: https://host/board#threadNo）
     val url: String,           // スレッドURL
     val title: String,         // スレッドタイトル
     val lastViewedAt: Long,    // 最終閲覧時刻

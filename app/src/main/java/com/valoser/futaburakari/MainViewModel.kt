@@ -4,7 +4,7 @@
  * 役割
  * - カタログHTMLの取得・解析（#cattable 優先 → 準備ページは空 → cgi 風フォールバック）
  * - プレビュー画像URLの検証/補正と、フル画像URLの推測・補完（HEAD 検証つき、HTML 解析なし）
- * - 表示用データ/状態: 画像は `StateFlow<Map<detailUrl, ImageItem>>` で差分更新、読込中/エラーは LiveData で公開
+ * - 表示用データ/状態: 画像は内部で `StateFlow<Map<detailUrl, ImageItem>>` で差分更新し、UI には `StateFlow<List<ImageItem>>` を提供。読込中/エラーは LiveData で公開
  * - 既存リストの更新確認（checkForUpdates）では既知の fullImageUrl を引き継ぎ、不足分のみ補完
  *
  * 実装メモ
@@ -20,19 +20,33 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import coil3.imageLoader
+import coil3.network.HttpException
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
+import coil3.size.Dimension
+import coil3.size.Precision
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.coroutines.executeAsync
@@ -48,7 +62,7 @@ import android.util.LruCache
  * カタログの取得・解析・整形、および表示用状態の公開を担当。
  * - 解析手順: `#cattable` 優先 → 準備ページ（/junbi/）は空 → cgi 風フォールバック
  * - 画像URL処理: プレビューURLの検証/補正と、フル画像URLの推測（/src/ 置換 + 末尾 "s." 除去、拡張子差替）→ HEAD で存在確認
- * - 状態公開: 読込中/エラー/画像リストを LiveData で公開
+ * - 状態公開: 画像リストは StateFlow、読込中/エラーは LiveData で公開
  * - 更新確認: 既存の fullImageUrl を活かしつつ不足分のみ補完し、差分があれば通知
  * - タイトル整形: `<small>` の 1 行目のみを採用して 1 行化
  *
@@ -80,13 +94,25 @@ class MainViewModel @Inject constructor(
         private val THUMB_PATTERN = Regex("(/thumb/|/cat/|/jun/)")
         private val EXTENSION_PATTERN = Regex("s\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
         private val VALID_EXTENSION_PATTERN = Regex("\\.(jpg|jpeg|png|gif|webp|webm|mp4)$", RegexOption.IGNORE_CASE)
+
+        private const val PREVIEW_BATCH_SIZE = 4
+        private const val PREVIEW_BATCH_DELAY_MS = 5L
+        private const val FULL_BATCH_DELAY_MS = 50L
     }
 
     // URL推測結果をキャッシュ（サイズを拡大）
     private val urlGuessCache = LruCache<String, String?>(500)
+    private val failedUrlCache = LruCache<String, Boolean>(200)
 
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
+
+    // カタログ画面からのプリフェッチ要求を受けるチャネル
+    private val catalogPrefetchHints = MutableSharedFlow<CatalogPrefetchHint>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
     // 動的サイズ制限付きLinkedHashMapでメモリ使用量を制御
@@ -98,11 +124,128 @@ class MainViewModel @Inject constructor(
             }
         }
     )
+    @Deprecated("UI 側では imageList を利用する")
     val imageMap: StateFlow<Map<String, ImageItem>> = _imageMap.asStateFlow()
+
+    private val imageListInternal: StateFlow<List<ImageItem>> = _imageMap
+        .map { map -> if (map.isEmpty()) emptyList() else map.values.toList() }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
+    val imageList: StateFlow<List<ImageItem>> = imageListInternal
 
     private val _error = MutableLiveData<String>()
     // エラー時のメッセージ
     val error: LiveData<String> = _error
+
+    /**
+     * カタログ画面から渡されたプリフェッチヒントを登録する。
+     *
+     * ビューポートが高速で変化した場合でも最新の要求だけを処理するため、SharedFlow に積んで
+     * `collectLatest` で前回処理をキャンセルする。
+     */
+    fun submitCatalogPrefetchHint(hint: CatalogPrefetchHint) {
+        if (hint.items.isEmpty() || hint.cellWidthPx <= 0 || hint.cellHeightPx <= 0) return
+        if (!catalogPrefetchHints.tryEmit(hint)) {
+            viewModelScope.launch { catalogPrefetchHints.emit(hint) }
+        }
+    }
+
+    private suspend fun handleCatalogPrefetch(hint: CatalogPrefetchHint) {
+        val width = hint.cellWidthPx.coerceAtLeast(1)
+        val height = hint.cellHeightPx.coerceAtLeast(1)
+        val imageLoader = appContext.imageLoader
+
+        val previewTargets = hint.items.mapNotNull { item ->
+            val preview = item.previewUrl
+            if (preview.isBlank()) null else item.detailUrl to preview
+        }
+
+        previewTargets.chunked(PREVIEW_BATCH_SIZE).forEach { batch ->
+            batch.forEach { (referer, url) ->
+                val request = ImageRequest.Builder(appContext)
+                    .data(url)
+                    .size(Dimension.Pixels(width), Dimension.Pixels(height))
+                    .precision(Precision.EXACT)
+                    .httpHeaders(
+                        NetworkHeaders.Builder()
+                            .add("Referer", referer)
+                            .add("Accept", "*/*")
+                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                            .add("User-Agent", Ua.STRING)
+                            .build()
+                    )
+                    .build()
+                imageLoader.enqueue(request)
+            }
+            if (PREVIEW_BATCH_DELAY_MS > 0) delay(PREVIEW_BATCH_DELAY_MS)
+        }
+
+        val prefetchTargets = hint.items.mapNotNull { item ->
+            val full = item.fullImageUrl
+            val preferPreview = item.preferPreviewOnly
+            val hadFull = item.hadFullSuccess
+            val isVideo = full?.lowercase()?.let { url ->
+                url.endsWith(".webm") || url.endsWith(".mp4") || url.endsWith(".mkv")
+            } ?: false
+            when {
+                !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full)
+                else -> null
+            }
+        }
+
+        if (prefetchTargets.isEmpty()) return
+
+        val concurrency = AppPreferences.getConcurrencyLevel(appContext).coerceIn(1, 4)
+        prefetchTargets.chunked(concurrency).forEach { batch ->
+            batch.forEach { (item, referer, url) ->
+                val request = ImageRequest.Builder(appContext)
+                    .data(url)
+                    .size(Dimension.Pixels(width), Dimension.Pixels(height))
+                    .precision(Precision.EXACT)
+                    .httpHeaders(
+                        NetworkHeaders.Builder()
+                            .add("Referer", referer)
+                            .add("Accept", "*/*")
+                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                            .add("User-Agent", Ua.STRING)
+                            .build()
+                    )
+                    .listener(
+                        onSuccess = { request, _ ->
+                            val loaded = request.data?.toString()
+                            if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                notifyFullImageSuccess(item.detailUrl, loaded)
+                            }
+                        },
+                        onError = { request, result ->
+                            val throwable = result.throwable
+                            if (throwable is HttpException && throwable.response.code == 404) {
+                                request.data?.toString()?.takeIf { it.isNotEmpty() }?.let { failed ->
+                                    fixImageIf404NoHtml(item.detailUrl, failed)
+                                }
+                            }
+                        }
+                    )
+                    .build()
+                imageLoader.enqueue(request)
+            }
+            if (FULL_BATCH_DELAY_MS > 0) delay(FULL_BATCH_DELAY_MS)
+        }
+    }
+
+    init {
+        // 最新のプリフェッチ要求のみを処理し、過去の要求はキャンセル
+        viewModelScope.launch(ImageLoadingDispatcher) {
+            catalogPrefetchHints.collectLatest { hint ->
+                handleCatalogPrefetch(hint)
+            }
+        }
+    }
 
     private val _isLoading = MutableLiveData<Boolean>()
     // 通信/解析中フラグ
@@ -146,8 +289,15 @@ class MainViewModel @Inject constructor(
      */
     private fun guessFullFromPreview(previewUrl: String): String? {
         return urlGuessCache.get(previewUrl) ?: run {
+            // 既に失敗記録があるなら即座にnullを返す
+            if (failedUrlCache.get(previewUrl) == true) return null
+
             val result = guessFullFromPreviewInternal(previewUrl)
-            urlGuessCache.put(previewUrl, result)
+            if (result != null) {
+                urlGuessCache.put(previewUrl, result)
+            } else {
+                failedUrlCache.put(previewUrl, true)
+            }
             result
         }
     }
@@ -227,7 +377,7 @@ class MainViewModel @Inject constructor(
                         }
                     }
 
-                    // 停止条件はプレビューと同じく「閾値を超えたら停止」（>）。
+                    // フル画像側は「閾値を超えたら停止」（>）とする。
                     // inc404 は 1 始まりのため、MAX_404_RETRY=2 なら 3 回目で停止。
                     if (count > MAX_404_RETRY) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
@@ -256,7 +406,7 @@ class MainViewModel @Inject constructor(
                         }
                     }
                 } else {
-                    // プレビューも同一条件（>）で統一
+                    // プレビュー側は閾値超過で停止。候補が尽きた場合は即停止する。
                     if (count > MAX_404_RETRY) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
                         val limited = itemNow.copy(previewUnavailable = true, urlFixNote = "URL停止: プレビュー候補の全滅")
@@ -266,13 +416,23 @@ class MainViewModel @Inject constructor(
                         return@launch
                     }
                     val candidates = buildCatalogThumbCandidates(detailUrl).filter { it != target.previewUrl }
-                    // 404検証の高速化: 直列→限定並列（最大2並列）で探索
+                    // 404検証の高速化: 直列→限定並列（呼び出し側指定）で探索
                     val next = findFirstExistingUrlLimitedParallel(candidates, referer = detailUrl, maxParallel = 1)
                     if (!next.isNullOrBlank() && next != target.previewUrl) {
                         val itemNow = _imageMap.value[detailUrl] ?: target
                         val updated = itemNow.copy(previewUrl = next, urlFixNote = "URL修正: サムネイル候補に置換", previewUnavailable = false)
                         val newMap = LinkedHashMap(_imageMap.value)
                         newMap[detailUrl] = updated
+                        _imageMap.value = newMap
+                        clear404ForDetail(detailUrl)
+                    } else if (!target.previewUnavailable) {
+                        val itemNow = _imageMap.value[detailUrl] ?: target
+                        val limited = itemNow.copy(
+                            previewUnavailable = true,
+                            urlFixNote = "URL停止: サムネイル候補が存在せず"
+                        )
+                        val newMap = LinkedHashMap(_imageMap.value)
+                        newMap[detailUrl] = limited
                         _imageMap.value = newMap
                         clear404ForDetail(detailUrl)
                     }
@@ -322,7 +482,7 @@ class MainViewModel @Inject constructor(
     /**
      * URL の存在確認を行う。
      * - まず UA 付き HEAD で確認し、失敗時は GET Range(0-0) にフォールバック
-     * - 一時的エラーを考慮し、短い遅延を挟みつつ既定2回まで試行
+     * - 一時的エラーを考慮し、呼び出し元が指定した回数だけ短い遅延を挟みつつ試行する（既定は1回）
      */
     private suspend fun urlExists(
         url: String,
@@ -424,12 +584,20 @@ class MainViewModel @Inject constructor(
                             else -> null
                         }
 
+                        // プレビューが取得できなかった新着スレッドは常に画像なし扱いとし、
+                        // 過去に付いていたフラグも合わせて継承する（後段でプレビューが復活したら解除される）。
+                        val mergedPreviewUnavailable = if (fresh.previewUnavailable) {
+                            true
+                        } else {
+                            old?.previewUnavailable ?: false
+                        }
+
                         fresh.copy(
                             fullImageUrl = determinedFullUrl,
                             preferPreviewOnly = preferPreview && existingVerifiedFull.isNullOrBlank(), // 検証済みURLがあればpreferPreviewを解除
                             hadFullSuccess = hadFull || !existingVerifiedFull.isNullOrBlank(),
                             urlFixNote = old?.urlFixNote,
-                            previewUnavailable = old?.previewUnavailable ?: false,
+                            previewUnavailable = mergedPreviewUnavailable,
                             lastVerifiedFullUrl = existingVerifiedFull,
                             failedUrls = old?.failedUrls ?: emptySet()
                         )
@@ -472,7 +640,7 @@ class MainViewModel @Inject constructor(
     }
 
     // #cattable 用パーサ（旧実装の整理版）。
-    // <img> が無い行は res/{id}.htm からIDを抜き、候補URLを1つ構築（後段で検証）。
+    // <img> が無い行は res/{id}.htm からIDを抜き、候補URLを構築すると同時に previewUnavailable を立てる。
     private fun parseFromCattable(document: Document): List<ImageItem> {
         val parsedItems = mutableListOf<ImageItem>()
         val cells = document.select("#cattable td")
@@ -484,6 +652,7 @@ class MainViewModel @Inject constructor(
             // 1) まず通常通り <img> があればそれを使う
             val imgTag = linkTag.selectFirst("img")
             var imageUrl: String? = imgTag?.absUrl("src")
+            var missingPreview = false
 
             // 2) <img> が無い（今回のHTMLのような）場合、res/{id}.htm から id を抜いて推測構築（候補列挙は行うが選定は後段の検証に委譲）
             if (imageUrl.isNullOrEmpty()) {
@@ -496,6 +665,7 @@ class MainViewModel @Inject constructor(
                     // 2chan のカタログは "cat/{id}s.{ext}" 形式が基本（小サムネ）。
                     // まずもっとも一般的な jpg を既定にし、後段の HEAD 検証と 404 修正で適正化する。
                     imageUrl = "$boardBase/cat/${id}s.jpg"
+                    missingPreview = true
                 }
             }
 
@@ -512,7 +682,8 @@ class MainViewModel @Inject constructor(
                     title = title,
                     replyCount = replies,
                     detailUrl = detailUrl,
-                    fullImageUrl = null
+                    fullImageUrl = null,
+                    previewUnavailable = missingPreview
                 )
             )
         }
@@ -550,7 +721,7 @@ class MainViewModel @Inject constructor(
 
     /**
      * 候補URL群の中から、存在確認が取れた最初の1件を返す。
-     * - バッチ単位で最大 `maxParallel` 並列（既定: 2）で検証し、各バッチ内で最初に成功したものを採用。
+     * - バッチ単位で最大 `maxParallel` 並列（既定: 1）で検証し、各バッチ内で最初に成功したものを採用。
      * - バッチに成功なしの場合は次バッチへ進む。
      */
     private suspend fun findFirstExistingUrlLimitedParallel(

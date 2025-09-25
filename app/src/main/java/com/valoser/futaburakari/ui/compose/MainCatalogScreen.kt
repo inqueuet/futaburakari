@@ -5,6 +5,7 @@
  * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
  * - 体験: 可視範囲＋先読みの軽量プリフェッチでスクロールを滑らかに。
  * - 表示: カード下部にグラデーション＋タイトル、右下に返信数バッジ。
+ * - フィルタリング: OP画像なしスレッドは常時非表示に設定。
  * - エラー: フル画像の取得が失敗した場合は可能ならプレビューへフォールバックし、
  *          それも不可の場合は簡易プレースホルダを表示。
  *          404 検知時は `onImageLoadHttp404` を介して ViewModel に通知し、URL 補正を試みる。
@@ -49,8 +50,6 @@ import coil3.request.ImageRequest
 import coil3.size.Dimension
 import coil3.size.Precision
 import coil3.network.HttpException
-import coil3.request.ErrorResult
-import coil3.request.SuccessResult
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import kotlinx.coroutines.delay
@@ -65,6 +64,7 @@ import com.valoser.futaburakari.MatchType
 import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.ui.theme.LocalSpacing
+import com.valoser.futaburakari.CatalogPrefetchHint
 
 /**
  * 画像カタログの一覧画面（メイン画面）。
@@ -75,8 +75,8 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  *         右上メニューには「ブックマーク管理 → 設定 → ローカル画像を開く → 画像編集」を用意。
  * - トップバー: 通常時はサブタイトル（選択中ブックマーク名）のみを大きく表示。タイトルは非表示。
  *               検索中はタイトル領域を検索ボックスに切り替える。
- * - 絞込: NG タイトルルールと検索クエリで一覧をフィルタし、グリッド表示。
- * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチしてスクロールを滑らかにする。
+ * - 絞込: NG タイトルルール、検索クエリ、画像有無（常時適用）で一覧をフィルタし、グリッド表示。
+ * - 体験: 可視範囲＋先読み分のみを軽量プリフェッチし、`onPrefetchHint` で呼び出し側へ通知。
  * - 表示: カード下部にグラデーションとタイトル、右下に返信数バッジを重ねて視認性を確保。
  * - エラー: フル画像が失敗した場合はプレビューへフォールバックし、プレビューも不可の場合は簡易プレースホルダを表示。
  *
@@ -88,6 +88,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `spanCount`: グリッド列数。
  * - `query`/`onQueryChange`: 検索クエリと変更ハンドラ。
  * - `onReload`: 更新アクション（プル/バウンス発火時も呼ぶ）。
+ * - `onPrefetchHint`: 可視範囲＋先読み分のプリフェッチ要求を通知するコールバック。
  * - `onSelectBookmark`: ブックマーク選択ダイアログ等を開くアクション。
  * - `onManageBookmarks`: ブックマーク管理画面を開くアクション（メニューから呼び出し）。
  * - `onOpenSettings`: 設定画面を開くアクション（メニューから呼び出し）。
@@ -97,6 +98,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
  *                         ViewModel 側で URL 補正（代替URLの探索・差し替え）を行うために使用。
+ * - `onImageLoadSuccess`: フル画像が取得できた際に呼ばれるコールバック。検証済み URL の保持に使用。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,6 +112,7 @@ fun MainCatalogScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     onReload: () -> Unit,
+    onPrefetchHint: (CatalogPrefetchHint) -> Unit,
     onSelectBookmark: () -> Unit,
     onManageBookmarks: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -124,7 +127,7 @@ fun MainCatalogScreen(
     var searching by rememberSaveable { mutableStateOf(false) }
     val pullState = rememberPullToRefreshState()
 
-    // NG タイトルルールとクエリで絞り込み
+    // NG タイトルルールとクエリ、画像有無で絞り込み（常時OP画像なしスレッドを非表示）
     val filtered = remember(items, query, ngRules) {
         val titleRules = ngRules.filter { it.type == RuleType.TITLE }
         items.asSequence()
@@ -134,6 +137,9 @@ fun MainCatalogScreen(
             }
             .filter { item ->
                 if (query.isBlank()) true else item.title.contains(query, ignoreCase = true)
+            }
+            .filter { item ->
+                hasImages(item)
             }
             .toList()
     }
@@ -148,6 +154,8 @@ fun MainCatalogScreen(
 
     // バウンス（端でのオーバースクロール）検出用の状態
     val density = LocalDensity.current
+    val sPx by remember(sDp, density) { derivedStateOf { with(density) { sDp.toPx() } } }
+    val xsPx by remember(xsDp, density) { derivedStateOf { with(density) { xsDp.toPx() } } }
     val minBouncePx = with(density) { 120.dp.toPx() }.coerceAtLeast(48f) // トリガーに必要な最小距離
     var continuousOverscrollPx by remember { mutableStateOf(0f) } // 連続オーバースクロール距離の累積
     var lastScrollDirection by remember { mutableStateOf(0) } // 1: 下方向, -1: 上方向, 0: なし
@@ -205,9 +213,7 @@ fun MainCatalogScreen(
 
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
-    val context = LocalContext.current
-    val prefetchDensity = LocalDensity.current
-    LaunchedEffect(items, gridState, spanCount) {
+    LaunchedEffect(filtered, gridState, spanCount, sPx, xsPx) {
         snapshotFlow {
             val layout = gridState.layoutInfo
             val first = layout.visibleItemsInfo.firstOrNull()?.index ?: 0
@@ -218,104 +224,32 @@ fun MainCatalogScreen(
         }
             .distinctUntilChanged()
             .collectLatest { (first, last, viewportWidthPx) ->
-                if (last <= 0 || items.isEmpty()) return@collectLatest
+                if (last <= 0 || filtered.isEmpty()) return@collectLatest
 
-                // 1行あたりのアイテム幅（コンテンツ左右余白＋カード内余白を考慮）
-                val sPx = with(prefetchDensity) { sDp.toPx() }
-                val xsPx = with(prefetchDensity) { xsDp.toPx() }
                 val contentWidthPx = (viewportWidthPx - (sPx * 2)).coerceAtLeast(0f)
                 val cellWidthPx = ((contentWidthPx / spanCount) - (xsPx * 2)).coerceAtLeast(64f)
-                val cellHeightPx = (cellWidthPx * 4f / 3f)
+                val cellHeightPx = cellWidthPx * 4f / 3f
 
                 // 先読み行数は画面内の行数の約2倍（2画面分）
                 val visibleCount = (last - first + 1).coerceAtLeast(spanCount)
                 val rowsVisible = (visibleCount + spanCount - 1) / spanCount
                 val prefetchRows = (rowsVisible * 2).coerceAtLeast(1)
-                val prefetchAhead = (prefetchRows * spanCount)
+                val prefetchAhead = prefetchRows * spanCount
 
-                val end = (last + prefetchAhead).coerceAtMost(items.lastIndex)
+                val end = (last + prefetchAhead).coerceAtMost(filtered.lastIndex)
                 val start = first.coerceAtLeast(0)
+                if (end < start) return@collectLatest
 
-                // 1) 先にプレビューをプリフェッチ（画面に入った瞬間に確実に出す）
-                val previewTargets = items.subList(start, end + 1)
-                    .map { it.detailUrl to it.previewUrl }
+                val targets = filtered.subList(start, end + 1)
+                if (targets.isEmpty()) return@collectLatest
 
-                previewTargets.chunked(4).forEach { batch ->
-                    batch.forEach { (referer, url) ->
-                        val req = ImageRequest.Builder(context)
-                            .data(url)
-                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
-                            .precision(Precision.EXACT)
-                            // 優先度は未使用（互換性のため）。先にプレビューをキューへ入れる運用でカバー
-                            .httpHeaders(
-                                NetworkHeaders.Builder()
-                                    .add("Referer", referer)
-                                    .add("Accept", "*/*")
-                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
-                                    .build()
-                            )
-                            .build()
-                        context.imageLoader.enqueue(req)
-                    }
-                    delay(5)
-                }
-
-                // 2) 未検証フルは控えめに裏取り（LOW優先度）
-                val prefetchTargets = items.subList(start, end + 1)
-                    .mapNotNull { item ->
-                        // プレビュー不可かつフル未確定ならプリフェッチしない
-                        val full = item.fullImageUrl
-                        val preferPreview = item.preferPreviewOnly
-                        val hadFull = item.hadFullSuccess
-                        // 大容量動画はプリフェッチ対象から除外
-                        val isVideo = full?.lowercase()?.let { u ->
-                            u.endsWith(".webm") || u.endsWith(".mp4") || u.endsWith(".mkv")
-                        } ?: false
-                        when {
-                            !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full) // 未検証フルを裏取り
-                            else -> null // プレビューはプリフェッチしない/動画は除外
-                        }
-                    }
-
-                // 過度な同時リクエストを避けつつ並列プリフェッチ（同時接続数に統一）
-                val concurrency = com.valoser.futaburakari.AppPreferences.getConcurrencyLevel(context).coerceIn(1, 4)
-                prefetchTargets.chunked(concurrency).forEach { batch ->
-                    batch.forEach { (item, referer, url) ->
-                        val req = ImageRequest.Builder(context)
-                            .data(url)
-                            .size(Dimension.Pixels(cellWidthPx.toInt()), Dimension.Pixels(cellHeightPx.toInt()))
-                            .precision(Precision.EXACT)
-                            // 優先度は未使用（互換性のため）。バッチ1件＋待機で実質低優先度化
-                            .httpHeaders(
-                                NetworkHeaders.Builder()
-                                    .add("Referer", referer)
-                                    .add("Accept", "*/*")
-                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                    .add("User-Agent", com.valoser.futaburakari.Ua.STRING)
-                                    .build()
-                            )
-                            .listener(
-                                onSuccess = { request, _ ->
-                                    val loaded = request.data?.toString()
-                                    if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
-                                        onImageLoadSuccess(item, loaded)
-                                    }
-                                },
-                                onError = { request, result ->
-                                    val ex = result.throwable
-                                    if (ex is HttpException && ex.response.code == 404) {
-                                        val failed = request.data?.toString() ?: ""
-                                        if (failed.isNotEmpty()) onImageLoadHttp404(item, failed)
-                                    }
-                                }
-                            )
-                            .build()
-                        context.imageLoader.enqueue(req)
-                    }
-                    // キュー充満速度を抑制（軽く間隔を空ける）
-                    delay(50)
-                }
+                onPrefetchHint(
+                    CatalogPrefetchHint(
+                        items = targets.toList(),
+                        cellWidthPx = cellWidthPx.toInt(),
+                        cellHeightPx = cellHeightPx.toInt(),
+                    )
+                )
             }
     }
 
@@ -455,9 +389,9 @@ private fun MoreMenu(
  * カタログアイテムのカード表示。
  * 下部グラデーション上にタイトルを配置し、返信数は右下バッジとして上位レイヤーに重ねる。
  * 動画拡張子（.webm/.mp4/.mkv）は中央に再生アイコンを重ねる。
- * エラー時の挙動: プレビューは使用せず、フル画像の取得を試行。
- * 取得に失敗（例: HTTP 4xx）した場合は簡易プレースホルダを表示し、404 は `onImageLoadHttp404` に通知して
- * ViewModel 側で代替URLの探索・補正を試みる。
+ * エラー時の挙動: 検証済みのフル画像があればそれを優先し、失敗した場合はプレビューへフォールバック。
+ * プレビューも取得できない場合は簡易プレースホルダを表示し、HTTP 404 は `onImageLoadHttp404` に通知して
+ * ViewModel 側で代替 URL の探索・補正を試みる。
  */
 @Composable
 private fun CatalogCard(
@@ -685,6 +619,14 @@ private fun CatalogCard(
             }
         }
     }
+}
+
+/**
+ * アイテムが画像を持っているかどうかを判定する。
+ * プレビュー画像が利用不可の場合は画像なしと判定し、それ以外は画像ありとする。
+ */
+private fun hasImages(item: ImageItem): Boolean {
+    return !item.previewUnavailable
 }
 
 /**

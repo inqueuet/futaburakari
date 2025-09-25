@@ -1,7 +1,7 @@
 /**
- * スレURLの監視・アーカイブを行うWorkManager Workerの実装ファイル。
- * - 監視スケジュール、スナップショット取得、キャッシュ・履歴反映などを扱います。
- * - 本変更は説明コメントの補足のみで、既存ロジックは一切変更しません。
+ * スレ URL を監視してレス内容と媒体をアーカイブする WorkManager 用 Worker。
+ * - 定期監視と単発スナップショットの両方を受け付け、常時有効なバックグラウンド監視としてキャッシュ/履歴を更新。
+ * - 取得したメディアは可能な限りローカルへ保存し、既存の `prompt` を温存したままマージする。
  */
 package com.valoser.futaburakari.worker
 
@@ -34,8 +34,8 @@ import java.io.File
  * 背景でスレ URL を監視し、媒体のアーカイブとキャッシュ/履歴更新を行う Worker。
  *
  * スケジューリング:
- * - URL ごとにユニークな OneTimeWork として起動。成功後は設定が有効なら再スケジュール。
- * - 即時スナップショット取得にも対応（設定 ON/OFF に関係なく実行）。
+ * - URL ごとにユニークな OneTimeWork として起動し、完了後は one-shot でない限り自動で再スケジュール。
+ * - 即時スナップショット取得にも対応（監視設定の有無に関係なく実行）。
  *
  * 主な処理:
  * 1) HTML を取得・パースして Text/Image/Video の直列リストを作成
@@ -52,6 +52,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val networkClient: NetworkClient,
+    private val cacheManager: DetailCacheManager,
 ) : CoroutineWorker(appContext, params) {
 
     /**
@@ -91,7 +92,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val parsed = parseContentFromDocument(doc, url)
 
             // 1.5) 既存キャッシュ/スナップショットのプロンプトをマージ（nullでの上書きを防止）
-            val cacheMgr = DetailCacheManager(applicationContext)
+            val cacheMgr = cacheManager
             val existing: List<DetailContent>? = cacheMgr.loadDetails(url) ?: cacheMgr.loadArchiveSnapshot(url)
             val merged = if (existing.isNullOrEmpty()) parsed else run {
                 val promptByName: Map<String, String> = existing.mapNotNull { dc ->
@@ -121,23 +122,47 @@ class ThreadMonitorWorker @AssistedInject constructor(
             }
 
             // 2) メディアを内部保存し、ローカル file: URI に差し替え（マージ後のリストを使用）
-            val archived = archiveMedia(applicationContext, url, merged)
+            val archived = archiveMedia(url, merged)
 
             // 3) キャッシュへ保存（置き換え保存） + アーカイブスナップショット保存
             val cm = cacheMgr
             cm.saveDetails(url, archived)
             cm.saveArchiveSnapshot(url, archived)
 
-            // 3.5) サムネイル（履歴）をローカルに更新（先頭のメディアを使用）
+            // 3.5) サムネイル（履歴）をローカルに更新（OPの画像のみを使用）
             runCatching {
-                val firstMedia = archived.firstOrNull { it is com.valoser.futaburakari.DetailContent.Image || it is com.valoser.futaburakari.DetailContent.Video }
-                val thumb = when (firstMedia) {
-                    is com.valoser.futaburakari.DetailContent.Image -> firstMedia.imageUrl
-                    is com.valoser.futaburakari.DetailContent.Video -> firstMedia.videoUrl
+                val firstTextIndex = archived.indexOfFirst { it is com.valoser.futaburakari.DetailContent.Text }
+                val media = if (firstTextIndex >= 0) {
+                    // OPレスの直後の画像/動画を探す（次のTextレスが現れるまで）
+                    // 空のURLを持つプレースホルダー画像は除外
+                    archived.drop(firstTextIndex + 1).takeWhile { it !is com.valoser.futaburakari.DetailContent.Text }
+                        .firstOrNull {
+                            when (it) {
+                                is com.valoser.futaburakari.DetailContent.Image -> it.imageUrl.isNotBlank()
+                                is com.valoser.futaburakari.DetailContent.Video -> it.videoUrl.isNotBlank()
+                                else -> false
+                            }
+                        }
+                } else null
+                val opResNum = (archived.getOrNull(firstTextIndex) as? com.valoser.futaburakari.DetailContent.Text)?.resNum
+                val mediaId = when (media) {
+                    is com.valoser.futaburakari.DetailContent.Image -> media.id
+                    is com.valoser.futaburakari.DetailContent.Video -> media.id
                     else -> null
                 }
+                // OPレス番号とメディアIDの末尾が一致する場合のみ OP のサムネとみなす
+                val isOpMedia = if (!opResNum.isNullOrBlank() && !mediaId.isNullOrBlank()) {
+                    mediaId.endsWith("#$opResNum")
+                } else media != null
+                val thumb = if (isOpMedia) when (media) {
+                    is com.valoser.futaburakari.DetailContent.Image -> media.imageUrl
+                    is com.valoser.futaburakari.DetailContent.Video -> media.videoUrl
+                    else -> null
+                } else null
                 if (!thumb.isNullOrBlank()) {
                     HistoryManager.updateThumbnail(applicationContext, url, thumb)
+                } else {
+                    HistoryManager.clearThumbnail(applicationContext, url)
                 }
             }
 
@@ -184,7 +209,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
         /**
          * 指定したスレURLの監視を一回分スケジュールする。
-         * - 正規化したスレッドキーからユニーク名を生成し、既存の同名Workを置き換える。
+         * - 正規化したスレッドキーからユニーク名を生成し、既存チェーンの末尾に Work を追加する（APPEND）。
          * - 短い初期待機を設定し、ネットワーク接続（CONNECTED）を要求する。
          */
         fun schedule(context: Context, url: String) {
@@ -272,9 +297,16 @@ class ThreadMonitorWorker @AssistedInject constructor(
      */
     private fun parseContentFromDocument(document: Document, baseUrl: String): List<DetailContent> {
         val result = mutableListOf<DetailContent>()
-        var textId = 0L
 
         val threadContainer = document.selectFirst("div.thre") ?: return emptyList()
+
+        // スレッドIDを抽出（DetailViewModelと同じロジック）
+        val threadId = baseUrl.substringAfterLast('/').substringBefore(
+            ".htm",
+            missingDelimiterValue = baseUrl.substringAfterLast('/')
+        ).ifBlank {
+            baseUrl.hashCode().toUInt().toString(16)
+        }
 
         val postBlocks = mutableListOf<Element>()
         postBlocks.add(threadContainer)
@@ -289,8 +321,24 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 val rtd = block.selectFirst(".rtd")
                 rtd?.clone()?.apply { select("img").remove() }?.html().orEmpty()
             }
+
             if (html.isNotBlank()) {
-                result += DetailContent.Text(id = "text_${textId++}", htmlContent = html)
+                // レス番号を抽出（DetailViewModelと同じロジック）
+                val resNum = if (isOp) {
+                    threadId
+                } else {
+                    Regex("""No\.?\s*(\n?\s*)?(\d+)""").find(html)?.groupValues?.getOrNull(2)
+                        ?: Regex("""No\.?\s*(\d+)""").find(html)?.groupValues?.getOrNull(1)
+                }
+
+                // DetailViewModelと同じID形式
+                val stableId = if (isOp) {
+                    "text_op_$threadId"
+                } else {
+                    "text_${resNum ?: "reply_${threadId}_${index}"}"
+                }
+
+                result += DetailContent.Text(id = stableId, htmlContent = html, resNum = resNum)
             }
 
             val a = block.select("a[target=_blank][href]").firstOrNull { el -> isMediaUrl(el.attr("href")) }
@@ -301,9 +349,9 @@ class ThreadMonitorWorker @AssistedInject constructor(
                     val fileName = absolute.substringAfterLast('/')
                     val lower = href.lowercase()
                     if (lower.endsWith(".mp4") || lower.endsWith(".webm")) {
-                        result += DetailContent.Video(id = absolute, videoUrl = absolute, prompt = null, fileName = fileName)
+                        result += DetailContent.Video(id = "video_${absolute.hashCode().toUInt().toString(16)}", videoUrl = absolute, prompt = null, fileName = fileName)
                     } else {
-                        result += DetailContent.Image(id = absolute, imageUrl = absolute, prompt = null, fileName = fileName)
+                        result += DetailContent.Image(id = "image_${absolute.hashCode().toUInt().toString(16)}", imageUrl = absolute, prompt = null, fileName = fileName)
                     }
                 } catch (_: MalformedURLException) { /* ignore */ }
             }
@@ -318,7 +366,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 val m = t.find(data)
                 val end = m?.groupValues?.getOrNull(1)
                 if (!end.isNullOrBlank()) {
-                    result += DetailContent.ThreadEndTime(id = "thread_end_time_${textId++}", endTime = end)
+                    result += DetailContent.ThreadEndTime(id = "thread_end_time_${end.hashCode().toUInt().toString(16)}", endTime = end)
                     break
                 }
             }
@@ -329,11 +377,11 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
     /**
      * 媒体をスレッド別のアーカイブディレクトリに保存し、URLをローカル file URI に差し替える。
-     * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略。
+     * ファイル名は元URLのSHA-256 + 元拡張子（小文字）。既存の非空ファイルがあれば再取得を省略し、
+     * ダウンロードに失敗した場合は元のURLを維持する。
      */
-    private suspend fun archiveMedia(context: Context, threadUrl: String, list: List<DetailContent>): List<DetailContent> {
-        val cache = DetailCacheManager(context)
-        val dir = cache.getArchiveDirForUrl(threadUrl)
+    private suspend fun archiveMedia(threadUrl: String, list: List<DetailContent>): List<DetailContent> {
+        val dir = cacheManager.getArchiveDirForUrl(threadUrl)
         fun fileFor(url: String): File {
             val ext = url.substringAfterLast('.', "")
             val name = url.sha256() + if (ext.isNotBlank()) ".${ext.lowercase()}" else ""

@@ -1,7 +1,9 @@
 /**
- * アプリ設定画面のComposeファイル。
- * - 表示/ネットワーク/投稿/キャッシュ/広告/その他のセクションを扱います。
- * - コメント整備のみを行い、コードの修正は一切行いません。
+ * アプリ設定画面の Compose 実装。
+ * - 表示/カタログモード/ネットワーク/投稿/キャッシュ/広告/その他の設定を1画面に集約し、必要に応じてアクティビティ再生成やトースト通知で反映。
+ * - 選択した項目は `SharedPreferences` や `AppPreferences` へ保存し、ストレージ上限のパーセンテージ変換などもその場で行う。
+ * - キャッシュ関連は使用状況の表示・個別削除・一括削除・自動クリーンアップ閾値の調整を提供。
+ * - カタログモード設定（cx/cy/cl）は設定変更後、次回のプルリフレッシュやブックマーク再選択時に反映される。
  */
 package com.valoser.futaburakari.ui.compose
 
@@ -9,16 +11,18 @@ package com.valoser.futaburakari.ui.compose
  * 設定画面（Jetpack Compose）。
  *
  * 機能概要:
- * - 表示設定: グリッド列数 / フォント倍率 / テーマモード。
+ * - 表示設定: グリッド列数 / フォント倍率 / テーマモード / Expressive × Dynamic Color の切替。
+ * - カタログモード設定: カタログの横サイズ（cx） / 縦サイズ（cy） / 文字数（cl）。
  * - NG 管理: スレタイ NG 管理画面へのショートカット。
  * - 投稿設定: 投稿時に使う削除キーの保存。
- * - キャッシュ設定: 画像（Coil）/スレッド詳細キャッシュの削除、自動クリーンアップ上限。
+ * - キャッシュ設定: メモリ/キャッシュ使用状況の表示、画像（Coil）/スレッド詳細キャッシュの削除、自動クリーンアップ上限。
  * - 広告表示: Detail 画面へのバナー固定表示の切替。
  * - その他: プライバシーポリシー / 問い合わせ。
  *
  * 反映方法:
- * - 設定は `SharedPreferences` に保存。
+ * - 設定は `SharedPreferences` および `AppPreferences` に保存。
  * - テーマ/フォントの変更は `Activity#recreate()` を呼び出して即時反映。
+ * - カタログモード設定は設定変更後、次回のプルリフレッシュやブックマーク再選択時に反映（板ごとのTTL管理あり）。
  *
  * パラメータ:
  * - `onBack`: 上部の戻る押下時に呼ばれるハンドラ。
@@ -73,7 +77,7 @@ import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.RuleType
-import com.valoser.futaburakari.cache.DetailCacheManager
+import com.valoser.futaburakari.cache.DetailCacheManagerProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,8 +88,9 @@ import kotlin.math.roundToInt
  * アプリの設定画面コンポーザブル。
  *
  * 概要:
- * - 表示/NG/投稿/キャッシュ/広告/その他の各セクションで設定を編集し、`SharedPreferences` に保存します。
- * - テーマやフォント倍率の変更は `Activity#recreate()` を呼び即時反映します。
+ * - 表示/カタログモード/NG/投稿/ネットワーク/キャッシュ/広告/その他の各セクションから `SharedPreferences` や `AppPreferences` の値を編集。
+ * - テーマやフォント倍率、Expressive×Dynamic Color の切替は `Activity#recreate()` で即時反映し、同時接続数などはトーストで案内。
+ * - カタログモード設定（cx/cy/cl）は設定変更後、次回のプルリフレッシュやブックマーク再選択時に反映される。
  *
  * パラメータ:
  * - `onBack`: 上部ナビゲーション「戻る」押下時に呼ばれるハンドラ（画面を閉じる等）。
@@ -100,6 +105,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     var gridSpan by remember { mutableStateOf(prefs.getString("pref_key_grid_span", "4") ?: "4") }
     var fontScale by remember { mutableStateOf(prefs.getString("pref_key_font_scale", "1.0") ?: "1.0") }
     var themeMode by remember { mutableStateOf(prefs.getString("pref_key_theme_mode", "system") ?: "system") }
+    // カタログモード設定
+    var catalogCx by remember { mutableStateOf(prefs.getString("pref_key_catalog_cx", "20") ?: "20") }
+    var catalogCy by remember { mutableStateOf(prefs.getString("pref_key_catalog_cy", "10") ?: "10") }
+    var catalogCl by remember { mutableStateOf(prefs.getString("pref_key_catalog_cl", "10") ?: "10") }
     // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
     // 旧「カラーモード」設定は廃止
@@ -218,6 +227,36 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
             // removed: color mode selection
+
+            item { SectionHeader(text = "カタログモードの設定") }
+            item {
+                DropdownPreferenceRow(
+                    title = "カタログの横サイズ",
+                    entries = listOf("10", "15", "20", "25", "30"),
+                    values = listOf("10", "15", "20", "25", "30"),
+                    value = catalogCx,
+                    onValueChange = { v -> catalogCx = v; prefs.edit().putString("pref_key_catalog_cx", v).apply() }
+                )
+            }
+            item {
+                DropdownPreferenceRow(
+                    title = "カタログの縦サイズ",
+                    entries = listOf("5", "8", "10", "12", "15"),
+                    values = listOf("5", "8", "10", "12", "15"),
+                    value = catalogCy,
+                    onValueChange = { v -> catalogCy = v; prefs.edit().putString("pref_key_catalog_cy", v).apply() }
+                )
+            }
+            item {
+                DropdownPreferenceRow(
+                    title = "文字数",
+                    entries = listOf("5", "8", "10", "12", "15", "20"),
+                    values = listOf("5", "8", "10", "12", "15", "20"),
+                    value = catalogCl,
+                    onValueChange = { v -> catalogCl = v; prefs.edit().putString("pref_key_catalog_cl", v).apply() }
+                )
+            }
+
             item {
                 // スレッドタイトルに対するNG管理画面への遷移（種類をスレタイに固定）
                 ListRow(
@@ -363,7 +402,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 scope.launch(Dispatchers.IO) {
                                     runCatching { imageLoader.memoryCache?.clear() }
                                     runCatching { imageLoader.diskCache?.clear() }
-                                    runCatching { DetailCacheManager(ctx).clearAllCache() }
+                                    runCatching { DetailCacheManagerProvider.get(ctx).clearAllCache() }
                                     withContext(Dispatchers.Main) {
                                         android.widget.Toast.makeText(ctx, "すべてのキャッシュを削除しました", android.widget.Toast.LENGTH_SHORT).show()
                                         clearingCache = false

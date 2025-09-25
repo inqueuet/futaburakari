@@ -1,7 +1,7 @@
 /**
  * スレ詳細画面（Scaffold構成）のCompose実装。
- * - リスト、検索、ダイアログ/シート、広告などのUIを統合します。
- * - ここではコメントの修正/追記のみを行い、コードは変更しません。
+ * - リスト、検索、ダイアログ/シート、広告などの UI を統合します。
+ * - 検索や NG フィルタ、メディア操作など多数のハンドラ/状態を受け取って詳細表示を構成します。
  */
 package com.valoser.futaburakari.ui.detail
 
@@ -159,8 +159,11 @@ fun DetailScreenScaffold(
     threadUrl: String? = null,
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
-    onSaveScroll: ((Int, Int) -> Unit)? = null,
+    initialScrollAnchorId: String? = null,
+    onSaveScroll: ((Int, Int, String?) -> Unit)? = null,
     itemsFlow: StateFlow<List<DetailContent>>? = null,
+    plainTextCacheFlow: StateFlow<Map<String, String>>? = null,
+    onEnsurePlainTextCache: ((List<DetailContent>) -> Unit)? = null,
     plainTextOf: ((DetailContent.Text) -> String)? = null,
     currentQueryFlow: StateFlow<String?>? = null,
     getSodaneState: ((String) -> Boolean)? = null,
@@ -186,6 +189,7 @@ fun DetailScreenScaffold(
     onDownloadConflictCancel: ((Long) -> Unit)? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
+    promptLoadingIdsFlow: StateFlow<Set<String>>? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var reportTarget by remember { mutableStateOf<String?>(null) }
@@ -197,6 +201,8 @@ fun DetailScreenScaffold(
 
     // ダウンロード進捗状態
     val downloadProgress by downloadProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
+
+    val promptLoadingIds: Set<String> = promptLoadingIdsFlow?.collectAsStateWithLifecycle(emptySet())?.value ?: emptySet()
 
     var downloadConflict by remember { mutableStateOf<DownloadConflictRequest?>(null) }
     LaunchedEffect(downloadConflictFlow) {
@@ -308,7 +314,7 @@ fun DetailScreenScaffold(
                 .padding(contentPadding)
         ) {
             val ctx = androidx.compose.ui.platform.LocalContext.current
-            val plainOfProvider = remember(plainTextOf) {
+            val fallbackPlainProvider = remember(plainTextOf) {
                 plainTextOf ?: { t: DetailContent.Text -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() }
             }
             // UI をブロックしないためのスコープ（重い集計はメインスレッド外で実行）
@@ -324,6 +330,22 @@ fun DetailScreenScaffold(
             // 下のダイアログ/シートからも参照できるよう items / listState を上位に保持
             val raw = itemsFlow?.collectAsStateWithLifecycle(emptyList())?.value ?: emptyList()
             val items = remember(raw) { normalizeThreadEndTime(raw) }
+            val plainTextCache = plainTextCacheFlow?.collectAsStateWithLifecycle(emptyMap())?.value ?: emptyMap()
+
+            LaunchedEffect(items, plainTextCache) {
+                if (onEnsurePlainTextCache != null) {
+                    val missing = items.asSequence()
+                        .filterIsInstance<DetailContent.Text>()
+                        .any { !plainTextCache.containsKey(it.id) }
+                    if (missing) {
+                        onEnsurePlainTextCache(items)
+                    }
+                }
+            }
+
+            val plainOfProvider = remember(plainTextCache, fallbackPlainProvider) {
+                { t: DetailContent.Text -> plainTextCache[t.id] ?: fallbackPlainProvider(t) }
+            }
 
             // 画像一括ダウンロードのコールバックを設定（重複チェック付き）
             LaunchedEffect(items) {
@@ -402,6 +424,8 @@ fun DetailScreenScaffold(
                         threadUrl = threadUrl,
                         modifier = Modifier.fillMaxSize(),
                         threadTitle = title,
+                        promptLoadingIds = promptLoadingIds,
+                        plainTextCache = plainTextCache,
                         plainTextOf = plainOfProvider,
                         onQuoteClick = { token ->
                             // 引用トークンがファイル名（xxx.jpg 等）の場合はファイル名参照の集計を優先。
@@ -478,6 +502,7 @@ fun DetailScreenScaffold(
                         listState = listState,
                         initialScrollIndex = initialScrollIndex,
                         initialScrollOffset = initialScrollOffset,
+                        initialScrollAnchorId = initialScrollAnchorId,
                         onSaveScroll = onSaveScroll,
                         // 左端に 8dp の余白を追加
                         contentPadding = PaddingValues(start = LocalSpacing.current.s, end = endPadding, bottom = bottomDp),
@@ -762,6 +787,9 @@ fun DetailScreenScaffold(
                             searchQuery = null,
                             threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
+                            promptLoadingIds = promptLoadingIds,
+                            plainTextCache = plainTextCache,
+                            plainTextOf = plainOfProvider,
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,
@@ -800,6 +828,9 @@ fun DetailScreenScaffold(
                             searchQuery = null,
                             threadUrl = threadUrl,
                             modifier = Modifier.wrapContentHeight(),
+                            promptLoadingIds = promptLoadingIds,
+                            plainTextCache = plainTextCache,
+                            plainTextOf = plainOfProvider,
                             onQuoteClick = onQuoteClick,
                             onSodaneClick = null,
                             onThreadEndTimeClick = null,
@@ -859,13 +890,24 @@ fun DetailScreenScaffold(
                         // Compose 標準のグリッドで表示
                         val images = remember(items) {
                             data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String, val prompt: String?)
-                            var lastTextIdx = -1
                             val out = ArrayList<Entry>()
+                            // 各画像/動画に対して、直前のTextレスを探して関連付ける
                             for (i in items.indices) {
                                 when (val c = items[i]) {
-                                    is com.valoser.futaburakari.DetailContent.Text -> lastTextIdx = i
-                                    is com.valoser.futaburakari.DetailContent.Image -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.imageUrl, c.prompt)
-                                    is com.valoser.futaburakari.DetailContent.Video -> out += Entry(i, if (lastTextIdx >= 0) lastTextIdx else i, c.videoUrl, c.prompt)
+                                    is com.valoser.futaburakari.DetailContent.Image -> {
+                                        // 直前のTextレスを探す
+                                        val parentTextIdx = (i - 1 downTo 0).firstOrNull { idx ->
+                                            items[idx] is com.valoser.futaburakari.DetailContent.Text
+                                        } ?: i
+                                        out += Entry(i, parentTextIdx, c.imageUrl, c.prompt)
+                                    }
+                                    is com.valoser.futaburakari.DetailContent.Video -> {
+                                        // 直前のTextレスを探す
+                                        val parentTextIdx = (i - 1 downTo 0).firstOrNull { idx ->
+                                            items[idx] is com.valoser.futaburakari.DetailContent.Text
+                                        } ?: i
+                                        out += Entry(i, parentTextIdx, c.videoUrl, c.prompt)
+                                    }
                                     else -> {}
                                 }
                             }

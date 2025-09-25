@@ -18,7 +18,7 @@ import kotlin.jvm.Volatile
  * メタデータ抽出結果の永続キャッシュ（uriOrUrl -> prompt）。
  *
  * - SharedPreferences を利用し JSON 形式で key -> Entry(value, ts) を管理
- * - 最大エントリ数を超過時はタイムスタンプベースの LRU 削除を実行
+ * - 最大エントリ数を超過した場合は保存時刻が古い順に削除（タイムスタンプを LRU 代替として利用）
  * - 頻繁な SharedPreferences アクセスを避けるためインメモリ LRU キャッシュを併用
  */
 class MetadataCache(context: Context) {
@@ -53,10 +53,11 @@ class MetadataCache(context: Context) {
     }
 
     @Synchronized
-    private fun saveDelayed(map: MutableMap<String, Entry>) {
+    private fun saveDelayed() {
+        if (pendingMap == null) return
+
         isDirty = true
         val now = System.currentTimeMillis()
-        pendingMap = map
 
         if (now - lastSaveTime >= saveDelayMs) {
             savePendingNow()
@@ -94,10 +95,18 @@ class MetadataCache(context: Context) {
     }
 
     /**
-     * 強制的に保留中の変更をディスクに保存する
+     * 強制的に保留中の変更をディスクに保存する。
+     *
+     * @return 非同期フラッシュ処理の `Job`（呼び出し側で必要に応じて待機可能）
      */
+    fun flush(): Job {
+        return scope.launch {
+            flushInternal()
+        }
+    }
+
     @Synchronized
-    fun flush() {
+    private fun flushInternal() {
         saveJob?.cancel()
         savePendingNow()
     }
@@ -137,6 +146,7 @@ class MetadataCache(context: Context) {
      * @param id URI/URL 等の識別子
      * @param value 保存する値（空白のみは保存しない）
      */
+    @Synchronized
     fun put(id: String, value: String) {
         if (value.isBlank()) return
 
@@ -145,22 +155,22 @@ class MetadataCache(context: Context) {
         // メモリキャッシュに即座に保存
         memoryCache.put(id, entry)
 
-        // ディスクへは遅延書き込み
-        val diskMap = load()
-        diskMap[id] = entry
+        // 遅延ディスク書き込み用のマップを取得（未ロードならロードして保持）
+        val workingMap = pendingMap ?: load().also { pendingMap = it }
+        workingMap[id] = entry
 
         // 上限チェックとLRU削除
-        if (diskMap.size > maxEntries) {
-            val toRemove = diskMap.entries
+        if (workingMap.size > maxEntries) {
+            val toRemove = workingMap.entries
                 .sortedBy { it.value.ts }
-                .take(diskMap.size - maxEntries)
+                .take(workingMap.size - maxEntries)
                 .map { it.key }
             toRemove.forEach { key ->
-                diskMap.remove(key)
+                workingMap.remove(key)
                 memoryCache.remove(key) // メモリキャッシュからも削除
             }
         }
 
-        saveDelayed(diskMap)
+        saveDelayed()
     }
 }

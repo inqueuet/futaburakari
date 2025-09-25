@@ -47,7 +47,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * 画像をユーザーに選択させ、編集画面へ受け渡すアクティビティ。
  *
  * 概要:
- * - Android 13 以降: システムの Photo Picker を使用（追加のストレージ権限は不要）。
+ * - Android 13 (API 33) 以降: システムの Photo Picker を使用（追加のストレージ権限は不要）。
  * - Android 12 以下: SAF の GetContent を使用（必要に応じて READ_EXTERNAL_STORAGE を要求）。
  * - 挙動: 起動時に自動でピッカーを開き、キャンセル時は本アクティビティを終了。
  * - 受け渡し: 取得した URI に読み取り権限を付与し、`ImageEditActivity` にインテントで渡す。

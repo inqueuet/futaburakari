@@ -4,13 +4,15 @@ import android.content.Context
 import android.util.Log
 import com.valoser.futaburakari.DetailContent
 import com.google.gson.Gson
-import com.google.gson.GsonBuilder // GsonBuilder import
+import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
-// DetailContentTypeAdapterFactory が同一パッケージ or 適切にインポートされていることを前提に使用します。
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.Executors
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import javax.inject.Singleton
 import com.valoser.futaburakari.UrlNormalizer
 
 /**
@@ -25,13 +27,19 @@ data class CachedDetails(
 
 /**
  * スレッドの詳細内容および媒体アーカイブのオンディスクキャッシュを管理するクラス。
- * - 正規化済みスレURL（SHA-256）をキーに `DetailContent` のリストを JSON で保存/読込。
- * - 旧版との互換のためレガシーキー（ドメイン非含有）も読み込み・移行をサポート。
- * - スレ単位で媒体をアーカイブし、スナップショットが無い場合はファイルから最小限の詳細を再構成。
+ * - 正規化済みスレURL（SHA-256）をキーに `DetailContent` を保存し、チェックサムで差分検知して不要な書き換えを抑止。
+ * - 旧版との互換のためレガシーキー（ドメイン非含有）も読み込み・移行しつつ、存在すれば削除して整理する。
+ * - 大量データは `JsonWriter` によるストリーミング書き込みを用いてメモリ消費を抑制。
+ * - 媒体アーカイブ/スナップショットを扱い、必要に応じて再構成フォールバックや総容量の上限制御を行う。
  */
-class DetailCacheManager(private val context: Context) {
+@Singleton
+class DetailCacheManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
 
-    private val gson: Gson // ★ 初期化を init ブロックに移動
+    private val gson: Gson = GsonBuilder()
+        .registerTypeAdapterFactory(DetailContentTypeAdapterFactory())
+        .create()
     private val writeExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "DetailCacheManager-Writer").apply {
             isDaemon = true // デーモンスレッドとして設定
@@ -42,16 +50,6 @@ class DetailCacheManager(private val context: Context) {
     }
     private val archiveRoot: File by lazy {
         File(context.filesDir, "archive_media").apply { mkdirs() }
-    }
-
-    /**
-     * `DetailContent` の（逆）シリアライズに対応した Gson を生成する。
-     */
-    init {
-        gson = GsonBuilder()
-            .registerTypeAdapterFactory(DetailContentTypeAdapterFactory()) // Factory を登録
-            // .serializeNulls() // 必要であれば null も JSON に出力する設定
-            .create()
     }
 
     /**
@@ -98,8 +96,8 @@ class DetailCacheManager(private val context: Context) {
 
     /**
      * 大量データ向けのメモリ効率的なJSON書き込み処理
-     * - 真のストリーミング：JsonWriter使用でメモリ使用量を大幅削減
-     * - 各要素をGson個別処理せず、直接JSON構造を出力
+     * - JsonWriter を使った逐次書き込みでメモリ使用量を抑制
+     * - 各要素を Gson の型アダプタでシリアライズしつつ、適宜 flush してメモリ保持時間を短縮
      */
     private fun writeJsonStreamOptimized(cacheFile: File, cachedData: CachedDetails) {
         try {
@@ -387,9 +385,9 @@ class DetailCacheManager(private val context: Context) {
             val uri = f.toURI().toString()
             val name = f.name
             if (isVideoName(name)) {
-                list += DetailContent.Video(id = "$uri#cache_$index", videoUrl = uri, prompt = null, fileName = name)
+                list += DetailContent.Video(id = "video_${uri.hashCode().toUInt().toString(16)}", videoUrl = uri, prompt = null, fileName = name)
             } else {
-                list += DetailContent.Image(id = "$uri#cache_$index", imageUrl = uri, prompt = null, fileName = name)
+                list += DetailContent.Image(id = "image_${uri.hashCode().toUInt().toString(16)}", imageUrl = uri, prompt = null, fileName = name)
             }
         }
         return list
@@ -541,7 +539,7 @@ class DetailCacheManager(private val context: Context) {
     }
 
     /**
-     * ファイナライザ：GC時の安全策としてリソースクリーンアップ
+     * finalize 互換の後始末。ART では呼ばれない可能性があるため、明示的な `cleanup()` 呼び出しが前提。
      */
     protected fun finalize() {
         cleanup()

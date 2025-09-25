@@ -1,7 +1,7 @@
 /**
  * スレ詳細コンテンツを表示するリストビュー（Compose版）。
  * - 本ファイルではリスト表示や検索ナビ、メディアのプリフェッチ等を扱います。
- * - ドキュメントコメントの補足のみを行い、実装には変更を加えません。
+ * - 実装仕様をコメントとして補足し、Compose 版リストの振る舞いを明文化しています。
  */
 package com.valoser.futaburakari.ui.detail
 
@@ -34,7 +34,7 @@ package com.valoser.futaburakari.ui.detail
  *   表示テキスト側で空白を補い、可読性とクリック検出（そうだね/No.リンク）の安定性を高める。
  *   表示整形は NFKC 正規化（全角→半角など）を行い、非空白直後に `No` が来る一般ケースにも空白を補って取りこぼしを防ぐ。
  * - パフォーマンス: 可視範囲の変化に応じて前方/後方のメディア（画像/動画）を Coil にプリフェッチし、
- *   スクロール時の初回表示を高速化（前方6件・後方2件を目安に先読み）。
+ *   スクロール時の初回表示を高速化（前方3件・後方1件を目安に先読み）。
  * - 本文返信の引用テキスト: 先頭ヘッダ（ID/ID無し/No/日付時刻/ファイル情報/先行引用）を除いた「本文のみ」を `>` で引用。
  * - レイアウト: `modifier` で外側からサイズ指定を受け取る。
  *   - 画面全体のリストでは `Modifier.fillMaxSize()` を渡す。
@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,12 +68,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
  
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -110,6 +113,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.collection.LruCache
 
 /**
+ * Compose の LazyColumn で利用する安定キー。
+ * DetailContent の各要素は ViewModel/Worker 層で衝突しない ID を付与しているため、
+ * 原則としてそのまま利用する。空文字の場合のみ型＋indexでフォールバック。
+ */
+private fun stableKey(item: DetailContent, index: Int): String {
+    val id = item.id
+    if (id.isNotBlank()) return id
+    return when (item) {
+        is DetailContent.Text -> "text_fallback_$index"
+        is DetailContent.Image -> "image_fallback_$index"
+        is DetailContent.Video -> "video_fallback_$index"
+        is DetailContent.ThreadEndTime -> "thread_end_fallback_$index"
+    }
+}
+
+/**
  * スレ詳細のコンテンツを表示する Compose リスト。
  *
  * 概要:
@@ -129,6 +148,8 @@ import androidx.collection.LruCache
 
 private val imageRequestCache = LruCache<String, ImageRequest>(2000)
 private val headersCache = LruCache<String, NetworkHeaders>(100)
+
+private data class ScrollSnapshot(val index: Int, val offset: Int, val anchorId: String?)
 
 private fun createImageRequest(
     context: android.content.Context,
@@ -181,6 +202,7 @@ fun DetailListCompose(
     modifier: Modifier = Modifier,
     // HTML->プレーンテキストの取得（ViewModelのキャッシュを利用するため注入可能）
     plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
+    plainTextCache: Map<String, String> = emptyMap(),
     // コールバック群 — 従来の DetailAdapter のリスナー相当をComposeで受け取る
     onQuoteClick: ((String) -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
@@ -202,7 +224,8 @@ fun DetailListCompose(
     listState: LazyListState? = null,
     initialScrollIndex: Int = 0,
     initialScrollOffset: Int = 0,
-    onSaveScroll: ((Int, Int) -> Unit)? = null,
+    initialScrollAnchorId: String? = null,
+    onSaveScroll: ((Int, Int, String?) -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Compose側で検索Prev/Nextナビを提供するためのコールバック
     onProvideSearchNavigator: (((() -> Unit), (() -> Unit)) -> Unit)? = null,
@@ -211,6 +234,7 @@ fun DetailListCompose(
     onSetSodaneCount: ((String, Int) -> Unit)? = null,
     // スレタイトル（タイトル行を引用扱いにするためのヒント）
     threadTitle: String? = null,
+    promptLoadingIds: Set<String> = emptySet(),
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -233,6 +257,22 @@ fun DetailListCompose(
         initialFirstVisibleItemIndex = safeIndex,
         initialFirstVisibleItemScrollOffset = safeOffset
     )
+
+    var pendingAnchorId by remember(initialScrollAnchorId) { mutableStateOf(initialScrollAnchorId) }
+    LaunchedEffect(items, pendingAnchorId, internalState) {
+        val anchorId = pendingAnchorId ?: return@LaunchedEffect
+        if (items.isEmpty()) return@LaunchedEffect
+        val targetIndex = items.indexOfFirst { it.id == anchorId }
+        if (targetIndex >= 0) {
+            val currentIndex = internalState.firstVisibleItemIndex
+            val currentOffset = internalState.firstVisibleItemScrollOffset
+            val currentAnchor = items.getOrNull(currentIndex)?.id
+            if (currentAnchor != anchorId || currentOffset != safeOffset) {
+                internalState.scrollToItem(targetIndex, safeOffset)
+            }
+        }
+        pendingAnchorId = null
+    }
 
     // スクロール外の画像を先読み（プリフェッチ）
     // - 現在の可視範囲から前後に数件分のメディア(Image/Video)をCoilへ事前リクエスト
@@ -302,7 +342,7 @@ fun DetailListCompose(
     // Compose内で検索ヒット位置を計算してナビゲーションを提供
     var hitPositions by remember(items, searchQuery) { mutableStateOf<List<Int>>(emptyList()) }
     var currentHit by remember(items, searchQuery) { mutableStateOf(0) }
-    LaunchedEffect(items, searchQuery) {
+    LaunchedEffect(items, searchQuery, plainTextCache) {
         val q = searchQuery?.trim().orEmpty()
         if (q.isBlank()) {
             hitPositions = emptyList()
@@ -313,7 +353,7 @@ fun DetailListCompose(
                 val acc = mutableListOf<Int>()
                 items.forEachIndexed { idx, content ->
                     val textToSearch: String? = when (content) {
-                        is DetailContent.Text -> plainTextOf(content)
+                        is DetailContent.Text -> plainTextCache[content.id] ?: plainTextOf(content)
                         is DetailContent.Image -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.imageUrl.substringAfterLast('/')}"
                         is DetailContent.Video -> "${content.prompt ?: ""} ${content.fileName ?: ""} ${content.videoUrl.substringAfterLast('/')}"
                         is DetailContent.ThreadEndTime -> null
@@ -381,17 +421,34 @@ fun DetailListCompose(
     }
 
     // スクロール位置の変化を親へ保存通知（index + offset）
-    LaunchedEffect(internalState) {
-        snapshotFlow { internalState.firstVisibleItemIndex to internalState.firstVisibleItemScrollOffset }
+    LaunchedEffect(items, internalState) {
+        snapshotFlow {
+            val index = internalState.firstVisibleItemIndex
+            val offset = internalState.firstVisibleItemScrollOffset
+            val anchorId = items.getOrNull(index)?.id
+            ScrollSnapshot(index, offset, anchorId)
+        }
             .distinctUntilChanged()
-            .collectLatest { (pos, off) -> onSaveScroll?.invoke(pos, off) }
+            .collectLatest { snapshot -> onSaveScroll?.invoke(snapshot.index, snapshot.offset, snapshot.anchorId) }
     }
 
     LazyColumn(state = internalState, modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
-        itemsIndexed(items, key = { index, it -> "${it.id}#$index" }) { index, item ->
+        itemsIndexed(items, key = { index, it -> stableKey(it, index) }) { index, item ->
             when (item) {
                 is DetailContent.Text -> {
-                    val plain = plainTextOf(item)
+                    val plainState = produceState<String?>(
+                        initialValue = plainTextCache[item.id],
+                        key1 = item.id,
+                        key2 = plainTextCache[item.id]
+                    ) {
+                        val cached = plainTextCache[item.id]
+                        if (cached != null) {
+                            value = cached
+                        } else {
+                            value = withContext(kotlinx.coroutines.Dispatchers.Default) { plainTextOf(item) }
+                        }
+                    }
+                    val plain = plainState.value.orEmpty()
                     val selfResNum = remember(plain) {
                         // No 抽出を寛容に（ドット任意・全角許容・空白改行許容）
                         Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(plain)?.groupValues?.getOrNull(2)
@@ -476,45 +533,98 @@ fun DetailListCompose(
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
-                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
-                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
-                                        putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
-                                        threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
-                                    }
-                                    ctx.startActivity(i)
-                                },
-                            contentScale = ContentScale.Fit,
-                            loading = {
-                                androidx.compose.foundation.layout.Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(200.dp)
-                                ) {
-                                    androidx.compose.material3.CircularProgressIndicator(
-                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                        // 空のimageUrlの場合は直接「画像なし」を表示
+                        if (item.imageUrl.isBlank()) {
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(120.dp)
+                                    .background(
+                                        androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                                     )
-                                }
-                            },
-                            onSuccess = { onImageLoaded?.invoke() }
-                        )
-                        // プロンプトはHTML→プレーン化。リンク検出は行わずプレーン表示。長文はタップで展開/折りたたみ。
-                        val promptPlain = run {
-                            val raw = item.prompt
-                            val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
-                            if (!plain.isNullOrBlank()) plain else null
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "画像なし",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                )
+                            }
+                        } else {
+                            coil3.compose.SubcomposeAsyncImage(
+                                model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val i = android.content.Intent(ctx, com.valoser.futaburakari.MediaViewActivity::class.java).apply {
+                                            putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TYPE, com.valoser.futaburakari.MediaViewActivity.TYPE_IMAGE)
+                                            putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_URL, item.imageUrl)
+                                            putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_TEXT, item.prompt)
+                                            threadUrl?.let { putExtra(com.valoser.futaburakari.MediaViewActivity.EXTRA_REFERER, it) }
+                                        }
+                                        ctx.startActivity(i)
+                                    },
+                                contentScale = ContentScale.Fit,
+                                loading = {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                    ) {
+                                        androidx.compose.material3.CircularProgressIndicator(
+                                            modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                        )
+                                    }
+                                },
+                                error = {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(120.dp)
+                                            .background(
+                                                androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                                androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                                            )
+                                    ) {
+                                        androidx.compose.material3.Text(
+                                            text = "画像なし",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                        )
+                                    }
+                                },
+                                onSuccess = { onImageLoaded?.invoke() }
+                            )
                         }
-                        if (!promptPlain.isNullOrBlank()) {
+                        // プロンプトは ViewModel 側でプレーン化済み。長文はタップで展開/折りたたみ。
+                        val promptText = item.prompt?.trim()?.takeIf { it.isNotEmpty() }
+                        val isPromptLoading = promptLoadingIds.contains(item.id)
+                        if (isPromptLoading && promptText == null) {
+                            androidx.compose.foundation.layout.Row(
+                                modifier = Modifier
+                                    .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.height(16.dp).width(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                androidx.compose.material3.Text(
+                                    text = "読み込み中…",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = LocalSpacing.current.xs)
+                                )
+                            }
+                        }
+                        if (promptText != null) {
                             var expanded by remember(item.id) { mutableStateOf(false) }
                             SelectionContainer {
                                 androidx.compose.material3.Text(
-                                    text = promptPlain,
+                                    text = promptText,
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = if (expanded) Int.MAX_VALUE else 3,
@@ -556,19 +666,52 @@ fun DetailListCompose(
                                     )
                                 }
                             },
+                            error = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp)
+                                        .background(
+                                            androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                            androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                                        )
+                                ) {
+                                    androidx.compose.material3.Text(
+                                        text = "動画なし",
+                                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
+                                    )
+                                }
+                            },
                             onSuccess = { onImageLoaded?.invoke() }
                         )
-                        // サムネイル下の説明テキスト（HTML→プレーン化）。長文はタップで展開/折りたたみ。
-                        val promptPlain = run {
-                            val raw = item.prompt
-                            val plain = if (!raw.isNullOrBlank()) Html.fromHtml(raw, Html.FROM_HTML_MODE_COMPACT).toString().trim() else null
-                            if (!plain.isNullOrBlank()) plain else null
+                        // サムネイル下の説明テキストは ViewModel 側でプレーン化済み。長文はタップで展開/折りたたみ。
+                        val promptText = item.prompt?.trim()?.takeIf { it.isNotEmpty() }
+                        val isPromptLoading = promptLoadingIds.contains(item.id)
+                        if (isPromptLoading && promptText == null) {
+                            androidx.compose.foundation.layout.Row(
+                                modifier = Modifier
+                                    .padding(horizontal = LocalSpacing.current.m, vertical = LocalSpacing.current.xs),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.height(16.dp).width(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                androidx.compose.material3.Text(
+                                    text = "読み込み中…",
+                                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = LocalSpacing.current.xs)
+                                )
+                            }
                         }
-                        if (!promptPlain.isNullOrBlank()) {
+                        if (promptText != null) {
                             var expanded by remember(item.id) { mutableStateOf(false) }
                             SelectionContainer {
                                 androidx.compose.material3.Text(
-                                    text = promptPlain,
+                                    text = promptText,
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = if (expanded) Int.MAX_VALUE else 3,
@@ -682,7 +825,19 @@ fun DetailListCompose(
 
     // 本文タップメニュー（返信 / 確認 / NG）
     bodyForDialog?.let { src ->
-        val plain = plainTextOf(src)
+        val plainState = produceState<String?>(
+            initialValue = plainTextCache[src.id],
+            key1 = src.id,
+            key2 = plainTextCache[src.id]
+        ) {
+            val cached = plainTextCache[src.id]
+            if (cached != null) {
+                value = cached
+            } else {
+                value = withContext(kotlinx.coroutines.Dispatchers.Default) { plainTextOf(src) }
+            }
+        }
+        val plain = plainState.value.orEmpty()
         val bodyOnly = extractBodyOnlyPlain(plain)
         val source = if (bodyOnly.isNotBlank()) bodyOnly else plain
         val quoted = source.lines().joinToString("\n") { ">" + it }

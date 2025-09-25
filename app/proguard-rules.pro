@@ -34,3 +34,14 @@
 
 # Kotlin関連
 -dontwarn kotlin.**
+
+# Release builds should not emit verbose/debug/info logs from our code.
+# R8 strips these calls so that only warnings/errors remain and logcat stays clean.
+-assumenosideeffects class android.util.Log {
+    public static int v(java.lang.String, java.lang.String);
+    public static int v(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int d(java.lang.String, java.lang.String);
+    public static int d(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int i(java.lang.String, java.lang.String);
+    public static int i(java.lang.String, java.lang.String, java.lang.Throwable);
+}

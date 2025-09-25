@@ -25,7 +25,7 @@ object PromptFormatter {
         val settings: Map<String, String>
     )
 
-    /** 生テキスト(JSON/プレーン両対応) → 表示用データ */
+    /** 生テキストを ComfyUI JSON → 一般 JSON → レガシーテキストの順に解析して表示用データへ変換する。 */
     fun parse(raw: String?): PromptViewData? {
         if (raw.isNullOrBlank()) return null
 
