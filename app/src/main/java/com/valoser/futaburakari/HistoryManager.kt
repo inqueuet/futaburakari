@@ -79,7 +79,8 @@ object HistoryManager {
                     url = url,
                     title = title,
                     lastViewedAt = now,
-                    thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl
+                    thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl,
+                    threadUrl = e.threadUrl ?: url
                 )
             }
         }
@@ -88,7 +89,8 @@ object HistoryManager {
             list[idx] = e.copy(
                 title = title,
                 lastViewedAt = now,
-                thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl
+                thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl,
+                threadUrl = e.threadUrl ?: url
             )
         } else {
             list.add(
@@ -97,7 +99,8 @@ object HistoryManager {
                     url = url,
                     title = title,
                     lastViewedAt = now,
-                    thumbnailUrl = thumbnailUrl
+                    thumbnailUrl = thumbnailUrl,
+                    threadUrl = url
                 )
             )
         }

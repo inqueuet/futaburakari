@@ -13,6 +13,7 @@ data class HistoryEntry(
     val title: String,         // スレッドタイトル
     val lastViewedAt: Long,    // 最終閲覧時刻
     val thumbnailUrl: String? = null, // サムネイル画像URL（任意）
+    val threadUrl: String? = null,    // サムネイル取得時にRefererとして使うスレURL（未保存時はnull）
     // 新着優先の並び替えに必要なフィールド（既存JSONとの互換のため既定値付き）
     val lastUpdatedAt: Long = 0L,      // 新規レスを検知した最終時刻
     val lastKnownReplyNo: Int = 0,     // 取得時点での最終レス番号

@@ -55,9 +55,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
 import com.valoser.futaburakari.HistoryEntry
 import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedContent
@@ -67,6 +68,7 @@ import androidx.compose.animation.togetherWith
 import com.valoser.futaburakari.ui.expressive.SplitButton
 import androidx.compose.ui.platform.LocalContext
 import com.valoser.futaburakari.R
+import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 
 /**
@@ -310,19 +312,20 @@ private fun HistoryRow(entry: HistoryEntry, onClick: () -> Unit) {
                 )
             }
         } else {
+            val context = LocalContext.current
+            val thumbUrl = entry.thumbnailUrl!!
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(entry.thumbnailUrl)
+                model = ImageRequest.Builder(context)
+                    .data(thumbUrl)
+                    .memoryCacheKey(ImageKeys.thumb(thumbUrl))
+                    .placeholderMemoryCacheKey(ImageKeys.thumb(thumbUrl))
+                    .diskCacheKey(thumbUrl)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .networkCachePolicy(CachePolicy.ENABLED)
                     .apply {
-                        val ref = entry.url
-                        if (!ref.isNullOrBlank()) {
-                            httpHeaders(
-                                NetworkHeaders.Builder()
-                                    .add("Referer", ref)
-                                    .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                                    .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                                    .build()
-                            )
+                        entry.thumbnailReferer()?.let { referer ->
+                            httpHeaders(buildHistoryHeaders(referer))
                         }
                     }
                     .build(),
@@ -398,6 +401,22 @@ private fun DismissBackground(state: androidx.compose.material3.SwipeToDismissBo
  * 行に表示する時刻テキストを組み立てる。
  * アーカイブ > 未読ありの更新時刻 > 最終閲覧時刻 の優先順で表示。
  */
+private fun HistoryEntry.thumbnailReferer(): String? {
+    return when {
+        !threadUrl.isNullOrBlank() -> threadUrl
+        url.isNotBlank() -> url
+        else -> null
+    }
+}
+
+private fun buildHistoryHeaders(referer: String): NetworkHeaders {
+    return NetworkHeaders.Builder()
+        .add("Referer", referer)
+        .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+        .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+        .build()
+}
+
 private fun buildTimeText(item: HistoryEntry): String {
     val df = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
     return if (item.isArchived && item.archivedAt > 0L) {
