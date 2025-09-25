@@ -132,33 +132,35 @@ class ThreadMonitorWorker @AssistedInject constructor(
             // 3.5) サムネイル（履歴）をローカルに更新（OPの画像のみを使用）
             runCatching {
                 val firstTextIndex = archived.indexOfFirst { it is com.valoser.futaburakari.DetailContent.Text }
-                val media = if (firstTextIndex >= 0) {
-                    // OPレスの直後の画像/動画を探す（次のTextレスが現れるまで）
-                    // 空のURLを持つプレースホルダー画像は除外
-                    archived.drop(firstTextIndex + 1).takeWhile { it !is com.valoser.futaburakari.DetailContent.Text }
-                        .firstOrNull {
+                val media = when {
+                    firstTextIndex >= 0 -> {
+                        // OPレスの直後で次の Text レスが現れるまでの範囲から、実体URLを持つ最初の媒体を採用
+                        archived.drop(firstTextIndex + 1)
+                            .takeWhile { it !is com.valoser.futaburakari.DetailContent.Text }
+                            .firstOrNull {
+                                when (it) {
+                                    is com.valoser.futaburakari.DetailContent.Image -> it.imageUrl.isNotBlank()
+                                    is com.valoser.futaburakari.DetailContent.Video -> it.videoUrl.isNotBlank()
+                                    else -> false
+                                }
+                            }
+                    }
+                    else -> {
+                        // OP本文が検出できなかった場合（画像のみ等）はリスト先頭から最初の媒体を採用
+                        archived.firstOrNull {
                             when (it) {
                                 is com.valoser.futaburakari.DetailContent.Image -> it.imageUrl.isNotBlank()
                                 is com.valoser.futaburakari.DetailContent.Video -> it.videoUrl.isNotBlank()
                                 else -> false
                             }
                         }
-                } else null
-                val opResNum = (archived.getOrNull(firstTextIndex) as? com.valoser.futaburakari.DetailContent.Text)?.resNum
-                val mediaId = when (media) {
-                    is com.valoser.futaburakari.DetailContent.Image -> media.id
-                    is com.valoser.futaburakari.DetailContent.Video -> media.id
-                    else -> null
+                    }
                 }
-                // OPレス番号とメディアIDの末尾が一致する場合のみ OP のサムネとみなす
-                val isOpMedia = if (!opResNum.isNullOrBlank() && !mediaId.isNullOrBlank()) {
-                    mediaId.endsWith("#$opResNum")
-                } else media != null
-                val thumb = if (isOpMedia) when (media) {
+                val thumb = when (media) {
                     is com.valoser.futaburakari.DetailContent.Image -> media.imageUrl
                     is com.valoser.futaburakari.DetailContent.Video -> media.videoUrl
                     else -> null
-                } else null
+                }
                 if (!thumb.isNullOrBlank()) {
                     HistoryManager.updateThumbnail(applicationContext, url, thumb)
                 } else {
