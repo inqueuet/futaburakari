@@ -1199,28 +1199,12 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    /** NGルールに基づきテキストと直後のメディア列を間引いた一覧を返す（最適化版）。 */
+    /** NGルールに基づきテキストと直後のメディア列を順次評価して返す（skipping 状態を全体で共有するため並列化しない）。 */
     private suspend fun filterByNgRulesOptimized(src: List<DetailContent>, rules: List<NgRule>): List<DetailContent> {
         val cacheKey = src to rules
         ngFilterCache.get(cacheKey)?.let { return it }
 
-        val result = if (src.size > 100) {
-            // CPU性能とリストサイズに応じて動的に並列処理を最適化
-            withContext(Dispatchers.Default) {
-                val cpuCount = Runtime.getRuntime().availableProcessors()
-                val optimalChunkSize = maxOf(50, src.size / (cpuCount * 2)) // CPU数の2倍のチャンクに分割
-                val actualChunkSize = minOf(optimalChunkSize, 200) // 最大200件で制限
-
-                src.chunked(actualChunkSize).map { chunk ->
-                    async {
-                        filterChunk(chunk, rules)
-                    }
-                }.awaitAll().flatten()
-            }
-        } else {
-            // 小さなリストは単一スレッドで処理
-            filterChunk(src, rules)
-        }
+        val result = filterChunk(src, rules)
 
         ngFilterCache.put(cacheKey, result)
         return result
