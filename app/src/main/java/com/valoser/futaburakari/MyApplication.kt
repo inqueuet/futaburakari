@@ -190,7 +190,8 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
             return Configuration.Builder()
                 .setWorkerFactory(workerFactory)
-                .setMinimumLoggingLevel(if (isDebug) Log.DEBUG else Log.INFO)
+                // Suppress WorkManager's informational logs in release builds.
+                .setMinimumLoggingLevel(if (isDebug) Log.DEBUG else Log.ERROR)
                 .setDefaultProcessName(packageName) // マルチプロセス想定時のための設定
                 .build()
         }
