@@ -271,8 +271,8 @@ class MainActivity : BaseActivity() {
 
     override fun onPause() {
         super.onPause()
-        // 画像プロンプトキャッシュを強制的にディスクに保存
-        MetadataCache(applicationContext).flush().invokeOnCompletion { error ->
+        // アプリ共通の画像プロンプトキャッシュに対しフラッシュを要求
+        metadataCache.flush().invokeOnCompletion { error ->
             if (error != null) {
                 Log.e("MainActivity", "Failed to flush metadata cache", error)
             }
@@ -300,6 +300,11 @@ class MainActivity : BaseActivity() {
     }
     private val networkClient: NetworkClient by lazy {
         EntryPointAccessors.fromApplication(applicationContext, NetworkEntryPoint::class.java).networkClient()
+    }
+
+    // Hilt のシングルトン MetadataCache を EntryPoint 経由で解決
+    private val metadataCache: MetadataCache by lazy {
+        MetadataCacheEntryPoint.resolve(applicationContext)
     }
 
     /**

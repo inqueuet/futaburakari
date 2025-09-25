@@ -334,8 +334,8 @@ class DetailActivity : BaseActivity() {
         if (this::prefs.isInitialized) {
             prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         }
-        // 画像プロンプトキャッシュを強制的にディスクに保存
-        MetadataCache(applicationContext).flush().invokeOnCompletion { error ->
+        // アプリ共通の画像プロンプトキャッシュに対しフラッシュを要求
+        metadataCache.flush().invokeOnCompletion { error ->
             if (error != null) {
                 android.util.Log.e("DetailActivity", "Failed to flush metadata cache", error)
             }
@@ -518,6 +518,11 @@ class DetailActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    // Hilt のシングルトン MetadataCache を EntryPoint 経由で解決
+    private val metadataCache: MetadataCache by lazy {
+        MetadataCacheEntryPoint.resolve(applicationContext)
     }
 
     // 既読更新（Compose版）は onVisibleMaxOrdinal -> markViewedByOrdinal に統一
