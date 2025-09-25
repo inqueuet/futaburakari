@@ -526,12 +526,14 @@ class DetailViewModel @Inject constructor(
             // OPはスレID、返信は本文内の No. からレス番号を抽出
 
             if (html.isNotBlank()) {
-                val htmlHash = html.hashCode().toUInt().toString(16)
+                // HTMLの変動に依存しない安定したID生成のため、プレーンテキストでハッシュ化
+                val plainText = android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+                val contentHash = extractPlainBodyFromPlain(plainText).hashCode().toUInt().toString(16)
                 val resSegment = resNum ?: "op"
-                // レス番号と本文ハッシュを組み合わせてTextのIDを安定化
+                // レス番号と本文内容ハッシュを組み合わせてTextのIDを安定化
                 progressivelyLoadedContent.add(
                     DetailContent.Text(
-                        id = "text_${resSegment}_$htmlHash",
+                        id = "text_${resSegment}_$contentHash",
                         htmlContent = html,
                         resNum = resNum
                     )
