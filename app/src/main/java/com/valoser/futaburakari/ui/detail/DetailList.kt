@@ -71,6 +71,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -271,6 +272,7 @@ fun DetailListCompose(
     var lastRestoredAnchorId by remember(initialAnchor) { mutableStateOf<String?>(null) }
     var restoring by remember { mutableStateOf(false) }
     var skipNextSave by remember(initialAnchor) { mutableStateOf(false) }
+    val saveScrollCallback = rememberUpdatedState(onSaveScroll)
 
     LaunchedEffect(items, anchorRequestId, itemsVersion, bottomPaddingVersion, imagesLoadedVersion) {
         val anchorId = anchorRequestId ?: return@LaunchedEffect
@@ -451,6 +453,19 @@ fun DetailListCompose(
     LaunchedEffect(items, internalState, anchorRequestId) {
         coroutineScope {
             var lastSnapshot: ScrollSnapshot? = null
+            var lastSavedSnapshot: ScrollSnapshot? = null
+
+            fun maybeSaveSnapshot(snapshot: ScrollSnapshot) {
+                val saver = saveScrollCallback.value ?: return
+                if (snapshot == lastSavedSnapshot) return
+                if (skipNextSave) {
+                    skipNextSave = false
+                    return
+                }
+                if (restoring) return
+                saver(snapshot.index, snapshot.offset, snapshot.anchorId)
+                lastSavedSnapshot = snapshot
+            }
 
             launch {
                 snapshotFlow {
@@ -467,6 +482,9 @@ fun DetailListCompose(
                         if (!restoring && restoredAnchor != null && requestAnchor == restoredAnchor && snapshot.anchorId != requestAnchor) {
                             anchorRequestId = null
                         }
+                        if (!internalState.isScrollInProgress) {
+                            maybeSaveSnapshot(snapshot)
+                        }
                     }
             }
 
@@ -482,13 +500,7 @@ fun DetailListCompose(
                                 val anchorId = items.getOrNull(index)?.id
                                 ScrollSnapshot(index, offset, anchorId)
                             }
-                            if (skipNextSave) {
-                                skipNextSave = false
-                                return@collectLatest
-                            }
-                            if (!restoring) {
-                                onSaveScroll?.invoke(snapshot.index, snapshot.offset, snapshot.anchorId)
-                            }
+                            maybeSaveSnapshot(snapshot)
                         }
                     }
             }
