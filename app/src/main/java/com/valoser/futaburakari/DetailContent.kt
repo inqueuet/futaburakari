@@ -27,7 +27,8 @@ sealed class DetailContent {
         override val id: String,
         val videoUrl: String,
         val prompt: String? = null,
-        val fileName: String? = null
+        val fileName: String? = null,
+        val thumbnailUrl: String? = null
     ) : DetailContent()
 
     /** スレ終了時刻の表示用メタ情報。 */

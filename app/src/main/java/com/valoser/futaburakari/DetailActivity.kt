@@ -407,7 +407,7 @@ class DetailActivity : BaseActivity() {
                 }
                 val url = when (media) {
                     is DetailContent.Image -> media.imageUrl
-                    is DetailContent.Video -> media.videoUrl
+                    is DetailContent.Video -> media.thumbnailUrl ?: media.videoUrl
                     else -> null
                 }
                 val threadUrl = currentUrl

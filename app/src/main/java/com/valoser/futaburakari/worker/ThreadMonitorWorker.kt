@@ -6,6 +6,10 @@
 package com.valoser.futaburakari.worker
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.os.Build
+import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -27,8 +31,9 @@ import java.net.MalformedURLException
 import java.net.URL
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.cache.DetailCacheManager
-import okhttp3.Request
 import java.io.File
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * 背景でスレ URL を監視し、媒体のアーカイブとキャッシュ/履歴更新を行う Worker。
@@ -83,7 +88,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val exists = doc.selectFirst("div.thre") != null
             if (!exists) {
                 // HTML が取得できたがスレ DOM が無い → dat 落ちとみなして停止
-                HistoryManager.markArchived(applicationContext, url)
+                HistoryManager.markArchived(applicationContext, url, autoExpireIfStale = true)
                 cancelUnique(url)
                 return Result.success()
             }
@@ -158,7 +163,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 }
                 val thumb = when (media) {
                     is com.valoser.futaburakari.DetailContent.Image -> media.imageUrl
-                    is com.valoser.futaburakari.DetailContent.Video -> media.videoUrl
+                    is com.valoser.futaburakari.DetailContent.Video -> media.thumbnailUrl ?: media.videoUrl
                     else -> null
                 }
                 if (!thumb.isNullOrBlank()) {
@@ -180,7 +185,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val msg = e.message ?: ""
             if (msg.contains("HTTPエラー: 404")) {
                 // dat 落ち（404）とみなし停止
-                HistoryManager.markArchived(applicationContext, url)
+                HistoryManager.markArchived(applicationContext, url, autoExpireIfStale = true)
                 cancelUnique(url)
                 Result.success()
             } else {
@@ -216,8 +221,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
          */
         fun schedule(context: Context, url: String) {
             val data = workDataOf(KEY_URL to url)
-            // 基本1分 + 小さなジッターで実行時刻を分散（波状実行を軽減）
-            val delayMillis = 60_000L + kotlin.random.Random.nextLong(0L, 30_000L)
+            // 基本5分 + 最大1分のジッターで実行時刻を分散（波状実行を軽減）
+            val delayMillis = 300_000L + kotlin.random.Random.nextLong(0L, 60_000L)
             val req = OneTimeWorkRequestBuilder<ThreadMonitorWorker>()
                 .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setInputData(data)
@@ -351,7 +356,13 @@ class ThreadMonitorWorker @AssistedInject constructor(
                     val fileName = absolute.substringAfterLast('/')
                     val lower = href.lowercase()
                     if (lower.endsWith(".mp4") || lower.endsWith(".webm")) {
-                        result += DetailContent.Video(id = "video_${absolute.hashCode().toUInt().toString(16)}", videoUrl = absolute, prompt = null, fileName = fileName)
+                        result += DetailContent.Video(
+                            id = "video_${absolute.hashCode().toUInt().toString(16)}",
+                            videoUrl = absolute,
+                            prompt = null,
+                            fileName = fileName,
+                            thumbnailUrl = null
+                        )
                     } else {
                         result += DetailContent.Image(id = "image_${absolute.hashCode().toUInt().toString(16)}", imageUrl = absolute, prompt = null, fileName = fileName)
                     }
@@ -389,15 +400,15 @@ class ThreadMonitorWorker @AssistedInject constructor(
             val name = url.sha256() + if (ext.isNotBlank()) ".${ext.lowercase()}" else ""
             return File(dir, name)
         }
-        suspend fun ensureDownloaded(remoteUrl: String): String? {
+        suspend fun ensureDownloaded(remoteUrl: String): File? {
             val f = fileFor(remoteUrl)
-            if (f.exists() && f.length() > 0) return f.toURI().toString()
+            if (f.exists() && f.length() > 0) return f
             return try {
                 f.outputStream().buffered(64 * 1024).use { out ->
                     val ok = networkClient.downloadTo(remoteUrl, out)
                     if (!ok) return null
                 }
-                f.toURI().toString()
+                f
             } catch (_: Exception) {
                 // ダウンロード失敗時は部分ファイルを削除
                 if (f.exists()) {
@@ -407,19 +418,87 @@ class ThreadMonitorWorker @AssistedInject constructor(
             }
         }
 
+        fun ensureVideoThumbnail(videoFile: File): File? {
+            val thumbFile = File(videoFile.parentFile, videoFile.nameWithoutExtension + "_thumb.jpg")
+            if (thumbFile.exists() && thumbFile.length() > 0) return thumbFile
+
+            val retriever = MediaMetadataRetriever()
+            return try {
+                retriever.setDataSource(videoFile.absolutePath)
+                val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                val frameTimeUs = when {
+                    durationMs == null || durationMs <= 0L -> 1_000_000L
+                    else -> (durationMs * 1000L / 2).coerceAtLeast(1_000_000L)
+                }
+                val videoWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                val videoHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+
+                val (targetW, targetH) = scaleDimensions(videoWidth, videoHeight, 1280)
+
+                val bitmap = when {
+                    targetW > 0 && targetH > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 ->
+                        retriever.getScaledFrameAtTime(
+                            frameTimeUs,
+                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                            targetW,
+                            targetH
+                        )
+                    else -> retriever.getFrameAtTime(frameTimeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                }
+
+                if (bitmap == null) {
+                    thumbFile.delete()
+                    return null
+                }
+
+                thumbFile.outputStream().buffered().use { out ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)) {
+                        thumbFile.delete()
+                        return null
+                    }
+                }
+                bitmap.recycle()
+                thumbFile
+            } catch (e: Exception) {
+                Log.w("ThreadMonitorWorker", "Failed to create thumbnail for ${videoFile.name}", e)
+                thumbFile.delete()
+                null
+            } finally {
+                retriever.release()
+            }
+        }
+
+        fun File.toFileUriString(): String = toURI().toString()
+
         return list.map { c ->
             when (c) {
                 is DetailContent.Image -> {
                     val local = ensureDownloaded(c.imageUrl)
-                    if (local != null) c.copy(imageUrl = local) else c
+                    if (local != null) c.copy(imageUrl = local.toFileUriString()) else c
                 }
                 is DetailContent.Video -> {
                     val local = ensureDownloaded(c.videoUrl)
-                    if (local != null) c.copy(videoUrl = local) else c
+                    if (local != null) {
+                        val thumb = ensureVideoThumbnail(local)
+                        c.copy(
+                            videoUrl = local.toFileUriString(),
+                            thumbnailUrl = thumb?.toURI()?.toString() ?: c.thumbnailUrl
+                        )
+                    } else c
                 }
                 else -> c
             }
         }
+    }
+
+    private fun scaleDimensions(width: Int, height: Int, maxDimension: Int): Pair<Int, Int> {
+        if (width <= 0 || height <= 0) return 0 to 0
+        val longest = max(width, height)
+        if (longest <= maxDimension) return width to height
+        val scale = maxDimension.toDouble() / longest.toDouble()
+        val scaledW = (width * scale).roundToInt().coerceAtLeast(1)
+        val scaledH = (height * scale).roundToInt().coerceAtLeast(1)
+        return scaledW to scaledH
     }
 
     /** 文字列のSHA-256（16進表現）。アーカイブのファイル名に使用。 */

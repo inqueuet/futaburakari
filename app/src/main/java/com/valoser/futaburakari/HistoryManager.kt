@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.TimeUnit
 
 /**
  * 履歴データの読み書き・更新・並び替えを担うマネージャ。
@@ -25,6 +26,8 @@ object HistoryManager {
     const val ACTION_HISTORY_CHANGED = "com.valoser.futaburakari.ACTION_HISTORY_CHANGED"
 
     private val historyMutex = Mutex()
+    // dat落ち後に一定期間閲覧されていない履歴を自動的に破棄する猶予期間（3日）
+    private val AUTO_EXPIRE_THRESHOLD_MS = TimeUnit.DAYS.toMillis(3)
 
     // 履歴保存先の SharedPreferences を取得
     private fun prefs(context: Context): SharedPreferences =
@@ -236,14 +239,25 @@ object HistoryManager {
     }
 
     // dat落ち等を検知した際にアーカイブとしてマーク。
-    fun markArchived(context: Context, url: String) {
+    fun markArchived(context: Context, url: String, autoExpireIfStale: Boolean = false) {
         val key = UrlNormalizer.threadKey(url)
         val list = load(context)
         val idx = list.indexOfFirst { it.key == key }
         if (idx >= 0) {
-            val e = list[idx]
-            if (!e.isArchived) {
-                list[idx] = e.copy(isArchived = true, archivedAt = System.currentTimeMillis())
+            val entry = list[idx]
+            if (autoExpireIfStale) {
+                val now = System.currentTimeMillis()
+                val lastInteraction = listOf(entry.lastViewedAt, entry.lastUpdatedAt, entry.archivedAt)
+                    .filter { it > 0 }
+                    .maxOrNull() ?: 0L
+                if (lastInteraction > 0 && now - lastInteraction >= AUTO_EXPIRE_THRESHOLD_MS) {
+                    list.removeAt(idx)
+                    save(context, list)
+                    return
+                }
+            }
+            if (!entry.isArchived) {
+                list[idx] = entry.copy(isArchived = true, archivedAt = System.currentTimeMillis())
                 save(context, list)
             }
         }

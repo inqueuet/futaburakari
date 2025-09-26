@@ -30,6 +30,7 @@ import java.io.IOException
 import java.net.URL
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -388,7 +389,10 @@ class DetailViewModel @Inject constructor(
             val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
             if (cached != null) {
                 if (e is IOException && (e.message?.contains("404") == true)) {
-                    runCatching { HistoryManager.markArchived(appContext, url) }
+                    runCatching {
+                        HistoryManager.markArchived(appContext, url, autoExpireIfStale = true)
+                        ThreadMonitorWorker.cancelByUrl(appContext, url)
+                    }
                 }
                 val sanitized = setRawContentSanitized(cached)
                 val merged = mergeWithExistingPrompts(sanitized)
@@ -618,7 +622,8 @@ class DetailViewModel @Inject constructor(
                                 id = "video_${absoluteUrl.hashCode().toUInt().toString(16)}",
                                 videoUrl = absoluteUrl,
                                 prompt = null,
-                                fileName = fileName
+                                fileName = fileName,
+                                thumbnailUrl = null
                             )
                         }
                         else -> null

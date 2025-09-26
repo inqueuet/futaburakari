@@ -341,7 +341,7 @@ fun DetailListCompose(
 
                     fun urlFor(i: Int): String? = when (val c = items.getOrNull(i)) {
                         is DetailContent.Image -> c.imageUrl
-                        is DetailContent.Video -> c.videoUrl
+                        is DetailContent.Video -> c.thumbnailUrl ?: c.videoUrl
                         else -> null
                     }
 
@@ -715,9 +715,10 @@ fun DetailListCompose(
 
                 is DetailContent.Video -> {
                     val ctx = LocalContext.current
+                    val previewUrl = item.thumbnailUrl ?: item.videoUrl
                     Column(modifier = Modifier.fillMaxWidth()) {
                         coil3.compose.SubcomposeAsyncImage(
-                            model = createImageRequest(ctx, item.videoUrl, threadUrl, forDisplay = true),
+                            model = createImageRequest(ctx, previewUrl, threadUrl, forDisplay = true),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()

@@ -384,8 +384,19 @@ class DetailCacheManager @Inject constructor(
         for ((index, f) in files.withIndex()) {
             val uri = f.toURI().toString()
             val name = f.name
+            if (name.endsWith("_thumb.jpg", ignoreCase = true) || name.endsWith("_thumb.jpeg", ignoreCase = true)) {
+                continue
+            }
             if (isVideoName(name)) {
-                list += DetailContent.Video(id = "video_${uri.hashCode().toUInt().toString(16)}", videoUrl = uri, prompt = null, fileName = name)
+                val thumbFile = File(f.parentFile, f.nameWithoutExtension + "_thumb.jpg")
+                val thumbUri = if (thumbFile.exists() && thumbFile.length() > 0) thumbFile.toURI().toString() else null
+                list += DetailContent.Video(
+                    id = "video_${uri.hashCode().toUInt().toString(16)}",
+                    videoUrl = uri,
+                    prompt = null,
+                    fileName = name,
+                    thumbnailUrl = thumbUri
+                )
             } else {
                 list += DetailContent.Image(id = "image_${uri.hashCode().toUInt().toString(16)}", imageUrl = uri, prompt = null, fileName = name)
             }

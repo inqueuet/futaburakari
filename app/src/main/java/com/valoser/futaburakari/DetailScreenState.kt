@@ -89,14 +89,16 @@ sealed class StaticDetailContent {
     data class StaticVideo(
         override val id: String,
         val videoUrl: String,
-        val fileName: String? = null
+        val fileName: String? = null,
+        val thumbnailUrl: String? = null
     ) : StaticDetailContent() {
         override fun toDetailContent(metadata: DynamicMetadata?): DetailContent.Video {
             return DetailContent.Video(
                 id = id,
                 videoUrl = videoUrl,
                 prompt = metadata?.prompt,
-                fileName = fileName
+                fileName = fileName,
+                thumbnailUrl = thumbnailUrl
             )
         }
     }

@@ -62,7 +62,8 @@ object DetailContentMigration {
                         StaticDetailContent.StaticVideo(
                             id = content.id,
                             videoUrl = content.videoUrl,
-                            fileName = content.fileName
+                            fileName = content.fileName,
+                            thumbnailUrl = content.thumbnailUrl
                         )
                     )
 
