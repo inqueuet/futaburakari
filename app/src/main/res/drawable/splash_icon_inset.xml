@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  スプラッシュ画面用アイコンのインセット定義。
+  - ランチャーアイコン（@mipmap/ic_launcher）を中心に配置
+  - 余白量は @dimen/splash_icon_inset で制御
+  注意: 属性・参照先はコードではなくリソース設定のため、ここではコメントのみ変更しています。
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher"
+    android:inset="@dimen/splash_icon_inset"
+    android:gravity="center" />

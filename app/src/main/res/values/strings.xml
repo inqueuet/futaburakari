@@ -1,0 +1,134 @@
+<resources>
+    <!--
+        文字列リソース。
+        プレースホルダー（%d, %.1f など）の有無と順序はコードに影響するため変更しないこと。
+        翻訳・文言調整は別途 i18n 方針に従う。ここではコメントのみ修正・追記可。
+    -->
+    <string name="app_name">ふたブラ仮</string>
+    <string name="reload">再読み込み</string>
+    <string name="reloading">再読み込み</string>
+    <!-- その他の表示文言 -->
+    <string name="bookmark_management_title">ブックマーク管理</string>
+    <string name="search">Search</string>
+    <string name="search_hint">Enter search text...</string>
+    <string name="no_results_found">No results found</string>
+    <string name="search_results_format">%d/%d</string>
+    <string name="write_mode">書き込みモード</string>
+
+    <!-- コメント投稿ダイアログ関連 -->
+    <string name="add_comment_dialog_title">コメントを投稿</string>
+    <string name="hint_name">おなまえ</string>
+    <string name="hint_email">E-mail</string>
+    <string name="hint_subject">題名</string>
+    <string name="hint_comment">コメント</string>
+    <string name="button_send">送信</string>
+    <string name="button_cancel">キャンセル</string>
+
+    <!-- ファイル添付関連 -->
+    <string name="button_select_file">ファイルを選択</string>
+    <string name="text_no_file_selected">ファイル未選択</string>
+    <string name="error_file_too_large_format">ファイルサイズが大きすぎます (最大 %.1f MB)</string>
+    <string name="label_attachment">添付ファイル</string>
+
+    <string name="displayed_image_description">Displayed image</string>
+    <string name="prompt_info_not_found">Prompt information not found.</string>
+    <string name="copy_prompt">プロンプトをコピー</string>
+
+    <string name="image">画像</string>
+    <string name="edited_image">編集中の画像</string>
+    <string name="save_success">画像を保存しました</string>
+    <string name="save_failed">画像の保存に失敗しました</string>
+
+    <string name="video_thumbnail">動画サムネイル</string>
+
+    <!-- 互換/履歴: 旧 Reload 文言（未使用のためコメントアウトのまま保持） -->
+
+    <!-- AdMob テスト用 ID（OSS では Google 公式テスト ID を既定値とする） -->
+    <!-- 公開利用時は buildConfig やリソース差し替えで本番 ID を設定すること -->
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
+    <string name="admob_banner_id">ca-app-pub-3940256099942544/6300978111</string>
+
+    <string name="history">履歴</string>
+    <string name="history_title">閲覧履歴</string>
+    <string name="settings_title">設定</string>
+    <string name="clear_history">履歴を全削除</string>
+    <string name="confirm_clear_history">履歴をすべて削除しますか？</string>
+    <string name="no_history">履歴がありません</string>
+    <string name="bg_monitor">バックグラウンド監視</string>
+    <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
+    <string name="settings_inquiry">お問合せ</string>
+    <string name="privacy_policy_url">https://note.com/inqueuet/n/nb86f8e3f405a</string>
+    <string name="support_url">https://github.com/inqueuet/futaburakari/issues</string>
+
+    <!-- 設定: 表示オプション（グリッド列数） -->
+    <string-array name="pref_grid_span_entries">
+        <item>2 列</item>
+        <item>3 列</item>
+        <item>4 列</item>
+        <item>5 列</item>
+        <item>6 列</item>
+    </string-array>
+    <string-array name="pref_grid_span_values">
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+    </string-array>
+
+    <string-array name="pref_font_scale_entries">
+        <item>小</item>
+        <item>標準</item>
+        <item>大</item>
+        <item>特大</item>
+        <item>特大＋</item>
+    </string-array>
+    <string-array name="pref_font_scale_values">
+        <item>0.85</item>
+        <item>1.0</item>
+        <item>1.15</item>
+        <item>1.30</item>
+        <item>1.50</item>
+    </string-array>
+
+    <!-- 設定: テーマモード -->
+    <string-array name="pref_theme_mode_entries">
+        <item>システムに合わせる</item>
+        <item>ライト</item>
+        <item>ダーク</item>
+    </string-array>
+    <string-array name="pref_theme_mode_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+    </string-array>
+
+    <!-- 備考: 旧カラー系モード配列（green/purple/blue/orange）は整理済み -->
+
+    <!-- 設定: 自動クリーンアップ上限（利用可能容量に対する割合） -->
+    <string-array name="pref_auto_cleanup_entries">
+        <item>無効</item>
+        <item>利用可能容量の5%</item>
+        <item>利用可能容量の10%</item>
+        <item>利用可能容量の20%</item>
+        <item>利用可能容量の30%</item>
+    </string-array>
+    <string-array name="pref_auto_cleanup_values">
+        <item>0</item>
+        <item>5</item>
+        <item>10</item>
+        <item>20</item>
+        <item>30</item>
+    </string-array>
+
+    <!-- 設定: カタログ表示モード -->
+    <string-array name="pref_catalog_display_mode_entries">
+        <item>グリッド表示</item>
+        <item>リスト表示</item>
+    </string-array>
+    <string-array name="pref_catalog_display_mode_values">
+        <item>grid</item>
+        <item>list</item>
+    </string-array>
+
+</resources>

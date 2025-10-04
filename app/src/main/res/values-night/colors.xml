@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        ダークテーマ用カラー定義（Material 3 Expressive パレット）。
+        値や名前はコードから参照されるため変更しないこと。コメントのみ更新可。
+    -->
+    <!-- Expressive パレット（ダーク） -->
+    <color name="my_expressive_primary">#9BCAFF</color>
+    <color name="my_expressive_onPrimary">#003258</color>
+    <color name="my_expressive_primaryContainer">#00497D</color>
+    <color name="my_expressive_onPrimaryContainer">#D1E4FF</color>
+    <color name="my_expressive_secondary">#FFB1C8</color>
+    <color name="my_expressive_onSecondary">#650033</color>
+    <color name="my_expressive_secondaryContainer">#8E004A</color>
+    <color name="my_expressive_onSecondaryContainer">#FFD9E2</color>
+    <color name="my_expressive_tertiary">#7FDD9F</color>
+    <color name="my_expressive_onTertiary">#00391D</color>
+    <color name="my_expressive_tertiaryContainer">#00522C</color>
+    <color name="my_expressive_onTertiaryContainer">#9AF6B9</color>
+    <color name="my_expressive_error">#CF6679</color>
+    <color name="my_expressive_onError">#000000</color>
+    <color name="my_expressive_errorContainer">#B00020</color>
+    <color name="my_expressive_onErrorContainer">#FCD8DF</color>
+    <color name="my_expressive_background">#1A1C1E</color>
+    <color name="my_expressive_onBackground">#E2E2E6</color>
+    <color name="my_expressive_surface">#1A1C1E</color>
+    <color name="my_expressive_onSurface">#E2E2E6</color>
+    <color name="my_expressive_surfaceVariant">#49454F</color>
+    <color name="my_expressive_onSurfaceVariant">#CAC4D0</color>
+    <color name="my_expressive_outline">#938F99</color>
+
+    <!-- 備考: 以前存在した一般系ニュートラル（light_gray）は未使用のため削除済み -->
+</resources>

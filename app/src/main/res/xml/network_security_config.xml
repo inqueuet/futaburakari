@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Config:
+    - クリアテキスト通信は無効（HTTPS のみ許可）。
+    - 対象ドメイン: 2chan.net（サブドメイン含む）。
+    動作ポリシーはマニフェストに紐づくため設定値は変更しないこと。必要に応じてコメントのみ更新可。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">2chan.net</domain>
+    </domain-config>
+</network-security-config>

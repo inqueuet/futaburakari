@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        共通寸法（dimen）定義。
+        dp/sp の単位は既存 UI と整合させること。値はコードやレイアウトから参照されるため
+        ここではコメントのみを編集対象とする。
+    -->
+    <!-- 入力フォームのラベル幅（列幅を固定し入力欄を整列） -->
+    <dimen name="form_label_width">60dp</dimen>
+    <!-- スプラッシュ用アイコンのインセット（API 31+ のクリッピング回避）。
+         値を大きくすると表示アイコンは相対的に小さく見える。 -->
+    <dimen name="splash_icon_inset">32dp</dimen>
+</resources>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        ライトテーマ用カラー定義（Material 3 Expressive パレット）。
+        値や名前はアプリ全体で参照されるため変更禁止。必要に応じてコメントのみ調整してください。
+    -->
+    <!-- Expressive パレット（ライト） -->
+    <color name="my_expressive_primary">#0061A4</color>
+    <color name="my_expressive_onPrimary">#FFFFFF</color>
+    <color name="my_expressive_primaryContainer">#D1E4FF</color>
+    <color name="my_expressive_onPrimaryContainer">#001D36</color>
+    <color name="my_expressive_secondary">#B90063</color>
+    <color name="my_expressive_onSecondary">#FFFFFF</color>
+    <color name="my_expressive_secondaryContainer">#FFD9E2</color>
+    <color name="my_expressive_onSecondaryContainer">#3E001D</color>
+    <color name="my_expressive_tertiary">#006D3D</color>
+    <color name="my_expressive_onTertiary">#FFFFFF</color>
+    <color name="my_expressive_tertiaryContainer">#9AF6B9</color>
+    <color name="my_expressive_onTertiaryContainer">#00210F</color>
+    <color name="my_expressive_error">#B00020</color>
+    <color name="my_expressive_onError">#FFFFFF</color>
+    <color name="my_expressive_errorContainer">#FCD8DF</color>
+    <color name="my_expressive_onErrorContainer">#410E0B</color>
+    <color name="my_expressive_background">#FDFCFF</color>
+    <color name="my_expressive_onBackground">#1A1C1E</color>
+    <color name="my_expressive_surface">#FDFCFF</color>
+    <color name="my_expressive_onSurface">#1A1C1E</color>
+    <color name="my_expressive_surfaceVariant">#E7E0EC</color>
+    <color name="my_expressive_onSurfaceVariant">#49454F</color>
+    <color name="my_expressive_outline">#79747E</color>
+
+    <!-- 備考: 以前存在した一般系ニュートラル（light_gray）は未使用のため削除済み -->
+</resources>

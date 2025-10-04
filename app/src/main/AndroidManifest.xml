@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  アプリのマニフェスト定義。
+  - 権限: ネットワーク、広告 ID、メディア読み取り（OS バージョン別）
+  - アプリ設定: ラベル、テーマ、バックアップ、ネットワークセキュリティ
+  - 起動/画面構成: ランチャー Activity と機能別 Activity を宣言
+  注意: exported は暗黙インテントを受ける Activity/Service/Receiver のみに明示（それ以外は既定で false）。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
+
+    <!-- メディア読み取り権限（端末バージョン別に最小限を要求） -->
+    <!-- Android 13 (API 33) 以降: 画像/動画の読み取りを分離 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Android 14 (API 34) 以降: ユーザー選択メディアのみの読み取り -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <!-- Android 12 (API 32) 以前: 従来の外部ストレージ読み取り（maxSdk 指定で限定） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
+    <!-- 互換性のための書き込み権限（API 28 以下でのみ有効） -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <application
+        android:name=".MyApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Futaburakari"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher">
+
+        <!-- AdMob アプリ ID（テスト用）。本番では適切な値に差し替えること。 -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="@string/admob_app_id" />
+
+        <!-- AndroidX Startup 初期化プロバイダ -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="merge">
+
+            <!-- WorkManager のデフォルト初期化を無効化（MyApplication で初期化済み） -->
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+
+        </provider>
+
+        <!-- ランチャー画面（トップ） -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Futaburakari">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- メディア権限の説明/要求用アクティビティ（外部公開なし） -->
+        <activity
+            android:name=".permissions.MediaPermissionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Futaburakari" />
+        <!-- スレッド詳細画面（Compose ベース） -->
+        <activity android:name=".DetailActivity" />
+        <!-- レス投稿画面（singleTop 起動） -->
+        <activity
+            android:name=".ReplyActivity"
+            android:launchMode="singleTop"
+            android:label="レスを投稿"
+            android:parentActivityName=".DetailActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- ブックマーク管理画面（Compose ベース） -->
+        <activity
+            android:name=".BookmarkActivity"
+            android:label="ブックマーク管理"
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- 画像選択/編集/表示関連 -->
+        <activity
+            android:name=".ImagePickerActivity"
+            android:label="Select Image" />
+        <activity
+            android:name=".ImageEditActivity"
+            android:label="Edit Image" />
+        <activity android:name=".ImageDisplayActivity" />
+        <!-- メディアビュー（外部公開なし） -->
+        <activity
+            android:name=".MediaViewActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Futaburakari" />
+        <!-- 設定画面 -->
+        <activity android:name=".SettingsActivity"
+            android:label="設定" />
+        <!-- 履歴一覧画面 -->
+        <activity android:name=".HistoryActivity"
+            android:label="@string/history_title" />
+        <!-- NG 管理画面（外部公開なし） -->
+        <activity android:name=".NgManagerActivity"
+            android:label="NG管理"
+            android:exported="false" />
+        <!-- 開発用: Material 3 Expressive デモ（外部公開なし） -->
+        <activity
+            android:name=".ExpressiveDemoActivity"
+            android:exported="false"
+            android:label="Expressive Demo" />
+    </application>
+
+</manifest>

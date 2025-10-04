@@ -1,0 +1,33 @@
+<resources>
+    <!--
+        アプリ基底テーマ（Material 3）。
+        画面内部は Compose の MaterialTheme に委譲しつつ、
+        Window/Splash/システムバーなど外縁は M3 に統一。
+        既存の属性設定はコードと連動するため変更不可。コメントのみ更新可。
+    -->
+    <style name="Theme.Futaburakari" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Edge-to-Edge 前提。システムバーは透明化（明度はコード側で制御） -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <!-- Display cutout の動作（デフォルトを明示） -->
+        <item name="android:windowLayoutInDisplayCutoutMode">default</item>
+
+        <!-- SplashScreen API（Android 12+） -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_inset</item>
+        <item name="android:windowSplashScreenBackground">@color/my_expressive_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Futaburakari</item>
+
+        <!-- Android 12 未満向けのフォールバック背景 -->
+        <item name="android:windowBackground">@color/my_expressive_background</item>
+    </style>
+
+    <!-- 備考: 既存の M3 オーバーレイは未使用のため削除済み。必要になれば AppCompat 相当を定義 -->
+
+    <!-- ツールバーのタイトル用テキスト外観（AppCompat 互換）。 -->
+    <style name="Toolbar.TitleText" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
+        <item name="android:textSize">24sp</item>
+    </style>
+
+</resources>
