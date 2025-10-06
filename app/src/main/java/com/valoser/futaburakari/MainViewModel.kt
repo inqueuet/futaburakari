@@ -100,6 +100,7 @@ class MainViewModel @Inject constructor(
         private const val PREVIEW_BATCH_SIZE = 4
         private const val PREVIEW_BATCH_DELAY_MS = 5L
         private const val FULL_BATCH_DELAY_MS = 50L
+        // カタログ1回あたりのフル画像プリフェッチ対象件数上限
         private const val FULL_PREFETCH_LIMIT = 12
     }
 
@@ -117,11 +118,13 @@ class MainViewModel @Inject constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    // Coil の Disposable と detailUrl をまとめてキャンセルしやすくする
     private data class PrefetchHandle(
         val detailUrl: String?,
         val disposable: Disposable,
     )
 
+    // 同一 detailUrl のフルプリフェッチを重複させないためのガードセット
     private val inFlightFullPrefetch = ConcurrentHashMap.newKeySet<String>()
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
@@ -176,6 +179,7 @@ class MainViewModel @Inject constructor(
         val height = hint.cellHeightPx.coerceAtLeast(1)
         val imageLoader = appContext.imageLoader
 
+        // コルーチン停止時にまとめて dispose するためのハンドル一覧
         val activeDisposables = mutableListOf<PrefetchHandle>()
         try {
             val previewTargets = hint.items.mapNotNull { item ->
@@ -220,6 +224,7 @@ class MainViewModel @Inject constructor(
             if (prefetchTargets.isEmpty()) return
 
             val concurrency = AppPreferences.getConcurrencyLevel(appContext).coerceIn(1, 4)
+            // フル画像プリフェッチは負荷を抑えるために最大 FULL_PREFETCH_LIMIT 件までに制限
             val limitedPrefetchTargets = prefetchTargets.take(FULL_PREFETCH_LIMIT)
             limitedPrefetchTargets.chunked(concurrency).forEach { batch ->
                 batch.forEach { (item, referer, url) ->
@@ -274,6 +279,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    // コルーチン取消時に Coil のリクエストも確実に破棄する
     private fun cancelPrefetchRequests(handles: List<PrefetchHandle>) {
         handles.forEach { (detailUrl, disposable) ->
             try {

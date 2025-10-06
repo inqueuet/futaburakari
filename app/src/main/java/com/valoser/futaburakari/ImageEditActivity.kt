@@ -277,7 +277,7 @@ class ImageEditActivity : BaseActivity() {
                         }
                         BitmapFactory.decodeStream(inputStream, null, options)
 
-                        // 大きすぎる画像はスケールダウン
+                        // 大きすぎる画像は 2 の冪の inSampleSize で最大 2048px 以内に収める
                         val maxSize = 2048
                         var sampleSize = 1
                         while (

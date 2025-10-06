@@ -225,6 +225,7 @@ class ReplyViewModel @Inject constructor(
         return c.value.toString()
     }
 
+    // 添付ファイルの推定サイズに応じて全体の要求タイムアウトを調整
     private suspend fun estimateTotalTimeoutMs(context: Context, upfileUri: Uri?): Long {
         if (upfileUri == null) return BASE_TIMEOUT_MS
 
@@ -236,11 +237,13 @@ class ReplyViewModel @Inject constructor(
         return total.coerceIn(BASE_TIMEOUT_MS, MAX_TIMEOUT_MS)
     }
 
+    // OkHttp の callTimeout にクッションを持たせ、全体タイムアウトよりわずかに短く設定する
     private fun deriveCallTimeoutMs(totalTimeoutMs: Long): Long {
         val adjusted = totalTimeoutMs - CALL_TIMEOUT_HEADROOM_MS
         return adjusted.coerceIn(MIN_CALL_TIMEOUT_MS, totalTimeoutMs)
     }
 
+    // SocketTimeoutException だけでなくメッセージに timeout を含む IOException も拾う
     private fun Throwable.isTimeoutLike(): Boolean {
         if (this is java.net.SocketTimeoutException) return true
         if (this is java.io.IOException && message?.contains("timeout", ignoreCase = true) == true) return true
@@ -277,7 +280,9 @@ class ReplyViewModel @Inject constructor(
         private const val UPLOAD_HEADROOM_MS = 5_000L
         private const val MIN_UPLOAD_BYTES_PER_SECOND = 256_000L // ≈2 Mbps 相当
         private const val MAX_TIMEOUT_MS = 120_000L
+        // 全体タイムアウトより少し短い callTimeout を設定してリトライを許容
         private const val CALL_TIMEOUT_HEADROOM_MS = 2_000L
+        // callTimeout が極端に短くならないよう下限を確保
         private const val MIN_CALL_TIMEOUT_MS = 10_000L
     }
 }
