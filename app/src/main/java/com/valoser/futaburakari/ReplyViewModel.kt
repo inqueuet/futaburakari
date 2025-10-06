@@ -12,8 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.text.Charsets
 import java.util.zip.CRC32
 
 /**
@@ -78,110 +78,112 @@ class ReplyViewModel @Inject constructor(
             _uiState.postValue(UiState.Loading)
 
             val totalTimeoutMs = estimateTotalTimeoutMs(context, upfileUri)
+            val perCallTimeoutMs = deriveCallTimeoutMs(totalTimeoutMs)
 
             val result = runCatching {
-                withTimeout(totalTimeoutMs) {
-                    // --- 1回目：ブラウザ準拠の最低限フィールド付きで投稿 ---
-                    val firstExtras = mutableMapOf(
-                        "responsemode" to "ajax",
-                        "baseform" to "",
-                        "resto" to resto,
-                        "js" to "on"
+                // --- 1回目：ブラウザ準拠の最低限フィールド付きで投稿 ---
+                val firstExtras = mutableMapOf(
+                    "responsemode" to "ajax",
+                    "baseform" to "",
+                    "resto" to resto,
+                    "js" to "on"
+                )
+                suspend fun tryFirst() = repository.postReply(
+                    boardUrl = boardUrl,
+                    resto = resto,
+                    name = name,
+                    email = email,
+                    sub = sub,
+                    com = com,
+                    inputPwd = inputPwd,
+                    upfileUri = upfileUri,
+                    textOnly = textOnly,
+                    context = context,
+                    extra = firstExtras,
+                    callTimeoutMs = perCallTimeoutMs
+                )
+                val first = retryIfTooFast { tryFirst() }
+                if (first.isSuccess) return@runCatching UiState.Success(first.getOrThrow())
+
+                // --- 2回目：トークン取得 → 再送 ---
+                if (postPageUrlForToken.isNullOrBlank()) {
+                    return@runCatching UiState.Error(
+                        first.exceptionOrNull()?.message.orEmpty()
+                            .ifBlank { "投稿に失敗しました" }
                     )
-                    suspend fun tryFirst() = repository.postReply(
-                        boardUrl = boardUrl,
-                        resto = resto,
-                        name = name,
-                        email = email,
-                        sub = sub,
-                        com = com,
-                        inputPwd = inputPwd,
-                        upfileUri = upfileUri,
-                        textOnly = textOnly,
-                        context = context,
-                        extra = firstExtras
+                }
+
+                // トークン取得は個別に 5 秒で打ち切り
+                val tokens = withTimeoutOrNull(5_000L) {
+                    tokenProvider?.fetchTokens(postPageUrlForToken)?.getOrNull()
+                }
+                if (tokens.isNullOrEmpty()) {
+                    return@runCatching UiState.Error(
+                        first.exceptionOrNull()?.message.orEmpty()
+                            .ifBlank { "投稿に失敗しました。Cookie・セッション情報の取得に失敗した可能性があります。" }
                     )
-                    val first = retryIfTooFast { tryFirst() }
-                    if (first.isSuccess) return@withTimeout UiState.Success(first.getOrThrow())
+                }
 
-                    // --- 2回目：トークン取得 → 再送 ---
-                    if (postPageUrlForToken.isNullOrBlank()) {
-                        return@withTimeout UiState.Error(
-                            first.exceptionOrNull()?.message.orEmpty()
-                                .ifBlank { "投稿に失敗しました" }
-                        )
+                // 欠落キーのログ出力
+                runCatching {
+                    val must = listOf("ptua","scsz","hash","MAX_FILE_SIZE","js","chrenc","resto")
+                    val missing = must.filter { !tokens.containsKey(it) }
+                    Log.d("ReplyVM", "token missing: $missing")
+                }
+
+                // 不足フィールドを保険で補完
+                Log.d("ReplyVM", "token keys: ${tokens.keys}")
+                val patched = tokens.toMutableMap().apply {
+                    put("responsemode", "ajax")
+                    putIfAbsent("js", "on")
+                    putIfAbsent("resto", resto)
+                    putIfAbsent("baseform", "")
+
+                    // scsz（画面サイズ）
+                    put("scsz", "1920x1080x24") // ← PC成功ログに合わせて固定
+                    // ptua（UA の CRC32 で代用）
+                    if (!containsKey("ptua")) {
+                        put("ptua", crc32(Ua.STRING))
                     }
+                    // MAX_FILE_SIZE（取得できない場合の既定）
+                    putIfAbsent("MAX_FILE_SIZE", "8192000")
+                }
 
-                    // トークン取得は個別に 5 秒で打ち切り
-                    val tokens = withTimeoutOrNull(5_000L) {
-                        tokenProvider?.fetchTokens(postPageUrlForToken)?.getOrNull()
-                    }
-                    if (tokens.isNullOrEmpty()) {
-                        return@withTimeout UiState.Error(
-                            first.exceptionOrNull()?.message.orEmpty()
-                                .ifBlank { "投稿に失敗しました。Cookie・セッション情報の取得に失敗した可能性があります。" }
-                        )
-                    }
-
-                    // 欠落キーのログ出力
-                    runCatching {
-                        val must = listOf("ptua","scsz","hash","MAX_FILE_SIZE","js","chrenc","resto")
-                        val missing = must.filter { !tokens.containsKey(it) }
-                        Log.d("ReplyVM", "token missing: $missing")
-                    }
-
-                    // 不足フィールドを保険で補完
-                    Log.d("ReplyVM", "token keys: ${tokens.keys}")
-                    val patched = tokens.toMutableMap().apply {
-                        put("responsemode", "ajax")
-                        putIfAbsent("js", "on")
-                        putIfAbsent("resto", resto)
-                        putIfAbsent("baseform", "")
-
-                        // scsz（画面サイズ）
-                        put("scsz", "1920x1080x24") // ← PC成功ログに合わせて固定
-                        //if (!containsKey("scsz")) {
-                        //    val dm = android.content.res.Resources.getSystem().displayMetrics
-                        //    put("scsz", "${dm.widthPixels}x${dm.heightPixels}x24")
-                        //}
-                        // ptua（UA の CRC32 で代用）
-                        if (!containsKey("ptua")) {
-                            put("ptua", crc32(Ua.STRING))
-                        }
-                        // MAX_FILE_SIZE（取得できない場合の既定）
-                        putIfAbsent("MAX_FILE_SIZE", "8192000")
-                    }
-
-                    suspend fun trySecond() = repository.postReply(
-                        boardUrl = boardUrl,
-                        resto = resto,
-                        name = name,
-                        email = email,
-                        sub = sub,
-                        com = com,
-                        inputPwd = inputPwd,
-                        upfileUri = upfileUri,
-                        textOnly = textOnly,
-                        context = context,
-                        extra = patched
+                suspend fun trySecond() = repository.postReply(
+                    boardUrl = boardUrl,
+                    resto = resto,
+                    name = name,
+                    email = email,
+                    sub = sub,
+                    com = com,
+                    inputPwd = inputPwd,
+                    upfileUri = upfileUri,
+                    textOnly = textOnly,
+                    context = context,
+                    extra = patched,
+                    callTimeoutMs = perCallTimeoutMs
+                )
+                val second = retryIfTooFast { trySecond() }
+                if (second.isSuccess) {
+                    UiState.Success(second.getOrThrow())
+                } else {
+                    UiState.Error(
+                        second.exceptionOrNull()?.message.orEmpty()
+                            .ifBlank { "投稿に失敗しました。サーバー側のIP制限やCookie認証の問題が考えられます。" }
                     )
-                    val second = retryIfTooFast { trySecond() }
-                    if (second.isSuccess) {
-                        UiState.Success(second.getOrThrow())
-                    } else {
-                        UiState.Error(
-                            second.exceptionOrNull()?.message.orEmpty()
-                                .ifBlank { "投稿に失敗しました。サーバー側のIP制限やCookie認証の問題が考えられます。" }
-                        )
-                    }
                 }
             }
 
             if (result.isSuccess) {
                 _uiState.postValue(result.getOrThrow())
             } else {
-                val msg = result.exceptionOrNull()?.message
-                    ?: "タイムアウトまたは予期しないエラーが発生しました。通信環境やサーバーの状態を確認してください。"
+                val error = result.exceptionOrNull()
+                val msg = when {
+                    error?.isTimeoutLike() == true ->
+                        "時間内に応答がありませんでした。通信環境やサーバーの状態を確認して再試行してください。"
+                    else -> error?.message
+                        ?: "タイムアウトまたは予期しないエラーが発生しました。通信環境やサーバーの状態を確認してください。"
+                }
                 _uiState.postValue(UiState.Error(msg))
             }
         }
@@ -223,6 +225,7 @@ class ReplyViewModel @Inject constructor(
         return c.value.toString()
     }
 
+    // 添付ファイルの推定サイズに応じて全体の要求タイムアウトを調整
     private suspend fun estimateTotalTimeoutMs(context: Context, upfileUri: Uri?): Long {
         if (upfileUri == null) return BASE_TIMEOUT_MS
 
@@ -232,6 +235,20 @@ class ReplyViewModel @Inject constructor(
         val transferMs = ((size * 1000L) + MIN_UPLOAD_BYTES_PER_SECOND - 1) / MIN_UPLOAD_BYTES_PER_SECOND
         val total = BASE_TIMEOUT_MS + transferMs + UPLOAD_HEADROOM_MS
         return total.coerceIn(BASE_TIMEOUT_MS, MAX_TIMEOUT_MS)
+    }
+
+    // OkHttp の callTimeout にクッションを持たせ、全体タイムアウトよりわずかに短く設定する
+    private fun deriveCallTimeoutMs(totalTimeoutMs: Long): Long {
+        val adjusted = totalTimeoutMs - CALL_TIMEOUT_HEADROOM_MS
+        return adjusted.coerceIn(MIN_CALL_TIMEOUT_MS, totalTimeoutMs)
+    }
+
+    // SocketTimeoutException だけでなくメッセージに timeout を含む IOException も拾う
+    private fun Throwable.isTimeoutLike(): Boolean {
+        if (this is java.net.SocketTimeoutException) return true
+        if (this is java.io.IOException && message?.contains("timeout", ignoreCase = true) == true) return true
+        val cause = cause
+        return cause != null && cause !== this && cause.isTimeoutLike()
     }
 
     private suspend fun resolveFileSize(context: Context, uri: Uri): Long? = withContext(Dispatchers.IO) {
@@ -263,5 +280,9 @@ class ReplyViewModel @Inject constructor(
         private const val UPLOAD_HEADROOM_MS = 5_000L
         private const val MIN_UPLOAD_BYTES_PER_SECOND = 256_000L // ≈2 Mbps 相当
         private const val MAX_TIMEOUT_MS = 120_000L
+        // 全体タイムアウトより少し短い callTimeout を設定してリトライを許容
+        private const val CALL_TIMEOUT_HEADROOM_MS = 2_000L
+        // callTimeout が極端に短くならないよう下限を確保
+        private const val MIN_CALL_TIMEOUT_MS = 10_000L
     }
 }

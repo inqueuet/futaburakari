@@ -143,11 +143,11 @@ object NetworkModule {
         @ApplicationContext context: Context,
         cookieJar: CookieJar,
         connectionPool: ConnectionPool,
-        cache: Cache,
     ): OkHttpClient {
         /**
          * 画像取得（Coil）用の `OkHttpClient` を生成して提供する。
          * - UA/Cookie/ConnectionPool/Dispatcher は API 用と同じ構成
+         * - Conscrypt の `i2d_X509` が OOM になる事例を避けるため HTTP キャッシュは付与しない
          * - 読み取り・コールタイムアウトは 30 秒に設定し、重いメディアでも処理できる余裕を確保
          * - 2chan 系ホストへは軽い遅延（約 1ms）でアクセス頻度を抑制
          * - 異常時は縮退構成でフォールバック
@@ -155,7 +155,6 @@ object NetworkModule {
          * @param context 設定参照用のアプリケーションコンテキスト
          * @param cookieJar 共有 CookieJar
          * @param connectionPool 共有 ConnectionPool
-         * @param cache HTTP キャッシュ
          * @return 画像取得に最適化された OkHttpClient
          */
         return try {
@@ -169,7 +168,6 @@ object NetworkModule {
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .cookieJar(cookieJar)
-                .cache(cache)
                 .connectTimeout(30.seconds)
                 .writeTimeout(60.seconds)
                 // 画像取得でも余裕を持ったタイムアウトを確保（一覧表示での誤判定を防止）
@@ -194,7 +192,6 @@ object NetworkModule {
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
                     .cookieJar(cookieJar)
-                    .cache(cache)
                     .connectTimeout(30.seconds)
                     // 縮退時も同じタイムアウト設定を維持
                     .readTimeout(30.seconds)

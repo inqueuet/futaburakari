@@ -19,6 +19,7 @@ import okhttp3.coroutines.executeAsync
 import org.jsoup.Jsoup
 import java.io.IOException
 import java.nio.charset.Charset
+import java.util.concurrent.TimeUnit
 import okio.source
 
 /**
@@ -69,7 +70,8 @@ class ReplyRepository @Inject constructor(
         upfileUri: Uri?,
         textOnly: Boolean,
         context: Context,
-        extra: Map<String, String> = emptyMap()
+        extra: Map<String, String> = emptyMap(),
+        callTimeoutMs: Long? = null,
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             // 投稿先 URL からスレURL（Referer 用）を組み立て、Origin 用には HttpUrl からホスト情報を抽出
@@ -232,7 +234,14 @@ class ReplyRepository @Inject constructor(
             if (!mergedCookie.isNullOrBlank()) rb.header("Cookie", mergedCookie)
             val req = rb.build()
 
-            httpClient.newCall(req).executeAsync().use { resp ->
+            val call = httpClient.newCall(req)
+            callTimeoutMs?.let { timeout ->
+                if (timeout > 0L) {
+                    call.timeout().timeout(timeout, TimeUnit.MILLISECONDS)
+                }
+            }
+
+            call.executeAsync().use { resp ->
                 if (!resp.isSuccessful) {
                     val raw = resp.body?.bytes() ?: ByteArray(0)
                     val decoded = EncodingUtils.decode(raw, resp.header("Content-Type"))
