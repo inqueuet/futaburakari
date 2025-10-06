@@ -25,6 +25,7 @@ import coil3.imageLoader
 import coil3.network.HttpException
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
+import coil3.request.Disposable
 import coil3.request.ImageRequest
 import coil3.size.Dimension
 import coil3.size.Precision
@@ -56,6 +57,7 @@ import java.net.URL
 import javax.inject.Inject
 import android.util.LruCache
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.ConcurrentHashMap
 
 @HiltViewModel
 /**
@@ -98,6 +100,7 @@ class MainViewModel @Inject constructor(
         private const val PREVIEW_BATCH_SIZE = 4
         private const val PREVIEW_BATCH_DELAY_MS = 5L
         private const val FULL_BATCH_DELAY_MS = 50L
+        private const val FULL_PREFETCH_LIMIT = 12
     }
 
     // URL推測結果をキャッシュ（サイズを拡大）
@@ -113,6 +116,13 @@ class MainViewModel @Inject constructor(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+
+    private data class PrefetchHandle(
+        val detailUrl: String?,
+        val disposable: Disposable,
+    )
+
+    private val inFlightFullPrefetch = ConcurrentHashMap.newKeySet<String>()
 
     // 差分更新向け: detailUrl をキーにした順序付きマップで保持
     // 動的サイズ制限付きLinkedHashMapでメモリ使用量を制御
@@ -166,81 +176,113 @@ class MainViewModel @Inject constructor(
         val height = hint.cellHeightPx.coerceAtLeast(1)
         val imageLoader = appContext.imageLoader
 
-        val previewTargets = hint.items.mapNotNull { item ->
-            val preview = item.previewUrl
-            if (preview.isBlank()) null else item.detailUrl to preview
-        }
-
-        previewTargets.chunked(PREVIEW_BATCH_SIZE).forEach { batch ->
-            batch.forEach { (referer, url) ->
-                val request = ImageRequest.Builder(appContext)
-                    .data(url)
-                    .size(Dimension.Pixels(width), Dimension.Pixels(height))
-                    .precision(Precision.INEXACT)
-                    .httpHeaders(
-                        NetworkHeaders.Builder()
-                            .add("Referer", referer)
-                            .add("Accept", "*/*")
-                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                            .add("User-Agent", Ua.STRING)
-                            .build()
-                    )
-                    .build()
-                imageLoader.enqueue(request)
+        val activeDisposables = mutableListOf<PrefetchHandle>()
+        try {
+            val previewTargets = hint.items.mapNotNull { item ->
+                val preview = item.previewUrl
+                if (preview.isBlank()) null else item.detailUrl to preview
             }
-            if (PREVIEW_BATCH_DELAY_MS > 0) delay(PREVIEW_BATCH_DELAY_MS)
-        }
 
-        val prefetchTargets = hint.items.mapNotNull { item ->
-            val full = item.fullImageUrl
-            val preferPreview = item.preferPreviewOnly
-            val hadFull = item.hadFullSuccess
-            val isVideo = full?.lowercase()?.let { url ->
-                url.endsWith(".webm") || url.endsWith(".mp4") || url.endsWith(".mkv")
-            } ?: false
-            when {
-                !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full)
-                else -> null
+            previewTargets.chunked(PREVIEW_BATCH_SIZE).forEach { batch ->
+                batch.forEach { (referer, url) ->
+                    val request = ImageRequest.Builder(appContext)
+                        .data(url)
+                        .size(Dimension.Pixels(width), Dimension.Pixels(height))
+                        .precision(Precision.INEXACT)
+                        .httpHeaders(
+                            NetworkHeaders.Builder()
+                                .add("Referer", referer)
+                                .add("Accept", "*/*")
+                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                .add("User-Agent", Ua.STRING)
+                                .build()
+                        )
+                        .build()
+                    val disposable = imageLoader.enqueue(request)
+                    activeDisposables += PrefetchHandle(detailUrl = null, disposable = disposable)
+                }
+                if (PREVIEW_BATCH_DELAY_MS > 0) delay(PREVIEW_BATCH_DELAY_MS)
             }
-        }
 
-        if (prefetchTargets.isEmpty()) return
+            val prefetchTargets = hint.items.mapNotNull { item ->
+                val full = item.fullImageUrl
+                val preferPreview = item.preferPreviewOnly
+                val hadFull = item.hadFullSuccess
+                val isVideo = full?.lowercase()?.let { url ->
+                    url.endsWith(".webm") || url.endsWith(".mp4") || url.endsWith(".mkv")
+                } ?: false
+                when {
+                    !full.isNullOrBlank() && !preferPreview && !hadFull && !isVideo -> Triple(item, item.detailUrl, full)
+                    else -> null
+                }
+            }
 
-        val concurrency = AppPreferences.getConcurrencyLevel(appContext).coerceIn(1, 4)
-        prefetchTargets.chunked(concurrency).forEach { batch ->
-            batch.forEach { (item, referer, url) ->
-                val request = ImageRequest.Builder(appContext)
-                    .data(url)
-                    .size(Dimension.Pixels(width), Dimension.Pixels(height))
-                    .precision(Precision.INEXACT)
-                    .httpHeaders(
-                        NetworkHeaders.Builder()
-                            .add("Referer", referer)
-                            .add("Accept", "*/*")
-                            .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-                            .add("User-Agent", Ua.STRING)
-                            .build()
-                    )
-                    .listener(
-                        onSuccess = { request, _ ->
-                            val loaded = request.data?.toString()
-                            if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
-                                notifyFullImageSuccess(item.detailUrl, loaded)
-                            }
-                        },
-                        onError = { request, result ->
-                            val throwable = result.throwable
-                            if (throwable is HttpException && throwable.response.code == 404) {
-                                request.data?.toString()?.takeIf { it.isNotEmpty() }?.let { failed ->
-                                    fixImageIf404NoHtml(item.detailUrl, failed)
+            if (prefetchTargets.isEmpty()) return
+
+            val concurrency = AppPreferences.getConcurrencyLevel(appContext).coerceIn(1, 4)
+            val limitedPrefetchTargets = prefetchTargets.take(FULL_PREFETCH_LIMIT)
+            limitedPrefetchTargets.chunked(concurrency).forEach { batch ->
+                batch.forEach { (item, referer, url) ->
+                    if (!inFlightFullPrefetch.add(item.detailUrl)) {
+                        return@forEach
+                    }
+                    val request = ImageRequest.Builder(appContext)
+                        .data(url)
+                        .size(Dimension.Pixels(width), Dimension.Pixels(height))
+                        .precision(Precision.INEXACT)
+                        .httpHeaders(
+                            NetworkHeaders.Builder()
+                                .add("Referer", referer)
+                                .add("Accept", "*/*")
+                                .add("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+                                .add("User-Agent", Ua.STRING)
+                                .build()
+                        )
+                        .listener(
+                            onSuccess = { request, _ ->
+                                inFlightFullPrefetch.remove(item.detailUrl)
+                                val loaded = request.data?.toString()
+                                if (loaded?.contains("/src/") == true && !item.hadFullSuccess) {
+                                    notifyFullImageSuccess(item.detailUrl, loaded)
                                 }
+                            },
+                            onError = { request, result ->
+                                inFlightFullPrefetch.remove(item.detailUrl)
+                                val throwable = result.throwable
+                                if (throwable is HttpException && throwable.response.code == 404) {
+                                    request.data?.toString()?.takeIf { it.isNotEmpty() }?.let { failed ->
+                                        fixImageIf404NoHtml(item.detailUrl, failed)
+                                    }
+                                }
+                            },
+                            onCancel = {
+                                inFlightFullPrefetch.remove(item.detailUrl)
                             }
-                        }
-                    )
-                    .build()
-                imageLoader.enqueue(request)
+                        )
+                        .build()
+                    val disposable = imageLoader.enqueue(request)
+                    activeDisposables += PrefetchHandle(detailUrl = item.detailUrl, disposable = disposable)
+                }
+                if (FULL_BATCH_DELAY_MS > 0) delay(FULL_BATCH_DELAY_MS)
             }
-            if (FULL_BATCH_DELAY_MS > 0) delay(FULL_BATCH_DELAY_MS)
+        } catch (e: CancellationException) {
+            cancelPrefetchRequests(activeDisposables)
+            throw e
+        } catch (t: Throwable) {
+            cancelPrefetchRequests(activeDisposables)
+            throw t
+        }
+    }
+
+    private fun cancelPrefetchRequests(handles: List<PrefetchHandle>) {
+        handles.forEach { (detailUrl, disposable) ->
+            try {
+                disposable.dispose()
+            } catch (t: Throwable) {
+                Log.w("MainViewModel", "Failed to cancel prefetch request", t)
+            } finally {
+                detailUrl?.let { inFlightFullPrefetch.remove(it) }
+            }
         }
     }
 

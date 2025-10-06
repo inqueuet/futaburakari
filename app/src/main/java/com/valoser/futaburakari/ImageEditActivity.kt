@@ -279,15 +279,18 @@ class ImageEditActivity : BaseActivity() {
 
                         // 大きすぎる画像はスケールダウン
                         val maxSize = 2048
-                        val scale = maxOf(
-                            options.outWidth / maxSize,
-                            options.outHeight / maxSize
-                        ).coerceAtLeast(1)
+                        var sampleSize = 1
+                        while (
+                            (options.outWidth / sampleSize) > maxSize ||
+                            (options.outHeight / sampleSize) > maxSize
+                        ) {
+                            sampleSize *= 2
+                        }
 
                         contentResolver.openInputStream(imageUri!!).use { inputStream2 ->
                             options.apply {
                                 inJustDecodeBounds = false
-                                inSampleSize = scale
+                                inSampleSize = sampleSize
                                 inPreferredConfig = Bitmap.Config.RGB_565 // メモリ使用量を半分に
                             }
                             BitmapFactory.decodeStream(inputStream2, null, options)
