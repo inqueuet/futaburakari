@@ -25,8 +25,8 @@ class EditingEngine(
     // 全面モザイク画像
     private val mosaicFull: Bitmap = makePixelated(original, block = 16)
 
-    // モザイク表示領域マスク（A8相当の使い方。ここでは ARGB_8888 を使用）
-    private val maskBitmap: Bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    // モザイク表示領域マスクはアルファ値のみ保持すれば十分
+    private val maskBitmap: Bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8)
     private val maskCanvas = Canvas(maskBitmap)
     private val paintMaskAdd = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE          // 白=不透明 → マスクで「見せる」領域
