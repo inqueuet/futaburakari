@@ -98,6 +98,7 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  * - `onOpenSettings`: 設定画面を開くアクション（メニューから呼び出し）。
  * - `onOpenHistory`: 履歴画面を開くアクション（トップバーのアイコン）。
  * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
+ * - `onVideoEdit`: 動画編集のメニュー操作。
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
@@ -125,6 +126,7 @@ fun MainCatalogScreen(
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
     onImageEdit: () -> Unit,
+    onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
@@ -349,6 +351,7 @@ fun MainCatalogScreen(
                     MoreMenu(
                         onManageBookmarks = onManageBookmarks,
                         onImageEdit = onImageEdit,
+                        onVideoEdit = onVideoEdit,
                         onBrowseLocalImages = onBrowseLocalImages,
                         onSettings = onOpenSettings,
                     )
@@ -429,13 +432,14 @@ fun MainCatalogScreen(
 }
 
 /**
- * 右上「その他」メニュー。ブックマーク管理・設定・ローカル画像・画像編集を提供。
+ * 右上「その他」メニュー。ブックマーク管理・設定・ローカル画像・画像編集・動画編集を提供。
  * 選択時はメニューを閉じてから各ハンドラを呼び出す。
  */
 @Composable
 private fun MoreMenu(
     onManageBookmarks: () -> Unit,
     onImageEdit: () -> Unit,
+    onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -449,6 +453,7 @@ private fun MoreMenu(
             DropdownMenuItem(text = { Text("設定") }, onClick = { expanded = false; onSettings() })
             DropdownMenuItem(text = { Text("ローカル画像を開く") }, onClick = { expanded = false; onBrowseLocalImages() })
             DropdownMenuItem(text = { Text("画像編集") }, onClick = { expanded = false; onImageEdit() })
+            DropdownMenuItem(text = { Text("動画編集") }, onClick = { expanded = false; onVideoEdit() })
         }
     }
 }
