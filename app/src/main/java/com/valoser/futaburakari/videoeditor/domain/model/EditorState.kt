@@ -14,7 +14,8 @@ data class EditorState(
     val zoom: Float = 0.25f,
     val isLoading: Boolean = false,
     val error: String? = null,
-    val rangeSelection: TimeRange? = null
+    val rangeSelection: TimeRange? = null,
+    val splitMarkerPosition: Long? = null
 )
 
 /**
@@ -28,6 +29,7 @@ sealed class EditorIntent {
     // クリップ編集
     data class TrimClip(val clipId: String, val start: Long, val end: Long) : EditorIntent()
     data class SplitClip(val clipId: String, val position: Long) : EditorIntent()
+    object SplitAtPlayhead : EditorIntent()
     data class DeleteRange(val clipId: String, val start: Long, val end: Long) : EditorIntent()
     data class DeleteClip(val clipId: String) : EditorIntent()
     data class MoveClip(val clipId: String, val newPosition: Long) : EditorIntent()
@@ -139,6 +141,7 @@ sealed class EditorIntent {
 
     // 範囲選択
     data class SetRangeSelection(val start: Long, val end: Long) : EditorIntent()
+    data class DeleteTimeRange(val start: Long, val end: Long, val ripple: Boolean = true) : EditorIntent()
 }
 
 /**

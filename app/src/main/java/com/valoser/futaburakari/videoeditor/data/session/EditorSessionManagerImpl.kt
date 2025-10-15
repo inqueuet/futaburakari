@@ -87,7 +87,7 @@ class EditorSessionManagerImpl @Inject constructor(
 
     override suspend fun updateSession(session: EditorSession): Result<Unit> {
         return try {
-            saveState(currentSession ?: return Result.failure(Exception("No active session")))
+            // saveState()は呼び出し元で行うため、ここでは呼ばない
             currentSession = session
             Result.success(Unit)
         } catch (e: Exception) {

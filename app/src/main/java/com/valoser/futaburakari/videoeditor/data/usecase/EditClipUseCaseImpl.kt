@@ -2,6 +2,7 @@ package com.valoser.futaburakari.videoeditor.data.usecase
 
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
+import com.valoser.futaburakari.videoeditor.domain.model.AudioClip
 import com.valoser.futaburakari.videoeditor.domain.session.EditorSessionManager
 import com.valoser.futaburakari.videoeditor.domain.usecase.EditClipUseCase
 import java.util.UUID
@@ -50,13 +51,16 @@ class EditClipUseCaseImpl @Inject constructor(
             val targetClip = session.videoClips.find { it.id == clipId }
                 ?: return Result.failure(Exception("Clip not found"))
 
+            // 分割位置における元動画ソースの時刻を計算
+            val splitSourceTime = targetClip.startTime + position
+
             // クリップを2つに分割
             val firstClip = targetClip.copy(
-                endTime = targetClip.startTime + position
+                endTime = splitSourceTime
             )
             val secondClip = targetClip.copy(
                 id = UUID.randomUUID().toString(),
-                startTime = targetClip.startTime + position,
+                startTime = splitSourceTime,
                 position = targetClip.position + position
             )
 
@@ -85,42 +89,123 @@ class EditClipUseCaseImpl @Inject constructor(
             val session = sessionManager.getCurrentSession()
                 ?: return Result.failure(Exception("No active session"))
 
-            val targetClip = session.videoClips.find { it.id == clipId }
-                ?: return Result.failure(Exception("Clip not found"))
+            val targetVideoClip = session.videoClips.find { it.id == clipId }
+                ?: return Result.failure(Exception("Video clip not found"))
 
-            // 範囲削除の実装
-            val deleteLength = endTime - startTime
+            // Convert relative times to absolute session times
+            val absoluteDeleteStart = targetVideoClip.position + startTime
+            val absoluteDeleteEnd = targetVideoClip.position + endTime
+            val deleteLength = absoluteDeleteEnd - absoluteDeleteStart
 
-            val updatedClips = session.videoClips.flatMap { clip ->
-                if (clip.id == clipId) {
-                    if (startTime == clip.startTime && endTime == clip.endTime) {
-                        // 全削除の場合は空リストを返す
-                        emptyList()
-                    } else if (startTime == clip.startTime) {
-                        // 先頭から削除
-                        listOf(clip.copy(startTime = endTime))
-                    } else if (endTime == clip.endTime) {
-                        // 末尾から削除
-                        listOf(clip.copy(endTime = startTime))
-                    } else {
-                        // 中間削除 - 2つに分割
-                        val firstClip = clip.copy(endTime = startTime)
-                        val secondClip = clip.copy(
-                            id = UUID.randomUUID().toString(),
-                            startTime = endTime,
-                            position = clip.position + (startTime - clip.startTime) / clip.speed.toLong()
-                        )
-                        listOf(firstClip, secondClip)
-                    }
-                } else if (clip.position > targetClip.position) {
-                    // 後続のクリップの位置を調整
-                    listOf(clip.copy(position = clip.position - deleteLength))
-                } else {
-                    listOf(clip)
+            val updatedVideoClips = mutableListOf<VideoClip>()
+            for (clip in session.videoClips) {
+                val clipAbsoluteStart = clip.position
+                val clipAbsoluteEnd = clip.position + clip.duration
+
+                // Case 1: Clip is entirely before the deleted range
+                if (clipAbsoluteEnd <= absoluteDeleteStart) {
+                    updatedVideoClips.add(clip)
+                }
+                // Case 2: Clip is entirely after the deleted range
+                else if (clipAbsoluteStart >= absoluteDeleteEnd) {
+                    updatedVideoClips.add(clip.copy(position = clip.position - deleteLength))
+                }
+                // Case 3: Clip is entirely within the deleted range (remove it)
+                else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
+                    // Do not add, effectively deleting it
+                }
+                // Case 4: Deleted range is entirely within the clip (split into two)
+                else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteEnd) {
+                    val leftClip = clip.copy(
+                        id = UUID.randomUUID().toString(),
+                        endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart)
+                    )
+                    val rightClip = clip.copy(
+                        id = UUID.randomUUID().toString(),
+                        startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                        position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength
+                    )
+                    updatedVideoClips.add(leftClip)
+                    updatedVideoClips.add(rightClip)
+                }
+                // Case 5: Deleted range overlaps the start of the clip (trim start)
+                else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
+                    updatedVideoClips.add(clip.copy(
+                        endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart)
+                    ))
+                }
+                // Case 6: Deleted range overlaps the end of the clip (trim end)
+                else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteStart < absoluteDeleteEnd && clipAbsoluteEnd > absoluteDeleteEnd) {
+                    updatedVideoClips.add(clip.copy(
+                        startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                        position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength
+                    ))
                 }
             }
 
-            val updatedSession = session.copy(videoClips = updatedClips)
+            // Now, handle audio tracks similarly
+            val updatedAudioTracks = session.audioTracks.map { track ->
+                val newAudioClipsForTrack = mutableListOf<AudioClip>()
+                for (clip in track.clips) {
+                    val clipAbsoluteStart = clip.position
+                    val clipAbsoluteEnd = clip.position + clip.duration
+
+                    // Case 1: Clip is entirely before the deleted range
+                    if (clipAbsoluteEnd <= absoluteDeleteStart) {
+                        newAudioClipsForTrack.add(clip)
+                    }
+                    // Case 2: Clip is entirely after the deleted range
+                    else if (clipAbsoluteStart >= absoluteDeleteEnd) {
+                        newAudioClipsForTrack.add(clip.copy(position = clip.position - deleteLength))
+                    }
+                    // Case 3: Clip is entirely within the deleted range (remove it)
+                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
+                        // Do not add, effectively deleting it
+                    }
+                    // Case 4: Deleted range is entirely within the clip (split into two)
+                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteEnd) {
+                        val leftClip = clip.copy(
+                            id = UUID.randomUUID().toString(),
+                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
+                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
+                        )
+                        newAudioClipsForTrack.add(leftClip)
+
+                        val rightClip = clip.copy(
+                            id = UUID.randomUUID().toString(),
+                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
+                            volumeKeyframes = clip.volumeKeyframes
+                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
+                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
+                        )
+                        newAudioClipsForTrack.add(rightClip)
+                    }
+                    // Case 5: Deleted range overlaps the start of the clip (trim start)
+                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
+                        newAudioClipsForTrack.add(clip.copy(
+                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
+                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
+                        ))
+                    }
+                    // Case 6: Deleted range overlaps the end of the clip (trim end)
+                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteStart < absoluteDeleteEnd && clipAbsoluteEnd > absoluteDeleteEnd) {
+                        newAudioClipsForTrack.add(clip.copy(
+                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
+                            volumeKeyframes = clip.volumeKeyframes
+                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
+                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
+                        ))
+                    }
+                }
+                track.copy(clips = newAudioClipsForTrack.sortedBy { it.position })
+            }
+
+            val updatedSession = session.copy(
+                videoClips = updatedVideoClips.sortedBy { it.position },
+                audioTracks = updatedAudioTracks
+            )
             sessionManager.updateSession(updatedSession)
             Result.success(updatedSession)
         } catch (e: Exception) {
@@ -133,19 +218,92 @@ class EditClipUseCaseImpl @Inject constructor(
             val session = sessionManager.getCurrentSession()
                 ?: return Result.failure(Exception("No active session"))
 
-            val targetClip = session.videoClips.find { it.id == clipId }
-                ?: return Result.failure(Exception("Clip not found"))
+            android.util.Log.d("EditClipUseCase", "delete() - looking for clipId: $clipId")
+            android.util.Log.d("EditClipUseCase", "delete() - session has ${session.videoClips.size} clips")
+            android.util.Log.d("EditClipUseCase", "delete() - clip IDs in session: ${session.videoClips.map { it.id }}")
 
-            val updatedClips = session.videoClips.filter { it.id != clipId }
+            val targetVideoClip = session.videoClips.find { it.id == clipId }
+            if (targetVideoClip == null) {
+                android.util.Log.e("EditClipUseCase", "delete() - Video clip not found!")
+                return Result.failure(Exception("Video clip not found"))
+            }
+            android.util.Log.d("EditClipUseCase", "delete() - Found target clip at position ${targetVideoClip.position}")
+
+            val absoluteDeleteStart = targetVideoClip.position
+            val absoluteDeleteEnd = targetVideoClip.position + targetVideoClip.duration
+            val deleteLength = absoluteDeleteEnd - absoluteDeleteStart
+
+            val updatedVideoClips = session.videoClips.filter { it.id != clipId }
                 .map { clip ->
-                    if (clip.position > targetClip.position) {
-                        clip.copy(position = clip.position - targetClip.duration)
+                    if (clip.position > targetVideoClip.position) {
+                        clip.copy(position = clip.position - deleteLength)
                     } else {
                         clip
                     }
                 }
 
-            val updatedSession = session.copy(videoClips = updatedClips)
+            val updatedAudioTracks = session.audioTracks.map { track ->
+                val newAudioClipsForTrack = mutableListOf<AudioClip>()
+                for (clip in track.clips) {
+                    val clipAbsoluteStart = clip.position
+                    val clipAbsoluteEnd = clip.position + clip.duration
+
+                    // Case 1: Clip is entirely before the deleted range
+                    if (clipAbsoluteEnd <= absoluteDeleteStart) {
+                        newAudioClipsForTrack.add(clip)
+                    }
+                    // Case 2: Clip is entirely after the deleted range
+                    else if (clipAbsoluteStart >= absoluteDeleteEnd) {
+                        newAudioClipsForTrack.add(clip.copy(position = clip.position - deleteLength))
+                    }
+                    // Case 3: Clip is entirely within the deleted range (remove it)
+                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
+                        // Do not add, effectively deleting it
+                    }
+                    // Case 4: Deleted range is entirely within the clip (split into two)
+                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteEnd) {
+                        val leftClip = clip.copy(
+                            id = UUID.randomUUID().toString(),
+                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
+                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
+                        )
+                        newAudioClipsForTrack.add(leftClip)
+
+                        val rightClip = clip.copy(
+                            id = UUID.randomUUID().toString(),
+                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
+                            volumeKeyframes = clip.volumeKeyframes
+                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
+                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
+                        )
+                        newAudioClipsForTrack.add(rightClip)
+                    }
+                    // Case 5: Deleted range overlaps the start of the clip (trim start)
+                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
+                        newAudioClipsForTrack.add(clip.copy(
+                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
+                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
+                        ))
+                    }
+                    // Case 6: Deleted range overlaps the end of the clip (trim end)
+                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteStart < absoluteDeleteEnd && clipAbsoluteEnd > absoluteDeleteEnd) {
+                        newAudioClipsForTrack.add(clip.copy(
+                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
+                            volumeKeyframes = clip.volumeKeyframes
+                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
+                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
+                        ))
+                    }
+                }
+                track.copy(clips = newAudioClipsForTrack.sortedBy { it.position })
+            }
+
+            val updatedSession = session.copy(
+                videoClips = updatedVideoClips.sortedBy { it.position },
+                audioTracks = updatedAudioTracks
+            )
             sessionManager.updateSession(updatedSession)
             Result.success(updatedSession)
         } catch (e: Exception) {

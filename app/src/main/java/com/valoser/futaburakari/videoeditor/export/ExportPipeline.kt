@@ -35,6 +35,14 @@ class ExportPipelineImpl @Inject constructor(
         preset: ExportPreset,
         outputUri: Uri
     ): Flow<ExportProgress> = flow {
+        Log.d(TAG, "=== Export Started ===")
+        Log.d(TAG, "Session has ${session.videoClips.size} video clips")
+        session.videoClips.forEachIndexed { index, clip ->
+            Log.d(TAG, "Clip $index: duration=${clip.duration}ms, speed=${clip.speed}, position=${clip.position}ms")
+            Log.d(TAG, "Clip $index: startTime=${clip.startTime}ms, endTime=${clip.endTime}ms, source=${clip.source}")
+        }
+        Log.d(TAG, "Preset: ${preset.width}x${preset.height} @ ${preset.frameRate}fps")
+
         val pfd = context.contentResolver.openFileDescriptor(outputUri, "w")
             ?: throw IOException("Failed to open file descriptor for $outputUri")
 
@@ -45,34 +53,32 @@ class ExportPipelineImpl @Inject constructor(
         val muxerLock = Any()
 
         val totalDurationUs = session.videoClips.sumOf { (it.duration / it.speed).toLong() } * 1000
+        Log.d(TAG, "Total duration: ${totalDurationUs}us (${totalDurationUs / 1000}ms)")
         val totalFrames = (totalDurationUs / 1_000_000f * preset.frameRate).toInt()
+        Log.d(TAG, "Total frames to export: $totalFrames")
         val framesProcessed = java.util.concurrent.atomic.AtomicInteger(0)
 
         val videoEncoder = VideoProcessor.createEncoder(preset)
         val audioEncoder = AudioProcessor.createEncoder(preset)
 
         try {
-            // Video Processing
+            // Video Processing - エンコーダーを設定してSurfaceを作成
+            Log.d(TAG, "Creating video encoder input surface...")
             val videoSurface = videoEncoder.createInputSurface()
+            Log.d(TAG, "Starting video encoder...")
             videoEncoder.start()
-            videoTrackIndex = muxer.addTrack(videoEncoder.outputFormat)
 
             // Audio Processing
             audioEncoder?.start()
-            audioTrackIndex = audioEncoder?.let { muxer.addTrack(it.outputFormat) } ?: -1
 
-            synchronized(muxerLock) {
-                muxer.start()
-                muxerStarted = true
-            }
-
-            val videoProcessor = VideoProcessor(context, videoEncoder, muxer, videoTrackIndex, muxerLock)
-            val audioProcessor = AudioProcessor(context, audioEncoder, muxer, audioTrackIndex, muxerLock, session)
+            Log.d(TAG, "Creating video and audio processors...")
+            val videoProcessor = VideoProcessor(context, videoEncoder, muxer, muxerLock)
+            val audioProcessor = AudioProcessor(context, audioEncoder, muxer, muxerLock, session)
 
             var videoPresentationTimeOffsetUs = 0L
             var audioPresentationTimeOffsetUs = 0L
 
-            for (clip in session.videoClips) {
+            for ((clipIndex, clip) in session.videoClips.withIndex()) {
                 // Process Video
                 val videoResult = withContext(Dispatchers.IO) {
                     videoProcessor.processClip(clip, videoSurface, videoPresentationTimeOffsetUs) { progress ->
@@ -82,6 +88,19 @@ class ExportPipelineImpl @Inject constructor(
                     }
                 }
                 videoPresentationTimeOffsetUs += videoResult.durationUs
+
+                if (!muxerStarted && videoProcessor.getTrackIndex() >= 0 &&
+                    (audioEncoder == null || audioProcessor.getTrackIndex() >= 0)) {
+                    synchronized(muxerLock) {
+                        if (!muxerStarted) {
+                            muxer.start()
+                            muxerStarted = true
+                            videoProcessor.setMuxerStarted(true)
+                            audioProcessor.setMuxerStarted(true)
+                            Log.d(TAG, "Muxer started (all tracks added)")
+                        }
+                    }
+                }
 
                 // Process Audio
                 val audioResult = withContext(Dispatchers.IO) {
@@ -120,12 +139,14 @@ private class VideoProcessor(
     private val context: Context,
     private val encoder: MediaCodec,
     private val muxer: MediaMuxer,
-    private val trackIndex: Int,
     private val muxerLock: Any,
     private val TIMEOUT_US: Long = 10000L
 ) {
     private val TAG = "VideoProcessor"
     data class Result(val durationUs: Long)
+
+    private var trackIndex: Int = -1
+    private var muxerStarted = false
 
     suspend fun processClip(
         clip: VideoClip,
@@ -133,15 +154,22 @@ private class VideoProcessor(
         presentationTimeOffsetUs: Long,
         onProgress: suspend (Int) -> Unit
     ): Result {
+        Log.d(TAG, "processClip: Starting to process clip ${clip.source}")
+        Log.d(TAG, "processClip: clip.startTime=${clip.startTime}ms, clip.endTime=${clip.endTime}ms, clip.duration=${clip.duration}ms")
+
         val extractor = MediaExtractor().apply { setDataSource(context, clip.source, null) }
         val decoder = createDecoder(extractor, surface)
             ?: throw RuntimeException("Failed to create video decoder for ${clip.source}")
 
         var framesInClip = 0
         try {
+            Log.d(TAG, "processClip: Starting decoder")
             decoder.start()
-            extractor.selectTrack(extractor.findTrack("video/") ?: -1)
+            val videoTrackIndex = extractor.findTrack("video/") ?: -1
+            Log.d(TAG, "processClip: Video track index: $videoTrackIndex")
+            extractor.selectTrack(videoTrackIndex)
             extractor.seekTo(clip.startTime * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            Log.d(TAG, "processClip: Seeked to ${clip.startTime * 1000}us")
 
             val bufferInfo = MediaCodec.BufferInfo()
             var isInputDone = false
@@ -174,19 +202,48 @@ private class VideoProcessor(
                     if (outputBufferIndex >= 0) {
                         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                             isOutputDone = true
+                            Log.d(TAG, "processClip: Decoder reached end of stream")
                         }
                         val doRender = bufferInfo.size != 0
                         bufferInfo.presentationTimeUs += presentationTimeOffsetUs
-                        decoder.releaseOutputBuffer(outputBufferIndex, doRender)
+
                         if (doRender) {
-                            drainEncoder(false)
-                            framesInClip++
+                            Log.d(TAG, "processClip: Rendering frame $framesInClip, pts=${bufferInfo.presentationTimeUs}us")
+                            decoder.releaseOutputBuffer(outputBufferIndex, doRender)
+
+                            // Surface経由でエンコーダーにフレームが送られるまで待機
+                            try {
+                                // エンコーダーが少なくとも1フレームを処理するまで待つ
+                                var encodedFrames = 0
+                                var retries = 0
+                                while (encodedFrames == 0 && retries < 100) { // 最大10秒待つ
+                                    encodedFrames = drainEncoderNonBlocking()
+                                    if (encodedFrames == 0) {
+                                        Thread.sleep(100) // 100ms待つ
+                                        retries++
+                                    }
+                                }
+                                if (encodedFrames > 0) {
+                                    framesInClip++
+                                } else {
+                                    Log.w(TAG, "processClip: Encoder did not produce output for frame $framesInClip")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "processClip: drainEncoder failed at frame $framesInClip", e)
+                                throw e
+                            }
+                        } else {
+                            decoder.releaseOutputBuffer(outputBufferIndex, false)
                         }
+                    } else if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                        decoderOutputAvailable = false
                     } else {
+                        Log.d(TAG, "processClip: Decoder output buffer index: $outputBufferIndex")
                         decoderOutputAvailable = false
                     }
                 }
             }
+            Log.d(TAG, "processClip: Processed $framesInClip frames")
             onProgress(framesInClip)
         } finally {
             decoder.stop(); decoder.release()
@@ -195,22 +252,110 @@ private class VideoProcessor(
         return Result(durationUs = ((clip.duration / clip.speed) * 1000).toLong())
     }
 
+    /**
+     * エンコーダーから利用可能な出力をドレインする（ノンブロッキング）
+     * @return エンコードされたフレーム数
+     */
+    fun drainEncoderNonBlocking(): Int {
+        val bufferInfo = MediaCodec.BufferInfo()
+        var outputCount = 0
+
+        try {
+            while (true) {
+                val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, 0) // タイムアウト0 = ノンブロッキング
+
+                when {
+                    encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                        break // 出力なし
+                    }
+                    encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        Log.d(TAG, "drainEncoderNonBlocking: INFO_OUTPUT_FORMAT_CHANGED")
+                        synchronized(muxerLock) {
+                            if (trackIndex == -1) {
+                                val format = encoder.outputFormat
+                                Log.d(TAG, "drainEncoderNonBlocking: Adding video track, format=$format")
+                                trackIndex = muxer.addTrack(format)
+                                Log.d(TAG, "drainEncoderNonBlocking: Video track index=$trackIndex")
+                                // muxerの開始は全トラック追加後に外部で行う
+                            }
+                        }
+                    }
+                    encoderStatus >= 0 -> {
+                        val encodedData = encoder.getOutputBuffer(encoderStatus)!!
+                        if (bufferInfo.size != 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                            if (trackIndex >= 0 && muxerStarted) {
+                                synchronized(muxerLock) {
+                                    muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
+                                }
+                                outputCount++
+                            }
+                        }
+                        encoder.releaseOutputBuffer(encoderStatus, false)
+
+                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            break
+                        }
+                    }
+                }
+            }
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "drainEncoderNonBlocking: encoder not in executing state", e)
+            return 0
+        }
+        return outputCount
+    }
+
+    fun setMuxerStarted(started: Boolean) {
+        muxerStarted = started
+    }
+
+    fun getTrackIndex(): Int = trackIndex
+
     fun drainEncoder(endOfStream: Boolean) {
         val bufferInfo = MediaCodec.BufferInfo()
-        if (endOfStream) encoder.signalEndOfInputStream()
+        if (endOfStream) {
+            Log.d(TAG, "drainEncoder: Signaling end of input stream")
+            // encoder.signalEndOfInputStream() // Removed to avoid double EOS signaling
+        }
+
+        Log.d(TAG, "drainEncoder: Starting to drain encoder (endOfStream=$endOfStream)")
+        var outputCount = 0
         while (true) {
             val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+            Log.d(TAG, "drainEncoder: encoderStatus=$encoderStatus")
+
             if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                Log.d(TAG, "drainEncoder: INFO_TRY_AGAIN_LATER, endOfStream=$endOfStream")
                 if (!endOfStream) break
-            } else if (encoderStatus >= 0) {
-                val encodedData = encoder.getOutputBuffer(encoderStatus)!!
+                            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                                Log.d(TAG, "drainEncoder: INFO_OUTPUT_FORMAT_CHANGED")
+                                // should happen before receiving buffers, and should only happen once
+                                if (muxerStarted) {
+                                    throw RuntimeException("format changed twice")
+                                }
+                                val newFormat = encoder.outputFormat
+                                Log.d(TAG, "video encoder output format changed: $newFormat")
+                                synchronized(muxerLock) {
+                                    if (trackIndex == -1) {
+                                        trackIndex = muxer.addTrack(newFormat)
+                                    }
+                                }
+                            } else if (encoderStatus >= 0) {                val encodedData = encoder.getOutputBuffer(encoderStatus)!!
                 if (bufferInfo.size != 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                    synchronized(muxerLock) { muxer.writeSampleData(trackIndex, encodedData, bufferInfo) }
+                    if (trackIndex >= 0 && muxerStarted) {
+                        Log.d(TAG, "drainEncoder: Writing sample data, size=${bufferInfo.size}, pts=${bufferInfo.presentationTimeUs}us")
+                        synchronized(muxerLock) { muxer.writeSampleData(trackIndex, encodedData, bufferInfo) }
+                        outputCount++
+                    }
                 }
                 encoder.releaseOutputBuffer(encoderStatus, false)
-                if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+                if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                    Log.d(TAG, "drainEncoder: End of stream reached")
+                    break
+                }
             }
         }
+        Log.d(TAG, "drainEncoder: Drained $outputCount output buffers")
     }
 
     companion object {
@@ -240,7 +385,6 @@ private class AudioProcessor(
     private val context: Context,
     private val encoder: MediaCodec?,
     private val muxer: MediaMuxer,
-    private val trackIndex: Int,
     private val muxerLock: Any,
     private val session: EditorSession,
     private val TIMEOUT_US: Long = 10000L
@@ -248,10 +392,19 @@ private class AudioProcessor(
     private val TAG = "AudioProcessor"
     data class Result(val durationUs: Long)
 
+    private var trackIndex: Int = -1
+    private var muxerStarted = false
+
+    fun setMuxerStarted(started: Boolean) {
+        muxerStarted = started
+    }
+
+    fun getTrackIndex(): Int = trackIndex
+
     suspend fun processClip(clip: VideoClip, presentationTimeOffsetUs: Long): Result {
-        if (encoder == null || trackIndex == -1 || !clip.hasAudio || !clip.audioEnabled) {
-            return Result(durationUs = ((clip.duration / clip.speed) * 1000).toLong())
-        }
+            if (encoder == null || !muxerStarted) {
+                return Result(durationUs = ((clip.duration / clip.speed) * 1000).toLong())
+            }
 
         val audioClip = session.audioTracks.flatMap { it.clips }.find { it.source == clip.source && it.startTime == clip.startTime }
         val extractor = MediaExtractor().apply { setDataSource(context, clip.source, null) }
@@ -299,7 +452,12 @@ private class AudioProcessor(
                             val decodedData = decoder.getOutputBuffer(outputBufferIndex)!!
                             applyVolumeAutomation(decodedData, bufferInfo, audioClip, sampleRate, channelCount)
                             bufferInfo.presentationTimeUs += presentationTimeOffsetUs
-                            drainEncoder(false, decodedData, bufferInfo)
+                            try {
+                                drainEncoder(false, decodedData, bufferInfo)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "processClip: Audio drainEncoder failed", e)
+                                throw e
+                            }
                         }
                         decoder.releaseOutputBuffer(outputBufferIndex, false)
                         if (isOutputDone) break
@@ -372,18 +530,38 @@ private class AudioProcessor(
                 encoder.queueInputBuffer(encoderInputIndex, 0, info.size, info.presentationTimeUs, info.flags)
             }
         }
-        while (true) {
-            val encoderStatus = encoder.dequeueOutputBuffer(info ?: MediaCodec.BufferInfo(), TIMEOUT_US)
-            if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                if (!endOfStream) break
-            } else if (encoderStatus >= 0) {
-                val encodedData = encoder.getOutputBuffer(encoderStatus)!!
-                if (info != null && info.size != 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                    synchronized(muxerLock) { muxer.writeSampleData(trackIndex, encodedData, info) }
+        try {
+            while (true) {
+                val encoderStatus = encoder.dequeueOutputBuffer(info ?: MediaCodec.BufferInfo(), TIMEOUT_US)
+                if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    if (!endOfStream) break
+                } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    // should happen before receiving buffers, and should only happen once
+                    if (muxerStarted) {
+                        throw RuntimeException("format changed twice")
+                    }
+                    val newFormat = encoder.outputFormat
+                    Log.d(TAG, "audio encoder output format changed: $newFormat")
+
+                    // Add track to muxer
+                    synchronized(muxerLock) {
+                        if (trackIndex == -1) {
+                            trackIndex = muxer.addTrack(newFormat)
+                        }
+                    }
+                } else if (encoderStatus >= 0) {
+                    val encodedData = encoder.getOutputBuffer(encoderStatus)!!
+                    if (info != null && info.size != 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                        if (trackIndex >= 0 && muxerStarted) {
+                            synchronized(muxerLock) { muxer.writeSampleData(trackIndex, encodedData, info) }
+                        }
+                    }
+                    encoder.releaseOutputBuffer(encoderStatus, false)
+                    if (info != null && (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
                 }
-                encoder.releaseOutputBuffer(encoderStatus, false)
-                if (info != null && (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
             }
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "drainEncoder: encoder not in executing state", e)
         }
     }
 

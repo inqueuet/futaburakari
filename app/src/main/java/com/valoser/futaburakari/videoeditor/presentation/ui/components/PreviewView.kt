@@ -32,9 +32,7 @@ fun PreviewView(
     modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = modifier
-            .background(Color.Black)
-            .clickable { onPlayPause() },
+        modifier = modifier.background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
         if (player != null) {
@@ -60,18 +58,26 @@ fun PreviewView(
             )
         }
 
-        // 再生/一時停止ボタン（オーバーレイ）
-        if (!isPlaying) {
-            IconButton(
-                onClick = onPlayPause,
-                modifier = Modifier.size(64.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "再生",
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp)
-                )
+        // タッチイベントをキャプチャする透明なオーバーレイ
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable { onPlayPause() },
+            contentAlignment = Alignment.Center
+        ) {
+            // 再生/一時停止ボタン（一時停止中のみ表示）
+            if (!isPlaying) {
+                IconButton(
+                    onClick = onPlayPause,
+                    modifier = Modifier.size(64.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "再生",
+                        tint = Color.White,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
             }
         }
     }

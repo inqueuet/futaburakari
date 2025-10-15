@@ -9,6 +9,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -18,6 +19,15 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.Selection
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import kotlin.math.abs
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -32,6 +42,7 @@ fun TimelineView(
     selection: Selection?,
     playhead: Long,
     zoom: Float,
+    splitMarkerPosition: Long?,
     onClipSelected: (String) -> Unit,
     onClipTrimmed: (String, Long, Long) -> Unit,
     onClipMoved: (String, Long) -> Unit,
@@ -39,6 +50,7 @@ fun TimelineView(
     onAudioClipTrimmed: (String, String, Long, Long) -> Unit,
     onAudioClipMoved: (String, String, Long) -> Unit,
     onZoomChange: (Float) -> Unit,
+    onSeek: (Long) -> Unit, // ★追加
     onMarkerClick: (com.valoser.futaburakari.videoeditor.domain.model.Marker) -> Unit,
     onKeyframeClick: (String, String, com.valoser.futaburakari.videoeditor.domain.model.Keyframe) -> Unit,
     mode: com.valoser.futaburakari.videoeditor.domain.model.EditMode,
@@ -48,6 +60,8 @@ fun TimelineView(
     modifier: Modifier = Modifier
 ) {
     val horizontalScrollState = rememberScrollState()
+    // ① 自動スクロール中は onSeek を抑制するためのフラグ
+    var isAutoScrolling by remember { mutableStateOf(false) }
     val timelineDuration = session.duration
     val coroutineScope = rememberCoroutineScope()
 
@@ -65,12 +79,31 @@ fun TimelineView(
         val rightPaddingDp = maxWidth - playheadOffsetXDp
 
         // playheadの位置に合わせてスクロール位置を計算
+        // ② playhead/zoom 変更時の自動スクロール（既存）にフラグを付与
+        // ② playhead/zoom 変更時の自動スクロール（既存）にフラグを付与
         LaunchedEffect(playhead, zoom) {
+            isAutoScrolling = true
             coroutineScope.launch {
                 val targetScroll = (playhead * zoom).toInt()
                     .coerceIn(0, horizontalScrollState.maxValue)
                 horizontalScrollState.animateScrollTo(targetScroll)
+            }.invokeOnCompletion {
+                isAutoScrolling = false
             }
+        }
+
+        // ③ 1本指スクロールを含む【すべてのスクロール位置の変化】で再生位置を更新
+        LaunchedEffect(zoom) {
+            snapshotFlow { horizontalScrollState.value }
+                .map { value -> ((value / zoom).toLong()) }
+                .distinctUntilChanged()
+                .filter { !isAutoScrolling }                // 自動スクロールによるループ回避
+                .collectLatest { t ->
+                    // 無駄なSeek連打を避けるため、閾値を設ける
+                    if (abs(t - playhead) > 10L) {
+                        onSeek(t)                            // ← ViewModel経由で ExoPlayer.seekTo()
+                    }
+                }
         }
 
         val totalContentWidth = (timelineDuration * zoom).coerceAtLeast(0f)
@@ -87,7 +120,11 @@ fun TimelineView(
                         val newZoom = (zoom * gestureZoom).coerceIn(0.25f, 4f)
                         onZoomChange(newZoom)
                         coroutineScope.launch {
+                            // スクロールを先に適用
                             horizontalScrollState.dispatchRawDelta(-pan.x)
+                            // 次のスクロール値から赤線下の時刻 = scroll/zoom を計算して通知
+                            val nextScroll = horizontalScrollState.value
+                            onSeek((nextScroll / newZoom).toLong())
                         }
                     }
                 }
@@ -190,7 +227,9 @@ fun TimelineView(
                         playhead = playhead,
                         zoom = zoom,
                         markers = session.markers,
+                        splitMarkerPosition = splitMarkerPosition,
                         onMarkerClick = onMarkerClick,
+                        onSeekAt = onSeek,   // ★追加
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(32.dp)

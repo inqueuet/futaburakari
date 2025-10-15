@@ -25,7 +25,9 @@ fun TimeRuler(
     playhead: Long,
     zoom: Float,
     markers: List<Marker>,
+    splitMarkerPosition: Long?,
     onMarkerClick: (Marker) -> Unit,
+    onSeekAt: (Long) -> Unit,  // ★追加
     modifier: Modifier = Modifier
 ) {
     val textPaint = Paint().apply {
@@ -37,17 +39,22 @@ fun TimeRuler(
     Canvas(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .pointerInput(markers) {
-                detectTapGestures {
-                    offset ->
+            .pointerInput(markers, zoom) { // Added zoom to keys for recomposition
+                detectTapGestures(onTap = { offset ->
+                    // 先にマーカー命中チェック（既存）
+                    var handled = false
                     markers.forEach { marker ->
                         val markerX = marker.time * zoom
-                        val markerWidth = 16.dp.toPx()
-                        if (offset.x >= markerX - markerWidth / 2 && offset.x <= markerX + markerWidth / 2) {
+                        val w = 16.dp.toPx() // Use w for consistency with user's example
+                        if (offset.x in (markerX - w/2)..(markerX + w/2)) {
                             onMarkerClick(marker)
+                            handled = true
+                            return@forEach
                         }
                     }
-                }
+                    // マーカー以外をタップしたらシーク
+                    if (!handled) onSeekAt((offset.x / zoom).toLong())
+                })
             }
     ) {
         val secondWidth = zoom * 1000 // 1秒の幅（ピクセル）
@@ -94,6 +101,17 @@ fun TimeRuler(
                 close()
             }
             drawPath(markerPath, color = markerColor)
+        }
+
+        // 分割マーカーを描画
+        splitMarkerPosition?.let {
+            val x = it * zoom
+            drawLine(
+                color = Color.Cyan,
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = 2f
+            )
         }
     }
 }

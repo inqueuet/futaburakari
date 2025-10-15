@@ -1,3 +1,6 @@
+// This file is deprecated and should not be used.
+// It contains an older, incorrect pattern for MediaCodec and MediaMuxer usage.
+// Refer to ExportPipeline.kt for the correct implementation.
 package com.valoser.futaburakari.videoeditor.media.export
 
 import android.content.Context

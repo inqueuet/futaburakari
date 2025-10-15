@@ -18,7 +18,13 @@ data class EditorSession(
      * セッション全体の長さ（ミリ秒）
      */
     val duration: Long
-        get() = videoClips.maxOfOrNull { it.position + it.duration } ?: 0L
+        get() {
+            val videoEnd = videoClips.maxOfOrNull { it.position + it.duration } ?: 0L
+            val audioEnd = audioTracks
+                .flatMap { it.clips }
+                .maxOfOrNull { it.position + it.duration } ?: 0L
+            return maxOf(videoEnd, audioEnd)
+        }
 }
 
 /**

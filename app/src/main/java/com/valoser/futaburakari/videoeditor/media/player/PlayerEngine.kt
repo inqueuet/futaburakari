@@ -34,9 +34,17 @@ interface PlayerEngine {
     fun setRate(rate: Float)
 
     /**
+     * プレイヤーをリセット（メディアをクリアして再利用可能な状態にする）
+     */
+    fun reset()
+
+    /**
      * リソースを解放
      */
     fun release()
+
+    // ★追加：READY到達まで待機する準備
+    suspend fun prepareAndAwaitReady(session: EditorSession)
 
     /**
      * 現在の位置（ミリ秒）
