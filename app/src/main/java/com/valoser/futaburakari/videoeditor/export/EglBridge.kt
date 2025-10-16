@@ -121,6 +121,11 @@ class DecoderOutputSurface(
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
 
+    // ★ アクセサメソッド追加
+    fun getEglDisplay(): EGLDisplay = eglDisplay
+    fun getEglContext(): EGLContext = eglContext
+    fun getEglSurface(): EGLSurface = eglSurface
+    
     private var oesTexId: Int = 0
     private lateinit var surfaceTexture: SurfaceTexture
     lateinit var surface: Surface

@@ -5,6 +5,7 @@ import android.media.*
 import android.net.Uri
 import android.util.Log
 import android.opengl.GLES30
+import android.opengl.EGL14
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.ExportPreset
 import com.valoser.futaburakari.videoeditor.domain.model.ExportProgress
@@ -353,10 +354,10 @@ private class VideoProcessor(
                             withContext(glCoroutineContext) {
                                 // ★ 1. デコーダーコンテキストに明示的に切り替え
                                 if (!EGL14.eglMakeCurrent(
-                                    decoderOutputSurface.eglDisplay, 
-                                    decoderOutputSurface.eglSurface, 
-                                    decoderOutputSurface.eglSurface, 
-                                    decoderOutputSurface.eglContext
+                                        decoderOutputSurface.getEglDisplay(),
+                                        decoderOutputSurface.getEglSurface(),
+                                        decoderOutputSurface.getEglSurface(),
+                                        decoderOutputSurface.getEglContext()
                                 )) {
                                     throw RuntimeException("Failed to switch to decoder context")
                                 }
@@ -365,7 +366,7 @@ private class VideoProcessor(
                                 decoderOutputSurface.awaitNewImageInternal()
                                 
                                 // ★ 3. エンコーダーコンテキストに切り替えて描画
-                                encoder.makeCurrent()
+                                encoderInputSurface.makeCurrent()
                                 decoderOutputSurface.drawImage(encoderInputSurface)
                                 
                                 // ★ 4. PTSを設定してswap
