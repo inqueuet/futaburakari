@@ -5,16 +5,27 @@ import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.audio.AudioSink
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import java.nio.ByteBuffer
+import android.media.AudioFormat
+import android.media.AudioTrack
 
 class VideoEditorAudioSink : AudioSink {
 
     private var session: EditorSession? = null
     private lateinit var inputFormat: Format
     private var listener: AudioSink.Listener? = null
+    private var frameworkAttrs: android.media.AudioAttributes? = null
+    private var audioTrack: AudioTrack? = null
+    private var audioSessionId: Int = 0
+    private var channelCount: Int = 2
+    private var sampleRate: Int = 44100
+    private var bufferSizeInBytes: Int = 0
+    private var framesWritten: Long = 0
+    private var sourceEnded: Boolean = false
+    private var isPlaying: Boolean = false
+    // ↑ フィールドはこの1か所に集約（以下の重複クラス宣言と重複フィールドは削除）
 
     fun setSession(session: EditorSession) {
         this.session = session
@@ -38,51 +49,91 @@ class VideoEditorAudioSink : AudioSink {
     }
 
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
-        // TODO: This should return the position based on the audio frames we have processed.
-        return 0
+        // 再生した（投入した）フレームから概算（同期用途の最小実装）
+        if (!this::inputFormat.isInitialized) return 0
+        return (framesWritten * 1_000_000L) / sampleRate
     }
 
     override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
         this.inputFormat = inputFormat
-        // TODO: Initialize AudioTrack, decoders for audio clips, resamplers, etc.
+        this.sampleRate = inputFormat.sampleRate
+        this.channelCount = inputFormat.channelCount
+        val channelConfig =
+            if (channelCount == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
+
+        // 既存のトラックを解放
+        audioTrack?.release()
+        bufferSizeInBytes = AudioTrack.getMinBufferSize(
+            sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(specifiedBufferSize.takeIf { it > 0 } ?: 0)
+
+        val attrs = frameworkAttrs ?: android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+        val fmt = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(sampleRate)
+            .setChannelMask(channelConfig)
+            .build()
+
+        audioTrack = AudioTrack.Builder()
+            .setAudioAttributes(attrs)
+            .setAudioFormat(fmt)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(bufferSizeInBytes)
+            .also { if (audioSessionId != 0) it.setSessionId(audioSessionId) }
+            .build()
+
+        framesWritten = 0
+        sourceEnded = false
+        isPlaying = false
     }
 
     override fun play() {
-        // TODO: Start the AudioTrack and begin feeding it data.
+        audioTrack?.play()
+        isPlaying = true
     }
 
     override fun handleDiscontinuity() {
-        // TODO: Handle discontinuity.
+        // NOP（最小実装）
     }
 
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
-        // This is where the magic happens.
-        // The incoming buffer is from the video's audio track, which we might ignore.
-        // We need to decode our own audio tracks (from the session) and mix them.
-        // Then we write the mixed buffer to the AudioTrack.
-        // This implementation is highly complex.
+        // 最小実装：入力 PCM16 をそのまま AudioTrack へ非ブロッキング書き込み
+        val at = audioTrack ?: return true.also { buffer.position(buffer.limit()) }
+        if (!isPlaying) at.play()
 
-        // For now, we just consume the buffer to avoid blocking the pipeline.
-        buffer.position(buffer.limit())
-        return true
+        val remaining = buffer.remaining()
+        if (remaining == 0) return true
+
+        val written = at.write(buffer, remaining, AudioTrack.WRITE_NON_BLOCKING)
+        if (written > 0) {
+            // 1フレーム = (16bit * ch) / 16bit = ch サンプル分
+            val frames = written / (2 * channelCount)
+            framesWritten += frames
+        }
+        // すべて消費できたら true、未消費があれば false（ExoPlayer が再度呼ぶ）
+        return written >= remaining
     }
 
     override fun playToEndOfStream() {
-        // TODO: Play out any remaining buffered data.
+        sourceEnded = true
     }
 
     override fun isEnded(): Boolean {
-        // TODO: Return true when all audio has been played.
-        return true
+        return sourceEnded && !hasPendingData()
     }
 
     override fun hasPendingData(): Boolean {
-        // TODO: Return true if there is data that needs to be played.
-        return false
+        val at = audioTrack ?: return false
+        // 再生済みフレーム（wrap 対策の簡易版）
+        val playedFrames = at.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+        return playedFrames < framesWritten
     }
 
     override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {
-        // TODO: Handle speed changes, may require a resampler.
+        // 速度変更は未対応（最小実装）
     }
 
     override fun getPlaybackParameters(): PlaybackParameters {
@@ -90,7 +141,7 @@ class VideoEditorAudioSink : AudioSink {
     }
 
     override fun setSkipSilenceEnabled(skipSilenceEnabled: Boolean) {
-        // TODO: Not implemented
+        // 未対応（最小実装）
     }
 
     override fun getSkipSilenceEnabled(): Boolean {
@@ -98,40 +149,69 @@ class VideoEditorAudioSink : AudioSink {
     }
 
     override fun setAudioAttributes(audioAttributes: AudioAttributes) {
+        // Framework の AudioAttributes にマッピング
+        frameworkAttrs = android.media.AudioAttributes.Builder()
+            .setUsage(
+                when (audioAttributes.usage) {
+                    C.USAGE_ALARM -> android.media.AudioAttributes.USAGE_ALARM
+                    C.USAGE_ASSISTANCE_SONIFICATION -> android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION
+                    C.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE -> android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
+                    else -> android.media.AudioAttributes.USAGE_MEDIA
+                }
+            )
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
     }
 
     override fun getAudioAttributes(): AudioAttributes? {
+        // Exo の属性オブジェクト自体は保持していないため null のまま
         return null
     }
 
     override fun setAudioSessionId(audioSessionId: Int) {
+        this.audioSessionId = audioSessionId
+        // 既存の AudioTrack があれば次回 configure で反映
     }
 
     override fun setAuxEffectInfo(auxEffectInfo: androidx.media3.common.AuxEffectInfo) {
+        // 未対応（最小実装）
     }
 
     override fun enableTunnelingV21() {
+        // 未対応（最小実装）
     }
 
     override fun disableTunneling() {
+        // 未対応（最小実装）
     }
 
     override fun setVolume(volume: Float) {
+        audioTrack?.setVolume(volume)
     }
 
     override fun getAudioTrackBufferSizeUs(): Long {
-        return 0
+        if (bufferSizeInBytes <= 0) return 0
+        val frames = bufferSizeInBytes / (2 * channelCount)
+        return (frames * 1_000_000L) / sampleRate
     }
 
     override fun pause() {
-        // TODO: Pause the AudioTrack.
+        audioTrack?.pause()
+        isPlaying = false
     }
 
     override fun flush() {
-        // TODO: Flush all pending data.
+        audioTrack?.flush()
+        framesWritten = 0
     }
 
     override fun reset() {
-        // TODO: Reset the sink to its initial state.
+        try {
+            audioTrack?.release()
+        } catch (_: Throwable) { }
+        audioTrack = null
+        framesWritten = 0
+        sourceEnded = false
+        isPlaying = false
     }
 }
