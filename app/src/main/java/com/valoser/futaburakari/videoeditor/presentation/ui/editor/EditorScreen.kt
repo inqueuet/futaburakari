@@ -268,6 +268,7 @@ fun EditorScreen(
                     session = session,
                     selection = state.selection,
                     playhead = state.playhead,
+                    isPlaying = state.isPlaying,
                     zoom = state.zoom,
                     splitMarkerPosition = state.splitMarkerPosition,
                     onClipSelected = { clipId ->

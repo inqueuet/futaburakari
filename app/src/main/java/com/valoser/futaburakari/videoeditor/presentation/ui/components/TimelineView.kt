@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
 
 /**
@@ -41,6 +42,7 @@ fun TimelineView(
     session: EditorSession,
     selection: Selection?,
     playhead: Long,
+    isPlaying: Boolean,
     zoom: Float,
     splitMarkerPosition: Long?,
     onClipSelected: (String) -> Unit,
@@ -61,7 +63,7 @@ fun TimelineView(
 ) {
     val horizontalScrollState = rememberScrollState()
     // ① 自動スクロール中は onSeek を抑制するためのフラグ
-    var isAutoScrolling by remember { mutableStateOf(false) }
+    var isAutoScrolling by rememberSaveable { mutableStateOf(false) }
     val timelineDuration = session.duration
     val coroutineScope = rememberCoroutineScope()
 
@@ -79,17 +81,23 @@ fun TimelineView(
         val rightPaddingDp = maxWidth - playheadOffsetXDp
 
         // playheadの位置に合わせてスクロール位置を計算
-        // ② playhead/zoom 変更時の自動スクロール（既存）にフラグを付与
-        // ② playhead/zoom 変更時の自動スクロール（既存）にフラグを付与
-        LaunchedEffect(playhead, zoom) {
-            isAutoScrolling = true
-            coroutineScope.launch {
-                val targetScroll = (playhead * zoom).toInt()
-                    .coerceIn(0, horizontalScrollState.maxValue)
-                horizontalScrollState.animateScrollTo(targetScroll)
-            }.invokeOnCompletion {
-                isAutoScrolling = false
-            }
+        // ② 自動スクロール：バケット化（例: 24px単位）＋非アニメーションで jank を抑制
+        val scrollBucketPx = with(density) { 24.dp.toPx() } // 任意: 16–32px
+        val scrollMutex = remember { androidx.compose.foundation.MutatorMutex() }
+        LaunchedEffect(zoom) {
+            // playhead*zoom（px）をバケットに丸め、変化した時のみスクロール
+            snapshotFlow { ((playhead * zoom) / scrollBucketPx).toInt() }
+                .distinctUntilChanged()
+                .collectLatest { bucket ->
+                    val target = (bucket * scrollBucketPx).toInt()
+                        .coerceIn(0, horizontalScrollState.maxValue)
+                    isAutoScrolling = true
+                    scrollMutex.mutate {
+                        // アニメーションなしの即時スクロールで安定描画
+                        horizontalScrollState.scrollTo(target)
+                    }
+                    isAutoScrolling = false
+                }
         }
 
         // ③ 1本指スクロールを含む【すべてのスクロール位置の変化】で再生位置を更新
@@ -100,8 +108,8 @@ fun TimelineView(
                 .filter { !isAutoScrolling }                // 自動スクロールによるループ回避
                 .collectLatest { t ->
                     // 無駄なSeek連打を避けるため、閾値を設ける
-                    if (abs(t - playhead) > 10L) {
-                        onSeek(t)                            // ← ViewModel経由で ExoPlayer.seekTo()
+                    if (!isAutoScrolling /* 既存 */ && !isPlaying &&
+                        kotlin.math.abs(t - playhead) > 10L) {                        onSeek(t)
                     }
                 }
         }
