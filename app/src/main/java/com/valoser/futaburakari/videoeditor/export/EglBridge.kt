@@ -1,355 +1,458 @@
 package com.valoser.futaburakari.videoeditor.export
 
-import android.opengl.EGLExt
 import android.graphics.SurfaceTexture
-import android.opengl.EGL14
-import android.opengl.EGLConfig
-import android.opengl.EGLContext
-import android.opengl.EGLDisplay
-import android.opengl.EGLSurface
-import android.opengl.GLES11Ext
-import android.opengl.GLES20
-import android.opengl.Matrix
-import android.os.Handler
-import android.os.HandlerThread
+import android.opengl.*
+import android.util.Log
 import android.view.Surface
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-
-// Note: This is a simplified EGL bridge for demonstration.
-// For robust production use, consider more comprehensive error handling and resource management.
 
 /**
- * Holds state associated with a Surface used for MediaCodec encoder input.
- *
- * The constructor for this class must be called on a thread with an active EGL context.
+ * エンコーダ入力用の EGL ラッパ
+ * 共有元 EGLContext を指定できるようにするのが最大のポイント
  */
-class EncoderInputSurface(private val surface: Surface) {
+class EncoderInputSurface(
+    private val surface: Surface,
+    private val sharedContext: EGLContext? = null
+){
+    private val TAG = "EncoderInputSurface"
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
+    private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
     private var eglConfig: EGLConfig? = null
-    private var encoderEglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
-    private var decoderPbufferSurface: EGLSurface = EGL14.EGL_NO_SURFACE
 
-    private var width: Int = -1
-    private var height: Int = -1
-
-    init {
+    fun setup() {
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         if (eglDisplay == EGL14.EGL_NO_DISPLAY) {
-            throw RuntimeException("unable to get EGL14 display")
+            throw RuntimeException("eglGetDisplay failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
         }
         val version = IntArray(2)
         if (!EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) {
-            throw RuntimeException("unable to initialize EGL14")
+            throw RuntimeException("eglInitialize failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
         }
+        EglRefManager.addRef(eglDisplay)
 
-        val EGL_RECORDABLE_ANDROID = 0x3142
         val attribList = intArrayOf(
             EGL14.EGL_RED_SIZE, 8,
             EGL14.EGL_GREEN_SIZE, 8,
             EGL14.EGL_BLUE_SIZE, 8,
-            EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT, // Support both window and pbuffer
-            EGL_RECORDABLE_ANDROID, 1,
+            EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
             EGL14.EGL_NONE
         )
         val configs = arrayOfNulls<EGLConfig>(1)
         val numConfigs = IntArray(1)
-
-        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0) ||
-            numConfigs[0] <= 0 || configs[0] == null
-        ) {
-            throw RuntimeException("unable to find suitable EGLConfig")
+        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)) {
+            throw RuntimeException("eglChooseConfig failed")
         }
-        eglConfig = configs[0]!!
+        eglConfig = configs[0]
 
-        val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
-        eglContext = EGL14.eglCreateContext(
-            eglDisplay,
-            eglConfig,
-            EGL14.EGL_NO_CONTEXT,
-            contextAttribs, 0
-        )
+        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
+        val share = sharedContext ?: EGL14.EGL_NO_CONTEXT
+        eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, share, ctxAttribs, 0)
+        if (eglContext == null || eglContext == EGL14.EGL_NO_CONTEXT) {
+            throw RuntimeException("eglCreateContext failed (shared=${sharedContext!=null}) err=0x${Integer.toHexString(EGL14.eglGetError())}")
+        }
 
         val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
-        encoderEglSurface = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, surface, surfaceAttribs, 0)
+        eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, surface, surfaceAttribs, 0)
+        if (eglSurface == null || eglSurface == EGL14.EGL_NO_SURFACE) {
+            throw RuntimeException("eglCreateWindowSurface failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
+        }
 
-        // Create a 1x1 pbuffer surface for the decoder to make current
-        val pbufferAttribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
-        decoderPbufferSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, pbufferAttribs, 0)
-
-        width = getSurfaceWidth(encoderEglSurface)
-        height = getSurfaceHeight(encoderEglSurface)
+        makeCurrent()
+        Log.d(TAG, "setup: shared=${sharedContext!=null}")
     }
 
-    fun eglDisplay(): EGLDisplay = eglDisplay
-    fun eglContext(): EGLContext = eglContext
-    fun eglConfig(): EGLConfig = eglConfig
-        ?: throw IllegalStateException("EGLConfig is not initialized")
-    fun encoderEglSurface(): EGLSurface = encoderEglSurface
-    fun decoderPbufferSurface(): EGLSurface = decoderPbufferSurface
-
-    private fun getSurfaceWidth(eglSurface: EGLSurface): Int {
-        val value = IntArray(1)
-        EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_WIDTH, value, 0)
-        return value[0]
+    fun makeCurrent() {
+        if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+            throw RuntimeException("eglMakeCurrent(encoder) failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
+        }
     }
 
-    private fun getSurfaceHeight(eglSurface: EGLSurface): Int {
-        val value = IntArray(1)
-        EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_HEIGHT, value, 0)
-        return value[0]
-    }
-
-    fun makeCurrent(eglSurface: EGLSurface) {
-        // 旧サーフェス解除
-        EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
-        // 新サーフェスを current に
-        EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+    fun setPresentationTime(nsec: Long) {
+        EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, nsec)
     }
 
     fun swapBuffers(): Boolean {
-        return EGL14.eglSwapBuffers(eglDisplay, encoderEglSurface)
+        val ok = EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+        if (!ok) Log.e(TAG, "eglSwapBuffers failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
+        return ok
     }
-
-    fun setPresentationTime(nsecs: Long) {
-        EGLExt.eglPresentationTimeANDROID(eglDisplay, encoderEglSurface, nsecs)
-    }
-
-    fun getWidth(): Int = width
-    fun getHeight(): Int = height
 
     fun release() {
-        if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
-            EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
-            EGL14.eglDestroySurface(eglDisplay, encoderEglSurface)
-            EGL14.eglDestroySurface(eglDisplay, decoderPbufferSurface)
-            EGL14.eglDestroyContext(eglDisplay, eglContext)
-            EGL14.eglReleaseThread()
-            EGL14.eglTerminate(eglDisplay)
+        try {
+            if (eglDisplay !== EGL14.EGL_NO_DISPLAY) {
+                EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+                if (eglSurface !== EGL14.EGL_NO_SURFACE) {
+                    EGL14.eglDestroySurface(eglDisplay, eglSurface)
+                }
+                if (eglContext !== EGL14.EGL_NO_CONTEXT) {
+                    EGL14.eglDestroyContext(eglDisplay, eglContext)
+                }
+                EglRefManager.releaseDisplay(eglDisplay)
+            }
+        } finally {
+            eglDisplay = EGL14.EGL_NO_DISPLAY
+            eglContext = EGL14.EGL_NO_CONTEXT
+            eglSurface = EGL14.EGL_NO_SURFACE
         }
-        surface.release()
-        eglDisplay = EGL14.EGL_NO_DISPLAY
-        eglContext = EGL14.EGL_NO_CONTEXT
-        eglConfig = null
-        encoderEglSurface = EGL14.EGL_NO_SURFACE
-        decoderPbufferSurface = EGL14.EGL_NO_SURFACE
     }
+
+    // アクセサ（ExportPipeline から利用）
+    fun eglDisplay(): EGLDisplay = eglDisplay
+    fun eglContext(): EGLContext = eglContext
+    fun encoderEglSurface(): EGLSurface = eglSurface
+    fun eglConfig(): EGLConfig? = eglConfig
 }
 
 /**
- * Manages a SurfaceTexture, an EGL context, and a Surface for decoding video.
+ * デコーダ出力用の EGL ラッパ（OES -> 2D へ描画）
+ * EncoderInputSurface と「共有チェーン上」に作ることが重要
  */
 class DecoderOutputSurface(
-    private val encoderWidth: Int,
-    private val encoderHeight: Int,
-    private val sharedEglDisplay: EGLDisplay,
-    private val sharedEglContext: EGLContext,
-    private val sharedEglConfig: EGLConfig,
-    private val decoderPbufferSurface: EGLSurface
+    private val width: Int,
+    private val height: Int,
+    private val sharedContext: EGLContext? = null
 ) : SurfaceTexture.OnFrameAvailableListener {
+
+    private val TAG = "DecoderOutputSurface"
+
+    private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
+    private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
+    private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
+
+    private var oesTexId: Int = 0
     private lateinit var surfaceTexture: SurfaceTexture
     lateinit var surface: Surface
         private set
 
-    private val frameSyncObject = Object()
     private var frameAvailable = false
-
-    private lateinit var textureRender: TextureRender
+    private val frameSync = Object()
+    // --- OES 描画用 ---
+    private var program = 0
+    private var aPosLoc = -1
+    private var aTexLoc = -1
+    private var uTexMatrixLoc = -1
+    private var uSamplerLoc = -1   // ★ sTexture の uniform ロケーション
     private val texMatrix = FloatArray(16)
+    private val correctedTexMatrix = FloatArray(16) // ★ 反転補正後を入れる一時配列
+    private lateinit var vb: java.nio.FloatBuffer
+    private lateinit var tb: java.nio.FloatBuffer
 
-    private lateinit var handlerThread: HandlerThread
-    private lateinit var handler: Handler
+    // ★ 元動画のアスペクト比を保存
+    private var sourceWidth: Int = 0
+    private var sourceHeight: Int = 0
 
-    init {
-        setup()
-    }
+    fun setup() {
+        eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+        val version = IntArray(2)
+        EGL14.eglInitialize(eglDisplay, version, 0, version, 1)
+        EglRefManager.addRef(eglDisplay)
 
-    private fun setup() {
-        // ★ 重要：GLリソース（シェーダ／テクスチャ）を作る前に必ず current にする
-        EGL14.eglMakeCurrent(
-            sharedEglDisplay,
-            decoderPbufferSurface,  // draw
-            decoderPbufferSurface,  // read
-            sharedEglContext
+        val attribList = intArrayOf(
+            EGL14.EGL_RED_SIZE, 8,
+            EGL14.EGL_GREEN_SIZE, 8,
+            EGL14.EGL_BLUE_SIZE, 8,
+            EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
+            EGL14.EGL_NONE
         )
+        val configs = arrayOfNulls<EGLConfig>(1)
+        val numConfigs = IntArray(1)
+        EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)
+        val eglConfig = configs[0]
 
-        textureRender = TextureRender()
-        surfaceTexture = SurfaceTexture(textureRender.textureId)
+        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
+        val share = sharedContext ?: EGL14.EGL_NO_CONTEXT
+        eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, share, ctxAttribs, 0)
+        if (eglContext == null || eglContext == EGL14.EGL_NO_CONTEXT) {
+            throw RuntimeException("eglCreateContext(decoder) failed (shared=${sharedContext!=null})")
+        }
 
-        handlerThread = HandlerThread("DecoderOutputSurface").apply { start() }
-        handler = Handler(handlerThread.looper)
-        surfaceTexture.setOnFrameAvailableListener(this, handler)
-        surfaceTexture.setDefaultBufferSize(encoderWidth, encoderHeight) // Set default buffer size
+        val pbufferAttribs = intArrayOf(
+            EGL14.EGL_WIDTH, width,
+            EGL14.EGL_HEIGHT, height,
+            EGL14.EGL_NONE
+        )
+        eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, pbufferAttribs, 0)
+        EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+
+        // OES テクスチャ + SurfaceTexture
+        oesTexId = createOesTex()
+        surfaceTexture = SurfaceTexture(oesTexId)
+        surfaceTexture.setDefaultBufferSize(width, height)
+        surfaceTexture.setOnFrameAvailableListener(this)
         surface = Surface(surfaceTexture)
+        Log.d(TAG, "setup: ${width}x${height}, shared=${sharedContext!=null})")
+
+        // OES描画初期化
+        initRenderer()
     }
 
-    fun release() {
-        // EGL resources are managed by EncoderInputSurface, so no need to destroy here
-        surfaceTexture.release()
-        surface.release()
-        textureRender.release()
-
-        handlerThread.quitSafely()
-        handlerThread.join() // Wait for the thread to finish
+    override fun onFrameAvailable(st: SurfaceTexture) {
+        synchronized(frameSync) {
+            frameAvailable = true
+            frameSync.notifyAll()
+        }
     }
 
-    fun awaitNewImage(encoderInputSurface: EncoderInputSurface) {
-        synchronized(frameSyncObject) {
+    /**
+     * 元動画のサイズを設定（アスペクト比計算用）
+     */
+    fun setSourceAspectRatio(srcWidth: Int, srcHeight: Int) {
+        sourceWidth = srcWidth
+        sourceHeight = srcHeight
+        updateVertexBuffer()
+    }
+
+/**
+ * アスペクト比を保持するように頂点バッファを更新
+ * ★ FIT モード：縦長・横長を自動判断してアスペクト比を保持
+ */
+private fun updateVertexBuffer() {
+    if (sourceWidth == 0 || sourceHeight == 0) {
+        // ソースサイズ未設定の場合はフルスクリーン
+        val verts = floatArrayOf(
+            -1f, -1f,
+             1f, -1f,
+            -1f,  1f,
+             1f,  1f
+        )
+        vb = java.nio.ByteBuffer.allocateDirect(verts.size * 4)
+            .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().put(verts)
+        vb.position(0)
+        return
+    }
+
+    // アスペクト比計算
+    val srcAspect = sourceWidth.toFloat() / sourceHeight.toFloat()
+    val dstAspect = width.toFloat() / height.toFloat()
+
+    var scaleX = 1f
+    var scaleY = 1f
+
+    // ★ FIT モード：アスペクト比を保持（自動判断）
+    if (srcAspect > dstAspect) {
+        // 元動画の方が横長 → 左右フル、上下に余白（レターボックス）
+        scaleY = dstAspect / srcAspect  // < 1（縮小）
+    } else {
+        // 元動画の方が縦長 → 上下フル、左右に余白（ピラーボックス）
+        scaleX = srcAspect / dstAspect  // < 1（縮小）
+    }
+
+    // NDC座標で頂点を設定
+    val verts = floatArrayOf(
+        -scaleX, -scaleY,
+         scaleX, -scaleY,
+        -scaleX,  scaleY,
+         scaleX,  scaleY
+    )
+    vb = java.nio.ByteBuffer.allocateDirect(verts.size * 4)
+        .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().put(verts)
+    vb.position(0)
+
+    val mode = if (srcAspect > dstAspect) "横長動画→レターボックス" else "縦長動画→ピラーボックス"
+    Log.d(TAG, "updateVertexBuffer: src=${sourceWidth}x${sourceHeight} (${srcAspect}), " +
+            "dst=${width}x${height} (${dstAspect}), scale=(${scaleX}, ${scaleY}) [$mode]")
+}
+
+    fun awaitNewImage(encoder: EncoderInputSurface) {
+        // デコーダの egl を current に
+        if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+            throw RuntimeException("eglMakeCurrent(decoder) failed")
+        }
+        val timeoutMs = 2500L
+        val start = System.nanoTime()
+        synchronized(frameSync) {
             while (!frameAvailable) {
-                try {
-                    frameSyncObject.wait(5000) // Timeout 5 seconds
-                    if (!frameAvailable) {
-                        throw RuntimeException("Frame wait timed out")
-                    }
-                } catch (ie: InterruptedException) {
-                    throw RuntimeException(ie)
+                frameSync.wait(50)
+                if ((System.nanoTime() - start) / 1_000_000 > timeoutMs) {
+                    throw RuntimeException("frame wait timed out")
                 }
             }
             frameAvailable = false
         }
-        encoderInputSurface.makeCurrent(decoderPbufferSurface)
         surfaceTexture.updateTexImage()
         surfaceTexture.getTransformMatrix(texMatrix)
     }
 
-    fun drawImage(encoderInputSurface: EncoderInputSurface) {
-        encoderInputSurface.makeCurrent(encoderInputSurface.encoderEglSurface())
-        GLES20.glViewport(0, 0, encoderInputSurface.getWidth(), encoderInputSurface.getHeight())
-        textureRender.drawFrame(texMatrix)
-        encoderInputSurface.setPresentationTime(surfaceTexture.timestamp)
-        encoderInputSurface.swapBuffers()
+    fun drawImage(encoder: EncoderInputSurface) {
+        // エンコーダ面を current にして描画
+        encoder.makeCurrent()
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glUseProgram(program)
+        GLES20.glDisable(GLES20.GL_BLEND)
+        // ★ OES テクスチャを TEXTURE0 に明示的にバインド
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexId)
+
+        // ★ 縦反転の補正を掛けてから uTexMatrix へ
+        //    flipV = Translate(0,1) * Scale(1,-1)  （テクスチャ座標のYを上下反転）
+        val flipV = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
+        Matrix.translateM(flipV, 0, 0f, 1f, 0f)
+        Matrix.scaleM(flipV, 0, 1f, -1f, 1f)
+        // GLSL で使用するのは (uTexMatrix * vec4(texCoord,0,1)) なので、
+        // 先に flip を適用 → その後に SurfaceTexture の変換、の順にするには右側に flip を掛ける
+        Matrix.multiplyMM(correctedTexMatrix, 0, texMatrix, 0, flipV, 0)
+        GLES20.glUniformMatrix4fv(uTexMatrixLoc, 1, false, correctedTexMatrix, 0)
+
+        GLES20.glEnableVertexAttribArray(aPosLoc)
+        GLES20.glVertexAttribPointer(aPosLoc, 2, GLES20.GL_FLOAT, false, 0, vb)
+        GLES20.glEnableVertexAttribArray(aTexLoc)
+        GLES20.glVertexAttribPointer(aTexLoc, 2, GLES20.GL_FLOAT, false, 0, tb)
+
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    override fun onFrameAvailable(st: SurfaceTexture) {
-        synchronized(frameSyncObject) {
-            if (frameAvailable) {
-                // Handle case where previous frame was not consumed
+    fun release() {
+        try {
+            if (this::surface.isInitialized) surface.release()
+            if (this::surfaceTexture.isInitialized) surfaceTexture.release()
+            if (oesTexId != 0) {
+                val tmp = IntArray(1); tmp[0] = oesTexId
+                GLES20.glDeleteTextures(1, tmp, 0)
             }
-            frameAvailable = true
-            frameSyncObject.notifyAll()
+            if (program != 0) {
+                GLES20.glDeleteProgram(program)
+                program = 0
+            }
+            if (eglDisplay !== EGL14.EGL_NO_DISPLAY) {
+                // 安全な EGL 解放（参照カウント管理）
+                EGL14.eglMakeCurrent(
+                    eglDisplay,
+                    EGL14.EGL_NO_SURFACE,
+                    EGL14.EGL_NO_SURFACE,
+                    EGL14.EGL_NO_CONTEXT
+                )
+
+                if (eglSurface !== EGL14.EGL_NO_SURFACE) {
+                    EGL14.eglDestroySurface(eglDisplay, eglSurface)
+                }
+                if (eglContext !== EGL14.EGL_NO_CONTEXT) {
+                    EGL14.eglDestroyContext(eglDisplay, eglContext)
+                }
+
+                // ディスプレイの参照カウントを減らす（0 になったら eglTerminate）
+                EglRefManager.releaseDisplay(eglDisplay)
+            }
+        } finally {
+            eglDisplay = EGL14.EGL_NO_DISPLAY
+            eglContext = EGL14.EGL_NO_CONTEXT
+            eglSurface = EGL14.EGL_NO_SURFACE
         }
+    }
+
+    private fun createOesTex(): Int {
+        val tex = IntArray(1)
+        GLES20.glGenTextures(1, tex, 0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, tex[0])
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        return tex[0]
+    }
+
+    // ------------------------
+    // OES 描画ユーティリティ
+    // ------------------------
+    private fun initRenderer() {
+        // 初期は頂点バッファを空で作成（後で updateVertexBuffer で更新）
+        updateVertexBuffer()
+
+        val tex = floatArrayOf(
+            0f, 1f,
+            1f, 1f,
+            0f, 0f,
+            1f, 0f
+        )
+        tb = java.nio.ByteBuffer.allocateDirect(tex.size * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().put(tex)
+        tb.position(0)
+
+        val vsrc = """
+            attribute vec4 aPosition;
+            attribute vec4 aTexCoord;
+            uniform mat4 uTexMatrix;
+            varying vec2 vTexCoord;
+            void main(){
+              gl_Position = aPosition;
+              vTexCoord = (uTexMatrix * aTexCoord).xy;
+            }
+        """.trimIndent()
+        val fsrc = """
+            #extension GL_OES_EGL_image_external : require
+            precision mediump float;
+            uniform samplerExternalOES sTexture;
+            varying vec2 vTexCoord;
+            void main(){
+              gl_FragColor = texture2D(sTexture, vTexCoord);
+            }
+        """.trimIndent()
+
+        val vs = compileShader(GLES20.GL_VERTEX_SHADER, vsrc)
+        val fs = compileShader(GLES20.GL_FRAGMENT_SHADER, fsrc)
+        program = GLES20.glCreateProgram().also {
+            GLES20.glAttachShader(it, vs)
+            GLES20.glAttachShader(it, fs)
+            GLES20.glLinkProgram(it)
+            val link = IntArray(1)
+            GLES20.glGetProgramiv(it, GLES20.GL_LINK_STATUS, link, 0)
+            if (link[0] != GLES20.GL_TRUE) {
+                val msg = GLES20.glGetProgramInfoLog(it)
+                GLES20.glDeleteProgram(it)
+                throw RuntimeException("program link failed: $msg")
+            }
+        }
+        aPosLoc = GLES20.glGetAttribLocation(program, "aPosition")
+        aTexLoc = GLES20.glGetAttribLocation(program, "aTexCoord")
+        uTexMatrixLoc = GLES20.glGetUniformLocation(program, "uTexMatrix")
+        uSamplerLoc = GLES20.glGetUniformLocation(program, "sTexture") // ★ 追加
+        GLES20.glUseProgram(program)
+        GLES20.glUniform1i(uSamplerLoc, 0) // ★ sTexture は TEXTURE0 を参照（固定）
+    }
+
+    private fun compileShader(type: Int, src: String): Int {
+        val sh = GLES20.glCreateShader(type)
+        GLES20.glShaderSource(sh, src)
+        GLES20.glCompileShader(sh)
+        val compiled = IntArray(1)
+        GLES20.glGetShaderiv(sh, GLES20.GL_COMPILE_STATUS, compiled, 0)
+        if (compiled[0] == 0) {
+            val msg = GLES20.glGetShaderInfoLog(sh)
+            GLES20.glDeleteShader(sh)
+            throw RuntimeException("shader compile failed: $msg")
+        }
+        return sh
     }
 }
 
-class TextureRender {
-    private val vertexShader = """
-        uniform mat4 uMVPMatrix;
-        uniform mat4 uTexMatrix;
-        attribute vec4 aPosition;
-        attribute vec4 aTextureCoord;
-        varying vec2 vTextureCoord;
-        void main() {
-            gl_Position = uMVPMatrix * aPosition;
-            vTextureCoord = (uTexMatrix * aTextureCoord).xy;
-        }
-    """.trimIndent()
+/**
+ * EGLDisplay の参照カウントを管理し、共有時の二重 terminate を防ぐ。
+ */
+object EglRefManager {
+    private val refCounts = java.util.concurrent.ConcurrentHashMap<EGLDisplay, Int>()
 
-    private val fragmentShader = """
-        #extension GL_OES_EGL_image_external : require
-        precision mediump float;
-        varying vec2 vTextureCoord;
-        uniform samplerExternalOES sTexture;
-        void main() {
-            gl_FragColor = texture2D(sTexture, vTextureCoord);
-        }
-    """.trimIndent()
-
-    private val program: Int
-    val textureId: Int
-    private val mvpMatrix = FloatArray(16)
-    private val vertexBuffer: FloatBuffer
-    private val texCoordBuffer: FloatBuffer
-    private val uMvpMatrixLoc: Int
-    private val uTexMatrixLoc: Int
-    private val aPositionLoc: Int
-    private val aTexCoordLoc: Int
-
-    init {
-        val vb = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
-        val tb = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
-        vertexBuffer = ByteBuffer.allocateDirect(vb.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-        vertexBuffer.put(vb).position(0)
-        texCoordBuffer = ByteBuffer.allocateDirect(tb.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-        texCoordBuffer.put(tb).position(0)
-
-        Matrix.setIdentityM(mvpMatrix, 0)
-
-        program = createProgram(vertexShader, fragmentShader)
-        aPositionLoc = GLES20.glGetAttribLocation(program, "aPosition")
-        aTexCoordLoc = GLES20.glGetAttribLocation(program, "aTextureCoord")
-        uMvpMatrixLoc = GLES20.glGetUniformLocation(program, "uMVPMatrix")
-        uTexMatrixLoc = GLES20.glGetUniformLocation(program, "uTexMatrix")
-
-        val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
-        textureId = textures[0]
-
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-        GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST.toFloat())
-        GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR.toFloat())
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+    @Synchronized
+    fun addRef(display: EGLDisplay) {
+        if (display == EGL14.EGL_NO_DISPLAY) return
+        refCounts[display] = (refCounts[display] ?: 0) + 1
+        Log.d("EglRefManager", "addRef: $display -> ${refCounts[display]}")
     }
 
-    fun drawFrame(texMatrix: FloatArray) {
-        GLES20.glUseProgram(program)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-
-        GLES20.glUniformMatrix4fv(uMvpMatrixLoc, 1, false, mvpMatrix, 0)
-        GLES20.glUniformMatrix4fv(uTexMatrixLoc, 1, false, texMatrix, 0)
-
-        GLES20.glEnableVertexAttribArray(aPositionLoc)
-        GLES20.glVertexAttribPointer(aPositionLoc, 2, GLES20.GL_FLOAT, false, 8, vertexBuffer)
-        GLES20.glEnableVertexAttribArray(aTexCoordLoc)
-        GLES20.glVertexAttribPointer(aTexCoordLoc, 2, GLES20.GL_FLOAT, false, 8, texCoordBuffer)
-
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-
-        GLES20.glDisableVertexAttribArray(aPositionLoc)
-        GLES20.glDisableVertexAttribArray(aTexCoordLoc)
-    }
-    
-    fun release() {
-        GLES20.glDeleteProgram(program)
-    }
-
-    private fun createProgram(vs: String, fs: String): Int {
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vs)
-        val pixelShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fs)
-        val program = GLES20.glCreateProgram()
-        GLES20.glAttachShader(program, vertexShader)
-        GLES20.glAttachShader(program, pixelShader)
-        GLES20.glLinkProgram(program)
-
-        val linkStatus = IntArray(1)
-        GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, linkStatus, 0)
-        if (linkStatus[0] == 0) {
-            val info = GLES20.glGetProgramInfoLog(program)
-            GLES20.glDeleteProgram(program)
-            throw RuntimeException("Could not link program: " + info)
+    @Synchronized
+    fun releaseDisplay(display: EGLDisplay) {
+        if (display == EGL14.EGL_NO_DISPLAY) return
+        val next = (refCounts[display] ?: 0) - 1
+        if (next <= 0) {
+            refCounts.remove(display)
+            Log.d("EglRefManager", "terminate: $display (ref=0)")
+            try {
+                EGL14.eglTerminate(display)
+            } catch (e: Exception) {
+                Log.w("EglRefManager", "eglTerminate failed: $e")
+            }
+        } else {
+            refCounts[display] = next
+            Log.d("EglRefManager", "releaseDisplay: $display -> $next")
         }
-        return program
-    }
-
-    private fun loadShader(shaderType: Int, source: String): Int {
-        val shader = GLES20.glCreateShader(shaderType)
-        GLES20.glShaderSource(shader, source)
-        GLES20.glCompileShader(shader)
-
-        val compiled = IntArray(1)
-        GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, compiled, 0)
-        if (compiled[0] == 0) {
-            val info = GLES20.glGetShaderInfoLog(shader)
-            GLES20.glDeleteShader(shader)
-            throw RuntimeException("Could not compile shader " + shaderType + ":" + info)
-        }
-        return shader
     }
 }

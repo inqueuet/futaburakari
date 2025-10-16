@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.*
 import android.net.Uri
 import android.util.Log
+import android.opengl.GLES30
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.ExportPreset
 import com.valoser.futaburakari.videoeditor.domain.model.ExportProgress
@@ -51,6 +52,7 @@ class ExportPipelineImpl @Inject constructor(
             ?: throw IOException("Failed to open file descriptor for $outputUri")
         val muxer = MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
+        // Muxer の起動は絶対に 1 回・かつ原子的に行う
         val muxerLock = Any()
         val muxerStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -76,23 +78,32 @@ class ExportPipelineImpl @Inject constructor(
         }
         logMuxerGate("hasAudioNeeded=$hasAudioNeeded, audioEncoder=${audioEncoder != null}")
 
-        // --- 改善点 ---
-        // ・動画トラックが追加された時点で muxer を開始（音声は任意）
-        // ・判定のたびに詳細ログを出す
+        // --- Muxer start 条件 ---
+        // ・hasAudioNeeded==true のときは video+audio の両トラック追加後に start
+        // ・hasAudioNeeded==false のときは video トラックだけで start
+        // ・毎回判定ログを出す
         val startMuxerIfReady = {
+            // --- 冪等・再入可能な Muxer 起動ゲート ---
             val vIndex = runCatching { videoProcessor.getTrackIndex() }.getOrDefault(-1)
             val aIndex = runCatching { audioProcessor.getTrackIndex() }.getOrDefault(-1)
+            val audioFailed = runCatching { audioProcessor.hasFailed() }.getOrDefault(false)
             audioTrackIndexForLog = aIndex
-            logMuxerGate("muxerStarted=${muxerStarted.get()} vIndex=$vIndex aIndex=$aIndex hasAudioNeeded=$hasAudioNeeded")
-            if (!muxerStarted.get() && vIndex >= 0 /* video ready */) {
+
+            val ready = (vIndex >= 0) && (!hasAudioNeeded || aIndex >= 0 || audioFailed)
+            logMuxerGate("muxerStarted=${muxerStarted.get()} vIndex=$vIndex aIndex=$aIndex hasAudioNeeded=$hasAudioNeeded audioFailed=$audioFailed ready=$ready")
+
+            // ready が true になった瞬間を逃さない（再入呼び出しでも安全）
+            if (ready) {
                 synchronized(muxerLock) {
                     if (!muxerStarted.get()) {
                         muxer.start()
                         muxerStarted.set(true)
+                        Log.d(TAG, "Muxer started (${if (hasAudioNeeded && !audioFailed) "video+audio" else "video-only (audio failed or not needed)"})")
+
+                        // === 起動直後に書き込み可能状態へ ===
                         videoProcessor.setMuxerStarted(true)
-                        // audioProcessor は存在する場合のみフラグを立てる
+                        videoProcessor.onMuxerStartedLocked()
                         runCatching { audioProcessor.setMuxerStarted(true) }
-                        Log.d(TAG, "Muxer started (video ready; audio ${if (aIndex >= 0) "ready" else "optional/late"})")
                     }
                 }
             }
@@ -106,18 +117,43 @@ class ExportPipelineImpl @Inject constructor(
 
         // Create EGL surfaces for surface-to-surface pipeline
         val encoderInputSurface = EncoderInputSurface(videoEncoder.createInputSurface())
+        encoderInputSurface.setup() // EGL 初期化（成功しないとフレームが出ず muxer も起動しにくい）
+
         val decoderOutputSurface = DecoderOutputSurface(
             preset.width,
             preset.height,
-            encoderInputSurface.eglDisplay(),
-            encoderInputSurface.eglContext(),
-            encoderInputSurface.eglConfig(),
-            encoderInputSurface.decoderPbufferSurface()
+            encoderInputSurface.eglContext() // ★ 共有するのは EGLContext だけ
         )
+        decoderOutputSurface.setup() // ★ 追加
+
+        // ★ 最初のクリップから元動画のサイズを取得してアスペクト比を設定
+        if (session.videoClips.isNotEmpty()) {
+            val firstClip = session.videoClips[0]
+            val extractor = MediaExtractor().apply { setDataSource(context, firstClip.source, null) }
+            val videoTrackIndex = extractor.findTrack("video/")
+            if (videoTrackIndex != null) {
+                val format = extractor.getTrackFormat(videoTrackIndex)
+                val srcWidth = format.getInteger(MediaFormat.KEY_WIDTH)
+                val srcHeight = format.getInteger(MediaFormat.KEY_HEIGHT)
+                decoderOutputSurface.setSourceAspectRatio(srcWidth, srcHeight)
+                Log.d(TAG, "Source video size: ${srcWidth}x${srcHeight}")
+            }
+            extractor.release()
+        }
 
         // Build processors (the REAL classes below in this file)
         videoProcessor = VideoProcessor(context, videoEncoder, muxer, muxerLock, startMuxerIfReady, glCoroutineContext)
-        audioProcessor = AudioProcessor(context, audioEncoder, muxer, muxerLock, session, startMuxerIfReady)
+        // ターゲットのサンプルレート/チャンネル数を明示的に渡す
+        audioProcessor = AudioProcessor(
+            context,
+            audioEncoder,
+            muxer,
+            muxerLock,
+            session,
+            preset.audioSampleRate,
+            preset.audioChannels,
+            startMuxerIfReady
+        )
 
         try {
             videoEncoder.start()
@@ -127,7 +163,13 @@ class ExportPipelineImpl @Inject constructor(
             var audioPtsOffsetUs = 0L
 
             for (clip in session.videoClips) {
-                // --- Video ---
+                // --- Audio を先に処理してトラック確定を前倒し ---
+                val aRes = withContext(Dispatchers.IO) {
+                    audioProcessor.processClip(clip, audioPtsOffsetUs)
+                }
+                audioPtsOffsetUs += aRes.durationUs
+
+                // --- 続いて Video（進捗は従来どおり Video 基準） ---
                 val vRes = withContext(Dispatchers.IO) {
                     videoProcessor.processClip(
                         clip,
@@ -137,37 +179,49 @@ class ExportPipelineImpl @Inject constructor(
                     ) { progressedFrames ->
                         val currentFrames = framesProcessed.addAndGet(progressedFrames)
                         val percent = (currentFrames.toFloat() / totalFrames).coerceIn(0f, 1f) * 100f
-                        // ★ emit は必ず collector の文脈で行う
                         withContext(collectorContext) {
                             emit(ExportProgress(currentFrames, totalFrames, percent, 0))
                         }
                     }
                 }
                 videoPtsOffsetUs += vRes.durationUs
-
-
-
-                // --- Audio ---
-                val aRes = withContext(Dispatchers.IO) {
-                    audioProcessor.processClip(clip, audioPtsOffsetUs)
-                }
-                audioPtsOffsetUs += aRes.durationUs
             }
 
 
 
-            // Signal EOS to video path and drain
+            // --- EOS（終了処理）：すべてのクリップ処理後に一度だけ送信 ---
+            // Audio EOS を送信してから完全ドレイン
+            if (audioEncoder != null) {
+                val eosInputBufferIndex = audioEncoder.dequeueInputBuffer(TIMEOUT_US)
+                if (eosInputBufferIndex >= 0) {
+                    audioEncoder.queueInputBuffer(
+                        eosInputBufferIndex,
+                        0, 0, 0,
+                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                    )
+                }
+            }
+            audioProcessor.drainAudioEncoder(true)
+            
+            // 続いて Video に EOS を投げてから最後までドレイン
             videoEncoder.signalEndOfInputStream()
             videoProcessor.drainEncoder(true)
-            // Audio EOS (if encoder exists)
-            audioProcessor.drainAudioEncoder(true)
 
         } catch (e: Exception) {
             Log.e(TAG, "Export failed", e)
             throw e
         } finally {
             // Muxer 状態の最終ログ
-            logMuxerGate("FINALLY muxerStarted=${muxerStarted.get()} vTrack=${runCatching{videoProcessor.getTrackIndex()}.getOrDefault(-1)} aTrack=$audioTrackIndexForLog")
+            val finalV = runCatching { videoProcessor.getTrackIndex() }.getOrDefault(-1)
+            logMuxerGate("FINALLY muxerStarted=${muxerStarted.get()} vTrack=$finalV aTrack=$audioTrackIndexForLog")
+
+            if (!muxerStarted.get()) {
+                // === 不変条件違反を明確に検知（強行 start は行わない） ===
+                Log.e(TAG, "⚠️ Muxer never started — output is likely empty (0B). Check track add & startMuxerIfReady timing.")
+                if (finalV >= 0) {
+                    Log.e(TAG, "⚠️ Video track existed but muxer never started. This indicates race condition before ready=true evaluation.")
+                }
+            }
             try {
                 videoEncoder.stop()
             } catch (_: Throwable) {}
@@ -182,12 +236,8 @@ class ExportPipelineImpl @Inject constructor(
             } catch (_: Throwable) {}
 
             // Release EGL surfaces last
-            try {
-                decoderOutputSurface.release()
-            } catch (_: Throwable) {}
-            try {
-                encoderInputSurface.release()
-            } catch (_: Throwable) {}
+            try { decoderOutputSurface.release() } catch (_: Throwable) {}
+            try { encoderInputSurface.release() } catch (_: Throwable) {}
 
             if (muxerStarted.get()) {
                 try { muxer.stop() } catch (_: Throwable) {}
@@ -226,13 +276,18 @@ private class VideoProcessor(
     private data class EncodedSample(val data: ByteArray, val ptsUs: Long, val flags: Int)
     private val pendingVideo = ArrayDeque<EncodedSample>()
 
+    // ★ 公開：Muxer 起動直後に呼べるように
+    fun onMuxerStartedLocked() = flushPendingVideoLocked()
     private fun flushPendingVideoLocked() {
         if (!muxerStarted.get() || trackIndex < 0) return
+        var flushed = 0
         while (pendingVideo.isNotEmpty()) {
             val s = pendingVideo.removeFirst()
             val info = MediaCodec.BufferInfo().apply { set(0, s.data.size, s.ptsUs, s.flags) }
             muxer.writeSampleData(trackIndex, java.nio.ByteBuffer.wrap(s.data), info)
+            flushed++
         }
+        Log.d(TAG, "flushPendingVideoLocked: flushed=$flushed samples to muxer (track=$trackIndex)")
     }
 
     private var trackIndex: Int = -1
@@ -253,6 +308,10 @@ private class VideoProcessor(
             ?: throw RuntimeException("Failed to create video decoder for ${clip.source}")
 
         var framesInClip = 0
+        // ★ 追加：未宣言だったワーク変数を定義
+        val bufferInfo = MediaCodec.BufferInfo()
+        var isInputDone = false
+        var isOutputDone = false
         try {
             Log.d(TAG, "processClip: Starting decoder")
             decoder.start()
@@ -260,12 +319,6 @@ private class VideoProcessor(
             Log.d(TAG, "processClip: Video track index: $videoTrackIndex")
             extractor.selectTrack(videoTrackIndex)
             extractor.seekTo(clip.startTime * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            Log.d(TAG, "processClip: Seeked to ${clip.startTime * 1000}us")
-
-            val bufferInfo = MediaCodec.BufferInfo()
-            var isInputDone = false
-            var isOutputDone = false
-
             while (!isOutputDone) {
                 if (!isInputDone) {
                     val inputBufferIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
@@ -301,32 +354,40 @@ private class VideoProcessor(
                         if (doRender) {
                             Log.d(TAG, "processClip: Rendering frame $framesInClip, pts=${bufferInfo.presentationTimeUs}us")
                             decoder.releaseOutputBuffer(outputBufferIndex, doRender)
-                            withContext(glCoroutineContext) { // Switch to GL context for GL operations
+                            withContext(glCoroutineContext) {
+                                // GL スレッドで描画
                                 decoderOutputSurface.awaitNewImage(encoderInputSurface)
                                 decoderOutputSurface.drawImage(encoderInputSurface)
-                            }
-
-                            // Surface経由でエンコーダーにフレームが送られるまで待機
-                            try {
-                                // エンコーダーが少なくとも1フレームを処理するまで待つ
-                                var encodedFrames = 0
-                                var retries = 0
-                                while (encodedFrames == 0 && retries < 100) { // 最大10秒待つ
-                                    encodedFrames = drainEncoderNonBlocking()
-                                    if (encodedFrames == 0) {
-                                        Thread.sleep(100) // 100ms待つ
-                                        retries++
+                                // PTS を ns で渡してから swap
+                                encoderInputSurface.setPresentationTime(bufferInfo.presentationTimeUs * 1000L)
+                                encoderInputSurface.swapBuffers()
+                                // ===== GPU フェンスで描画完了を待つ =====
+                                val sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+                                if (sync != 0L) {
+                                    val timeoutNs = 50_000_000L // 50ms
+                                    val wait = GLES30.glClientWaitSync(sync, 0, timeoutNs)
+                                    GLES30.glDeleteSync(sync)
+                                    if (wait == GLES30.GL_TIMEOUT_EXPIRED) {
+                                        Log.w(TAG, "GL fence wait timed out for frame $framesInClip (proceeding)")
                                     }
-                                }
-                                if (encodedFrames > 0) {
-                                    framesInClip++
-                                    onProgress(1) // ★ ここを追加するとリアルタイムで進む
                                 } else {
-                                    Log.w(TAG, "processClip: Encoder did not produce output for frame $framesInClip")
+                                    Log.w(TAG, "glFenceSync returned 0 (no sync created)")
                                 }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "processClip: drainEncoder failed at frame $framesInClip", e)
-                                throw e
+                                // ===== ここまでフェンス待ち =====
+                            }
+                            // フェンス待ち後にエンコーダ出力をノンブロッキングで取得
+                            var produced = drainEncoderNonBlocking()
+                            if (produced == 0) {
+                                repeat(2) {
+                                    Thread.sleep(5)
+                                    produced += drainEncoderNonBlocking()
+                                }
+                            }
+                            if (produced > 0) {
+                                framesInClip++
+                                onProgress(1)
+                            } else {
+                                Log.w(TAG, "processClip: Encoder did not produce output for frame $framesInClip")
                             }
                         } else {
                             decoder.releaseOutputBuffer(outputBufferIndex, false)
@@ -470,6 +531,11 @@ private class VideoProcessor(
                             pendingVideo.addLast(
                                 EncodedSample(copy, bufferInfo.presentationTimeUs, bufferInfo.flags)
                             )
+                            // ★ データが来た段階でも起動条件を再チェック（タイミング競合の保険）
+                            //   ※ addTrack() 側でも呼んでいるが、ここでも念のため
+                            //   （弱い呼び出し：起動済みなら何もしない）
+                            // muxerStartCallback は外側キャプチャ
+                            muxerStartCallback()
                         }
                     }
                 }
@@ -512,14 +578,111 @@ private class AudioProcessor(
     private val muxer: MediaMuxer,
     private val muxerLock: Any,
     private val session: EditorSession,
+    // ★ 追加: エンコーダに渡すべきターゲット仕様
+    private val targetSampleRate: Int,
+    private val targetChannelCount: Int,
     private val muxerStartCallback: () -> Unit,
     private val TIMEOUT_US: Long = 10000L
 ) {
     private val TAG = "AudioProcessor"
     data class Result(val durationUs: Long)
 
+    // 音声パスが致命的に失敗した場合のフォールバックフラグ
+    @Volatile private var failed: Boolean = false
+    fun hasFailed(): Boolean = failed
+
     private data class EncodedSample(val data: ByteArray, val ptsUs: Long, val flags: Int)
     private val pendingAudio = ArrayDeque<EncodedSample>()
+
+    // ★ 追加: エンコーダに与えた総出力サンプル数（チャンネル無関係の1ch換算）
+    private var totalOutSamples: Long = 0
+
+    /**
+     * リサンプリング（線形補間・16bit PCM想定）。戻り値は (出力PCM, 出力サンプル数/1ch)。
+     * 入力: ByteBuffer(PCM16), bufferInfo(offset/size), 入力レート/チャンネル
+     */
+    private fun resampleIfNeeded(
+        src: ByteBuffer,
+        bufferInfo: MediaCodec.BufferInfo,
+        inSampleRate: Int,
+        inChannels: Int
+    ): Pair<ByteBuffer, Int> {
+        // すでにターゲット仕様ならコピー不要
+        if (inSampleRate == targetSampleRate && inChannels == targetChannelCount) {
+            val dup = src.duplicate()
+            dup.position(bufferInfo.offset)
+            dup.limit(bufferInfo.offset + bufferInfo.size)
+            return Pair(dup.slice(), (bufferInfo.size / 2 /*bytes*/ / inChannels))
+        }
+
+        // チャンネル本数の調整（簡易：多ch→ダウンミックス/少ch→複製）
+        // ここでは in->target への最小限の対応
+        val srcShort = ShortArray(bufferInfo.size / 2)
+        run {
+            val dup = src.duplicate()
+            dup.position(bufferInfo.offset)
+            dup.limit(bufferInfo.offset + bufferInfo.size)
+            val sb = dup.slice().order(ByteOrder.nativeOrder()).asShortBuffer()
+            sb.get(srcShort)
+        }
+
+        // ダウンミックス/アップミックスを中間バッファに整形（interleaved）
+        val framesIn = srcShort.size / inChannels
+        val interleavedInMono = ShortArray(framesIn) // 1ch仮想（後で必要に応じ複製）
+        if (inChannels == 1) {
+            System.arraycopy(srcShort, 0, interleavedInMono, 0, framesIn)
+        } else {
+            // 単純平均でダウンミックス
+            var si = 0
+            for (i in 0 until framesIn) {
+                var acc = 0
+                for (c in 0 until inChannels) {
+                    acc += srcShort[si + c].toInt()
+                }
+                interleavedInMono[i] = (acc / inChannels).toShort()
+                si += inChannels
+            }
+        }
+
+        // レート変換（線形補間）
+        val outFrames = Math.max(1, (framesIn.toLong() * targetSampleRate / inSampleRate).toInt())
+        val outMono = ShortArray(outFrames)
+        if (framesIn == 0) {
+            // 無音
+            // outMono は zero 初期化済み
+        } else if (inSampleRate == targetSampleRate) {
+            // レート同一ならコピー
+            val copy = Math.min(framesIn, outFrames)
+            System.arraycopy(interleavedInMono, 0, outMono, 0, copy)
+        } else {
+            val ratio = framesIn.toDouble() / outFrames
+            for (i in 0 until outFrames) {
+                val srcPos = i * ratio
+                val i0 = kotlin.math.floor(srcPos).toInt().coerceIn(0, framesIn - 1)
+                val i1 = (i0 + 1).coerceAtMost(framesIn - 1)
+                val t = (srcPos - i0)
+                val s0 = interleavedInMono[i0].toInt()
+                val s1 = interleavedInMono[i1].toInt()
+                outMono[i] = (s0 + (s1 - s0) * t).toInt().toShort()
+            }
+        }
+
+        // ターゲットchへ拡張（1→Nch複製）
+        val outInterleaved = ShortArray(outFrames * targetChannelCount)
+        var di = 0
+        for (i in 0 until outFrames) {
+            val v = outMono[i]
+            for (c in 0 until targetChannelCount) {
+                outInterleaved[di++] = v
+            }
+        }
+
+        val outBytes = ByteBuffer.allocate(outInterleaved.size * 2).order(ByteOrder.nativeOrder())
+        outBytes.asShortBuffer().put(outInterleaved)
+        outBytes.position(0)
+        outBytes.limit(outInterleaved.size * 2)
+        return Pair(outBytes, outFrames)
+    }
 
     private fun flushPendingAudioLocked() {
         if (!muxerStarted.get() || trackIndex < 0) return
@@ -601,14 +764,26 @@ private class AudioProcessor(
                         if (bufferInfo.size > 0) {
                             val decodedData = decoder.getOutputBuffer(outputBufferIndex)!!
                             applyVolumeAutomation(decodedData, bufferInfo, audioClip, sampleRate, channelCount)
-                            bufferInfo.presentationTimeUs += presentationTimeOffsetUs
+
+                            // ★ リサンプリングしてターゲット仕様へ
+                            val (pcmForEncoder, outFrames) = resampleIfNeeded(decodedData, bufferInfo, sampleRate, channelCount)
+
+                            // ★ エンコーダ向けPTSを「これまでにエンコーダへ渡した総サンプル数」から再計算
+                            val ptsUsForEncoder =
+                                presentationTimeOffsetUs + (totalOutSamples * 1_000_000L / targetSampleRate)
+
+                            val encInfo = MediaCodec.BufferInfo().apply {
+                                set(0, pcmForEncoder.remaining(), ptsUsForEncoder, bufferInfo.flags)
+                            }
                             try {
-                                queueToAudioEncoder(decodedData, bufferInfo)
-                                drainAudioEncoder(false) // Drain encoder periodically
+                                queueToAudioEncoder(pcmForEncoder, encInfo)
+                                drainAudioEncoder(false) // ← クリップ処理中は定期的にdrain（EOSなし）
                             } catch (e: Exception) {
                                 Log.e(TAG, "processClip: Audio encoding failed", e)
                                 throw e
                             }
+                            // 出力サンプル数を加算（1ch換算）
+                            totalOutSamples += outFrames.toLong()
                         }
                         decoder.releaseOutputBuffer(outputBufferIndex, false)
                         if (isOutputDone) break
@@ -620,6 +795,7 @@ private class AudioProcessor(
                         sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                         channelCount = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                         outputFormatKnown = true
+                        Log.d(TAG, "processClip: audio decoder out format = ${'$'}sampleRate Hz, ch=${'$'}channelCount")
                         Log.d(TAG, "Audio decoder output format changed: $outFormat")
                     } else {
                         Log.d(TAG, "processClip: Audio decoder output buffer index: $outputBufferIndex")
@@ -628,16 +804,7 @@ private class AudioProcessor(
                 }
             }
 
-            // Signal EOS to audio encoder and drain it completely
-            val eosInputBufferIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
-            if (eosInputBufferIndex >= 0) {
-                encoder.queueInputBuffer(
-                    eosInputBufferIndex,
-                    0, 0, 0,
-                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                )
-            }
-            drainAudioEncoder(true) // Drain until EOS
+            // ☆ クリップごとのEOS送信を削除（全クリップ処理後に一度だけ送信）
         } finally {
             decoder.stop(); decoder.release()
             extractor.release()
@@ -734,19 +901,25 @@ private class AudioProcessor(
                     }
                     encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         Log.d(TAG, "drainAudioEncoder: INFO_OUTPUT_FORMAT_CHANGED")
-                        synchronized(muxerLock) {
-                            if (trackIndex == -1) {
-                                val format = encoder.outputFormat
-                                Log.d(TAG, "drainAudioEncoder: Adding audio track, format=$format")
-                                trackIndex = muxer.addTrack(format)
-                                Log.d(TAG, "drainAudioEncoder: Audio track index=$trackIndex")
-                                muxerStartCallback() // Call the callback here
-                            }
-                        }
-                    }
+                                                        synchronized(muxerLock) {
+                                                            if (trackIndex == -1) {
+                                                                val format = encoder.outputFormat
+                                                                Log.d(TAG, "drainAudioEncoder: Adding audio track, format=$format")
+                                                                try {
+                                                                    trackIndex = muxer.addTrack(format)
+                                                                    Log.d(TAG, "drainAudioEncoder: Audio track index=$trackIndex")
+                                                                    muxerStartCallback() // 追加後に Muxer start を再評価
+                                                                } catch (e: IllegalStateException) {
+                                                                    // 端末/仮想デバイスでまれに "Muxer is not initialized" が発生するケースにフォールバック
+                                                                    Log.w(TAG, "drainAudioEncoder: addTrack failed, fallback to video-only export", e)
+                                                                    failed = true
+                                                                    // 以降の音声出力は破棄し、video-only で進める
+                                                                }
+                                                            }
+                                                        }                    }
                     encoderStatus >= 0 -> {
                         val encodedData = encoder.getOutputBuffer(encoderStatus)!!
-                        if (bufferInfo.size != 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                        if (!failed && bufferInfo.size != 0 && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                             synchronized(muxerLock) {
                                 if (muxerStarted.get() && trackIndex >= 0) {
                                     muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
@@ -770,7 +943,8 @@ private class AudioProcessor(
             }
         } catch (e: IllegalStateException) {
             Log.w(TAG, "drainAudioEncoder: encoder not in executing state", e)
-            return true // Consider drained on error
+            failed = true
+            return true // フォールバック扱いで続行
         }
         return !encoderOutputAvailable // Return true if no more output is expected (not drained yet)
     }
