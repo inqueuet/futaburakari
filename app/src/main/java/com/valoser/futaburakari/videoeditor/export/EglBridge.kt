@@ -284,9 +284,14 @@ private fun updateVertexBuffer() {
                 }
             }
             frameAvailable = false
-        }
+        } 
         surfaceTexture.updateTexImage()
         surfaceTexture.getTransformMatrix(texMatrix)
+        
+        // ★ 元のコンテキストに戻す
+        if (prevContext != EGL14.EGL_NO_CONTEXT && prevDisplay != EGL14.EGL_NO_DISPLAY) {
+            EGL14.eglMakeCurrent(prevDisplay, prevDrawSurface, prevReadSurface, prevContext)
+        }
     }
 
     fun drawImage(encoder: EncoderInputSurface) {
