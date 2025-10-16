@@ -69,35 +69,43 @@ fun TimelineView(
 
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
-        val viewportWidthPx = with(density) { maxWidth.toPx() }
+        // ※ 固定プレイヘッド用の左右パディングは廃止（実座標プレイヘッドに統一）
 
-        // 再生ヘッドの位置を左から25%に定義
-        val playheadOffsetRatio = 0.25f
-        val playheadOffsetXPx = viewportWidthPx * playheadOffsetRatio
-        val playheadOffsetXDp = with(density) { playheadOffsetXPx.toDp() }
-
-        // 左右非対称のパディングを計算
-        val leftPaddingDp = playheadOffsetXDp
-        val rightPaddingDp = maxWidth - playheadOffsetXDp
-
-        // playheadの位置に合わせてスクロール位置を計算
-        // ② 自動スクロール：バケット化（例: 24px単位）＋非アニメーションで jank を抑制
-        val scrollBucketPx = with(density) { 24.dp.toPx() } // 任意: 16–32px
+        // 連続スクロールをやめ、しきい値を越えた時だけ小さくスクロールする
         val scrollMutex = remember { androidx.compose.foundation.MutatorMutex() }
-        LaunchedEffect(zoom) {
-            // playhead*zoom（px）をバケットに丸め、変化した時のみスクロール
-            snapshotFlow { ((playhead * zoom) / scrollBucketPx).toInt() }
-                .distinctUntilChanged()
-                .collectLatest { bucket ->
-                    val target = (bucket * scrollBucketPx).toInt()
-                        .coerceIn(0, horizontalScrollState.maxValue)
-                    isAutoScrolling = true
-                    scrollMutex.mutate {
-                        // アニメーションなしの即時スクロールで安定描画
-                        horizontalScrollState.scrollTo(target)
-                    }
-                    isAutoScrolling = false
+        // 直近の playhead を記録してループ/巻き戻りを検知
+        var lastPlayhead by rememberSaveable { mutableStateOf(0L) }
+        LaunchedEffect(playhead, zoom, timelineDuration, isPlaying) {
+            if (!isPlaying) return@LaunchedEffect  // 停止中はスクロール不要
+            val contentPx = (timelineDuration * zoom).coerceAtLeast(0f)
+            val viewportWidthPx = with(density) { maxWidth.toPx() }
+            val maxScroll = (contentPx - viewportWidthPx).coerceAtLeast(0f)
+            val playheadXPx = playhead * zoom
+            val currentScroll = horizontalScrollState.value.toFloat()
+
+            // 画面内でのプレイヘッド相対位置
+            val xInView = playheadXPx - currentScroll
+            val leftThreshold  = viewportWidthPx * 0.20f
+            val rightThreshold = viewportWidthPx * 0.80f
+
+            // ループ/巻き戻り（例: 1秒以上逆行）を検知したら、このフレームは自動スクロールしない
+            val jumpedBack = (lastPlayhead - playhead) > 1000L
+            lastPlayhead = playhead
+            if (jumpedBack) return@LaunchedEffect
+
+
+            // しきい値を越えたら、25%位置にくる最小量だけ即時スクロール
+            if (xInView < leftThreshold || xInView > rightThreshold) {
+                val targetInView = viewportWidthPx * 0.25f
+                val desiredScroll = (playheadXPx - targetInView).coerceIn(0f, maxScroll)
+                // 自動スクロールは「前方向のみ」適用（後退は無視して揺り戻しを防止）
+                if (desiredScroll <= currentScroll) return@LaunchedEffect
+                isAutoScrolling = true
+                scrollMutex.mutate {
+                    horizontalScrollState.scrollTo(desiredScroll.toInt())
                 }
+                isAutoScrolling = false
+            }
         }
 
         // ③ 1本指スクロールを含む【すべてのスクロール位置の変化】で再生位置を更新
@@ -109,7 +117,8 @@ fun TimelineView(
                 .collectLatest { t ->
                     // 無駄なSeek連打を避けるため、閾値を設ける
                     if (!isAutoScrolling /* 既存 */ && !isPlaying &&
-                        kotlin.math.abs(t - playhead) > 10L) {                        onSeek(t)
+                        kotlin.math.abs(t - playhead) > 10L) {
+                        onSeek(t)
                     }
                 }
         }
@@ -140,8 +149,7 @@ fun TimelineView(
             // Boxに左右非対称のパディングを追加
             Box(
                 modifier = Modifier
-                    .width(totalContentWidthDp + leftPaddingDp + rightPaddingDp)
-                    .padding(start = leftPaddingDp, end = rightPaddingDp)
+                    .width(totalContentWidthDp)
             ) {
                 Column {
                     // フィルムストリップ（64dp高さ）
@@ -246,14 +254,17 @@ fun TimelineView(
             }
         }
 
-        // プレイヘッドを左から25%の位置に配置
+        // プレイヘッド（赤線）を実座標で描画：scroll に依存して等速で動く
+        val playheadXDp = with(density) {
+            (playhead * zoom - horizontalScrollState.value).toDp()
+        }
         Divider(
             color = Color.Red,
             modifier = Modifier
                 .fillMaxHeight()
                 .width(2.dp)
                 .align(Alignment.TopStart)
-                .offset(x = playheadOffsetXDp)
+                .offset(x = playheadXDp)
         )
     }
 }
