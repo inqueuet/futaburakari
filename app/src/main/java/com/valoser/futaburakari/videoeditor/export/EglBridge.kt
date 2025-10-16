@@ -265,13 +265,33 @@ private fun updateVertexBuffer() {
     vb.position(0)
 
     val mode = if (srcAspect > dstAspect) "横長動画→レターボックス" else "縦長動画→ピラーボックス"
-    Log.d(TAG, "updateVertexBuffer: src=${sourceWidth}x${sourceHeight} (${srcAspect}), " +
-            "dst=${width}x${height} (${dstAspect}), scale=(${scaleX}, ${scaleY}) [$mode]")
-}
-
-    fun awaitNewImage(encoder: EncoderInputSurface) {
-        // ★ 現在のコンテキストを保存
-        val prevDisplay = EGL14.eglGetCurrentDisplay()
+            Log.d(TAG, "updateVertexBuffer: src=${sourceWidth}x${sourceHeight} (${srcAspect}), " +
+                    "dst=${width}x${height} (${dstAspect}), scale=(${scaleX}, ${scaleY}) [$mode]")
+    }
+    
+        /**
+         * ★ コンテキスト切り替えなしでフレームを待機する内部メソッド
+         * （呼び出し元で既にデコーダーコンテキストがカレントになっていることを前提）
+         */
+        fun awaitNewImageInternal() {
+            val timeoutMs = 2500L
+            val start = System.nanoTime()
+            synchronized(frameSync) {
+                while (!frameAvailable) {
+                    frameSync.wait(50)
+                    if ((System.nanoTime() - start) / 1_000_000 > timeoutMs) {
+                        throw RuntimeException("frame wait timed out")
+                    }
+                }
+                frameAvailable = false
+            }
+            surfaceTexture.updateTexImage()
+            surfaceTexture.getTransformMatrix(texMatrix)
+        }
+        
+        fun awaitNewImage(encoder: EncoderInputSurface) {
+            // ★ 現在のコンテキストを保存
+            val prevDisplay = EGL14.eglGetCurrentDisplay()
         val prevDrawSurface = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW)
         val prevReadSurface = EGL14.eglGetCurrentSurface(EGL14.EGL_READ)
         val prevContext = EGL14.eglGetCurrentContext()
