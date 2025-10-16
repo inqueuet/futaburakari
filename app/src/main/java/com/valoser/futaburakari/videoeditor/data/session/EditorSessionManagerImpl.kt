@@ -22,7 +22,7 @@ class EditorSessionManagerImpl @Inject constructor(
     private var currentSession: EditorSession? = null
     private val undoStack = mutableListOf<EditorSession>()
     private val redoStack = mutableListOf<EditorSession>()
-    private val maxUndoSize = 20
+    private val maxUndoSize = 10  // ★ メモリ使用量を削減
 
     override suspend fun createSession(videoUris: List<Uri>): Result<EditorSession> {
         return try {

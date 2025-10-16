@@ -4,6 +4,7 @@ import android.graphics.SurfaceTexture
 import android.opengl.*
 import android.util.Log
 import android.view.Surface
+import android.opengl.Matrix
 
 /**
  * エンコーダ入力用の EGL ラッパ
@@ -201,7 +202,12 @@ class DecoderOutputSurface(
     fun setSourceAspectRatio(srcWidth: Int, srcHeight: Int) {
         sourceWidth = srcWidth
         sourceHeight = srcHeight
-        updateVertexBuffer()
+        // ★ vbが未初期化の場合は初期化を促す
+        if (!this::vb.isInitialized) {
+            Log.w(TAG, "setSourceAspectRatio called before initRenderer, aspect ratio will be applied on init")
+        } else {
+            updateVertexBuffer()
+        }
     }
 
 /**
@@ -211,14 +217,22 @@ class DecoderOutputSurface(
 private fun updateVertexBuffer() {
     if (sourceWidth == 0 || sourceHeight == 0) {
         // ソースサイズ未設定の場合はフルスクリーン
+        
         val verts = floatArrayOf(
             -1f, -1f,
              1f, -1f,
             -1f,  1f,
              1f,  1f
         )
-        vb = java.nio.ByteBuffer.allocateDirect(verts.size * 4)
+        
+        if (!this::vb.isInitialized || vb.capacity() < verts.size * 4) {
+            vb = java.nio.ByteBuffer.allocateDirect(verts.size * 4)
             .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer().put(verts)
+        } else {
+            vb.clear()
+            vb.position(0)
+            vb.put(verts)
+        }
         vb.position(0)
         return
     }

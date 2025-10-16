@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.Selection
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
@@ -73,8 +74,9 @@ fun TimelineView(
 
         // 連続スクロールをやめ、しきい値を越えた時だけ小さくスクロールする
         val scrollMutex = remember { androidx.compose.foundation.MutatorMutex() }
-        // 直近の playhead を記録してループ/巻き戻りを検知
-        var lastPlayhead by rememberSaveable { mutableStateOf(0L) }
+        // 直近の playhead を記録してループ/巻き戻りを検知（初期値は現在位置）
+        var lastPlayhead by rememberSaveable { mutableStateOf(playhead) }
+        var isScrolling by remember { mutableStateOf(false) }
         LaunchedEffect(playhead, zoom, timelineDuration, isPlaying) {
             if (!isPlaying) return@LaunchedEffect  // 停止中はスクロール不要
             val contentPx = (timelineDuration * zoom).coerceAtLeast(0f)
@@ -100,24 +102,34 @@ fun TimelineView(
                 val desiredScroll = (playheadXPx - targetInView).coerceIn(0f, maxScroll)
                 // 自動スクロールは「前方向のみ」適用（後退は無視して揺り戻しを防止）
                 if (desiredScroll <= currentScroll) return@LaunchedEffect
+                if (isScrolling) return@LaunchedEffect  // 既にスクロール中なら無視
+                isScrolling = true
                 isAutoScrolling = true
                 scrollMutex.mutate {
                     horizontalScrollState.scrollTo(desiredScroll.toInt())
                 }
                 isAutoScrolling = false
+                isScrolling = false
             }
         }
 
         // ③ 1本指スクロールを含む【すべてのスクロール位置の変化】で再生位置を更新
         LaunchedEffect(zoom) {
             snapshotFlow { horizontalScrollState.value }
-                .map { value -> ((value / zoom).toLong()) }
+                .map { value -> 
+                    // ★ zoomが極小値の場合のガード
+                    if (zoom > 0.01f) {
+                        (value / zoom).toLong()
+                    } else {
+                        0L
+                    }
+                }
                 .distinctUntilChanged()
+                .debounce(30)  // ★ debounce時間を短縮して応答性向上
                 .filter { !isAutoScrolling }                // 自動スクロールによるループ回避
                 .collectLatest { t ->
-                    // 無駄なSeek連打を避けるため、閾値を設ける
-                    if (!isAutoScrolling /* 既存 */ && !isPlaying &&
-                        kotlin.math.abs(t - playhead) > 10L) {
+                    // ⭐ 閾値を拡大してさらに安定化
+                    if (!isPlaying && kotlin.math.abs(t - playhead) > 50L) {
                         onSeek(t)
                     }
                 }

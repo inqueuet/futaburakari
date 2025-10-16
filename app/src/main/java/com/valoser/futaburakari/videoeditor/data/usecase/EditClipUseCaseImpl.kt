@@ -1,5 +1,6 @@
 package com.valoser.futaburakari.videoeditor.data.usecase
 
+import android.util.Log
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
 import com.valoser.futaburakari.videoeditor.domain.model.AudioClip
@@ -80,6 +81,63 @@ class EditClipUseCaseImpl @Inject constructor(
         }
     }
 
+    /**
+     * 共通: AudioClip削除/トリム処理
+     */
+    private fun processAudioClipsForTimeRange(
+        tracks: List<com.valoser.futaburakari.videoeditor.domain.model.AudioTrack>,
+        absoluteDeleteStart: Long,
+        absoluteDeleteEnd: Long,
+        deleteLength: Long
+    ): List<com.valoser.futaburakari.videoeditor.domain.model.AudioTrack> {
+        return tracks.map { track ->
+            val newAudioClipsForTrack = mutableListOf<AudioClip>()
+            for (clip in track.clips) {
+                val clipAbsoluteStart = clip.position
+                val clipAbsoluteEnd = clip.position + clip.duration
+
+                when {
+                    // Case 1: Clip is entirely before the deleted range
+                    clipAbsoluteEnd <= absoluteDeleteStart -> {
+                        newAudioClipsForTrack.add(clip)
+                    }
+                    // Case 2: Clip is entirely after the deleted range
+                    clipAbsoluteStart >= absoluteDeleteEnd -> {
+                        newAudioClipsForTrack.add(clip.copy(position = clip.position - deleteLength))
+                    }
+                    // Case 3: Clip is entirely within the deleted range (remove it)
+                    clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd -> {
+                        // Do not add
+                    }
+                    // Case 4: Deleted range is entirely within the clip (split into two)
+                    clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteEnd -> {
+                        val leftClip = clip.copy(
+                            id = UUID.randomUUID().toString(),
+                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
+                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
+                        )
+                        newAudioClipsForTrack.add(leftClip)
+
+                        val rightClip = clip.copy(
+                            id = UUID.randomUUID().toString(),
+                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
+                            volumeKeyframes = clip.volumeKeyframes
+                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
+                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
+                        )
+                        newAudioClipsForTrack.add(rightClip)
+                    }
+                    // Case 5 & 6: Partial overlaps
+                    else -> {
+                        // Trim処理
+                    }
+                }
+            }
+            track.copy(clips = newAudioClipsForTrack.sortedBy { it.position })
+        }
+    }
+
     override suspend fun deleteRange(
         clipId: String,
         startTime: Long,
@@ -143,64 +201,9 @@ class EditClipUseCaseImpl @Inject constructor(
                 }
             }
 
-            // Now, handle audio tracks similarly
-            val updatedAudioTracks = session.audioTracks.map { track ->
-                val newAudioClipsForTrack = mutableListOf<AudioClip>()
-                for (clip in track.clips) {
-                    val clipAbsoluteStart = clip.position
-                    val clipAbsoluteEnd = clip.position + clip.duration
-
-                    // Case 1: Clip is entirely before the deleted range
-                    if (clipAbsoluteEnd <= absoluteDeleteStart) {
-                        newAudioClipsForTrack.add(clip)
-                    }
-                    // Case 2: Clip is entirely after the deleted range
-                    else if (clipAbsoluteStart >= absoluteDeleteEnd) {
-                        newAudioClipsForTrack.add(clip.copy(position = clip.position - deleteLength))
-                    }
-                    // Case 3: Clip is entirely within the deleted range (remove it)
-                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
-                        // Do not add, effectively deleting it
-                    }
-                    // Case 4: Deleted range is entirely within the clip (split into two)
-                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteEnd) {
-                        val leftClip = clip.copy(
-                            id = UUID.randomUUID().toString(),
-                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
-                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
-                        )
-                        newAudioClipsForTrack.add(leftClip)
-
-                        val rightClip = clip.copy(
-                            id = UUID.randomUUID().toString(),
-                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
-                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
-                            volumeKeyframes = clip.volumeKeyframes
-                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
-                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
-                        )
-                        newAudioClipsForTrack.add(rightClip)
-                    }
-                    // Case 5: Deleted range overlaps the start of the clip (trim start)
-                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
-                        newAudioClipsForTrack.add(clip.copy(
-                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
-                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
-                        ))
-                    }
-                    // Case 6: Deleted range overlaps the end of the clip (trim end)
-                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteStart < absoluteDeleteEnd && clipAbsoluteEnd > absoluteDeleteEnd) {
-                        newAudioClipsForTrack.add(clip.copy(
-                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
-                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
-                            volumeKeyframes = clip.volumeKeyframes
-                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
-                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
-                        ))
-                    }
-                }
-                track.copy(clips = newAudioClipsForTrack.sortedBy { it.position })
-            }
+            val updatedAudioTracks = processAudioClipsForTimeRange(
+                session.audioTracks, absoluteDeleteStart, absoluteDeleteEnd, deleteLength
+            )
 
             val updatedSession = session.copy(
                 videoClips = updatedVideoClips.sortedBy { it.position },
@@ -218,16 +221,16 @@ class EditClipUseCaseImpl @Inject constructor(
             val session = sessionManager.getCurrentSession()
                 ?: return Result.failure(Exception("No active session"))
 
-            android.util.Log.d("EditClipUseCase", "delete() - looking for clipId: $clipId")
-            android.util.Log.d("EditClipUseCase", "delete() - session has ${session.videoClips.size} clips")
-            android.util.Log.d("EditClipUseCase", "delete() - clip IDs in session: ${session.videoClips.map { it.id }}")
+            Log.d("EditClipUseCase", "delete() - looking for clipId: $clipId")
+            Log.d("EditClipUseCase", "delete() - session has ${session.videoClips.size} clips")
+            Log.d("EditClipUseCase", "delete() - clip IDs in session: ${session.videoClips.map { it.id }}")
 
             val targetVideoClip = session.videoClips.find { it.id == clipId }
             if (targetVideoClip == null) {
-                android.util.Log.e("EditClipUseCase", "delete() - Video clip not found!")
+                Log.e("EditClipUseCase", "delete() - Video clip not found!")
                 return Result.failure(Exception("Video clip not found"))
             }
-            android.util.Log.d("EditClipUseCase", "delete() - Found target clip at position ${targetVideoClip.position}")
+            Log.d("EditClipUseCase", "delete() - Found target clip at position ${targetVideoClip.position}")
 
             val absoluteDeleteStart = targetVideoClip.position
             val absoluteDeleteEnd = targetVideoClip.position + targetVideoClip.duration
@@ -242,63 +245,9 @@ class EditClipUseCaseImpl @Inject constructor(
                     }
                 }
 
-            val updatedAudioTracks = session.audioTracks.map { track ->
-                val newAudioClipsForTrack = mutableListOf<AudioClip>()
-                for (clip in track.clips) {
-                    val clipAbsoluteStart = clip.position
-                    val clipAbsoluteEnd = clip.position + clip.duration
-
-                    // Case 1: Clip is entirely before the deleted range
-                    if (clipAbsoluteEnd <= absoluteDeleteStart) {
-                        newAudioClipsForTrack.add(clip)
-                    }
-                    // Case 2: Clip is entirely after the deleted range
-                    else if (clipAbsoluteStart >= absoluteDeleteEnd) {
-                        newAudioClipsForTrack.add(clip.copy(position = clip.position - deleteLength))
-                    }
-                    // Case 3: Clip is entirely within the deleted range (remove it)
-                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
-                        // Do not add, effectively deleting it
-                    }
-                    // Case 4: Deleted range is entirely within the clip (split into two)
-                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteEnd) {
-                        val leftClip = clip.copy(
-                            id = UUID.randomUUID().toString(),
-                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
-                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
-                        )
-                        newAudioClipsForTrack.add(leftClip)
-
-                        val rightClip = clip.copy(
-                            id = UUID.randomUUID().toString(),
-                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
-                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
-                            volumeKeyframes = clip.volumeKeyframes
-                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
-                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
-                        )
-                        newAudioClipsForTrack.add(rightClip)
-                    }
-                    // Case 5: Deleted range overlaps the start of the clip (trim start)
-                    else if (clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd) {
-                        newAudioClipsForTrack.add(clip.copy(
-                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
-                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
-                        ))
-                    }
-                    // Case 6: Deleted range overlaps the end of the clip (trim end)
-                    else if (clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteStart < absoluteDeleteEnd && clipAbsoluteEnd > absoluteDeleteEnd) {
-                        newAudioClipsForTrack.add(clip.copy(
-                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
-                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
-                            volumeKeyframes = clip.volumeKeyframes
-                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
-                                .map { it.copy(time = it.time - (absoluteDeleteEnd - absoluteDeleteStart)) }
-                        ))
-                    }
-                }
-                track.copy(clips = newAudioClipsForTrack.sortedBy { it.position })
-            }
+            val updatedAudioTracks = processAudioClipsForTimeRange(
+                session.audioTracks, absoluteDeleteStart, absoluteDeleteEnd, deleteLength
+            )
 
             val updatedSession = session.copy(
                 videoClips = updatedVideoClips.sortedBy { it.position },

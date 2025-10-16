@@ -88,7 +88,8 @@ fun FilmStripView(
                 val clipTrimmedDuration = (clip.endTime - clip.startTime).coerceAtLeast(0L)
                 // 画面上のタイル幅 -> 実時間間隔（ms）に変換（下限/上限で暴れ防止）
                 val intervalMs = ((targetTileWidthPx / zoom).toLong())
-                    .coerceIn(100L, 1000L)
+                    .coerceAtLeast(100L)
+                
                 var currentDisplayMs = 0L
 
                 while (currentDisplayMs < clipTrimmedDuration) {

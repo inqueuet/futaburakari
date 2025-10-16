@@ -1,6 +1,7 @@
 package com.valoser.futaburakari.videoeditor.presentation.ui.editor
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -378,16 +379,16 @@ fun EditorScreen(
                     clipVolume = selectedAudioClip?.volume,
                     isClipMuted = selectedAudioClip?.muted,
                     onDeleteClick = {
-                        android.util.Log.d("EditorScreen", "Delete button clicked, selection: ${state.selection}")
+                        Log.d("EditorScreen", "Delete button clicked, selection: ${state.selection}")
                         when (val selection = state.selection) {
                             is com.valoser.futaburakari.videoeditor.domain.model.Selection.VideoClip -> {
-                                android.util.Log.d("EditorScreen", "Deleting video clip: ${selection.clipId}")
+                                Log.d("EditorScreen", "Deleting video clip: ${selection.clipId}")
                                 viewModel.handleIntent(
                                     com.valoser.futaburakari.videoeditor.domain.model.EditorIntent.DeleteClip(selection.clipId)
                                 )
                             }
                             is com.valoser.futaburakari.videoeditor.domain.model.Selection.AudioClip -> {
-                                android.util.Log.d("EditorScreen", "Deleting audio clip: ${selection.clipId}")
+                                Log.d("EditorScreen", "Deleting audio clip: ${selection.clipId}")
                                 viewModel.handleIntent(
                                     com.valoser.futaburakari.videoeditor.domain.model.EditorIntent.DeleteAudioClip(
                                         selection.trackId,
@@ -396,7 +397,7 @@ fun EditorScreen(
                                 )
                             }
                             else -> {
-                                android.util.Log.w("EditorScreen", "Delete clicked but selection is: ${selection}")
+                                Log.w("EditorScreen", "Delete clicked but selection is: ${selection}")
                             }
                         }
                         viewModel.handleIntent(com.valoser.futaburakari.videoeditor.domain.model.EditorIntent.ClearSelection)

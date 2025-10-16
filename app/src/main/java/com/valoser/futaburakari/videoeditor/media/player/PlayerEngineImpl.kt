@@ -63,7 +63,9 @@ class PlayerEngineImpl @Inject constructor(
 
     /** 通常の prepare */
     override fun prepare(session: EditorSession) {
-        val mediaItems = session.videoClips.map { clip ->
+        val mediaItems = session.videoClips
+            .sortedBy { it.position }
+            .map { clip ->
             MediaItem.Builder()
                 .setUri(clip.source)
                 .setClippingConfiguration(
@@ -81,7 +83,9 @@ class PlayerEngineImpl @Inject constructor(
 
     /** READY になるまで待機する prepare */
     override suspend fun prepareAndAwaitReady(session: EditorSession) {
-        val mediaItems = session.videoClips.map { clip ->
+        val mediaItems = session.videoClips
+            .sortedBy { it.position }
+            .map { clip ->
             MediaItem.Builder()
                 .setUri(clip.source)
                 .setClippingConfiguration(
@@ -105,7 +109,7 @@ class PlayerEngineImpl @Inject constructor(
 
         player.setMediaItems(mediaItems)
         player.prepare()
-        withTimeout(5000) { ready.await() } // 5秒タイムアウト
+        withTimeout(15000) { ready.await() } // ★ 15秒タイムアウトに延長
         lastSession = session
     }
 
@@ -121,8 +125,15 @@ class PlayerEngineImpl @Inject constructor(
             _currentPosition.value = timeMs
             return
         }
+        
 
-        val clips = session.videoClips.sortedBy { it.position }
+
+        // ★ session.videoClipsの順序はMediaItemsの追加順(position順)と一致している必要がある
+        // prepare()で追加した順序と同じものを使用(position順ソート)
+        val clips = session.videoClips
+            .sortedBy { it.position }
+        
+        // タイムライン上の位置からクリップを検索
         val index = clips.indexOfFirst { c ->
             val start = c.position
             val end = c.position + c.duration
@@ -165,13 +176,16 @@ class PlayerEngineImpl @Inject constructor(
         val session = lastSession ?: return player.currentPosition
         val windowIndex = player.currentMediaItemIndex
         val positionInWindow = player.currentPosition
+        
+        // ★ position順にソートして、MediaItem追加順と一致させる
+        val clips = session.videoClips.sortedBy { it.position }
 
-        if (windowIndex < 0 || windowIndex >= session.videoClips.size) {
+        val currentClip = clips.getOrNull(windowIndex)
+        
+        if (currentClip == null) {
+            // フォールバック
             return player.currentPosition
         }
-
-        val clips = session.videoClips.sortedBy { it.position }
-        val currentClip = clips.getOrNull(windowIndex) ?: return player.currentPosition
 
         // タイムライン上の絶対位置 = クリップの開始位置 + ウィンドウ内位置
         return currentClip.position + positionInWindow

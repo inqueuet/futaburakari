@@ -37,13 +37,13 @@ class EditorViewModel @Inject constructor(
     private val _events = Channel<EditorEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    private var suppressPositionSync = false
+    private val _suppressPositionSync = MutableStateFlow(false)
 
     init {
         // PlayerEngineの現在位置をStateに同期
         viewModelScope.launch {
             playerEngine.currentPosition.collect { position ->
-                if (!suppressPositionSync) {
+                if (!_suppressPositionSync.value) {
                     _state.update { it.copy(playhead = position) }
                 }
             }
@@ -208,15 +208,6 @@ class EditorViewModel @Inject constructor(
 
         // Undo用に現在の状態を保存
         sessionManager.saveState(currentSession)
-
-        // SessionManagerの現在のセッションを更新してからUseCaseを呼ぶ
-        sessionManager.updateSession(currentSession)
-            .onSuccess {
-                android.util.Log.d("EditorViewModel", "SessionManager updated successfully")
-            }
-            .onFailure { error ->
-                android.util.Log.e("EditorViewModel", "Failed to update SessionManager: ${error.message}")
-            }
 
         editClipUseCase.delete(intent.clipId)
             .onSuccess { session ->
@@ -553,7 +544,7 @@ class EditorViewModel @Inject constructor(
 
     private fun seekTo(intent: EditorIntent.SeekTo) {
         // 再構築中は UI→Player のシークを抑制してズレを防ぐ
-        if (suppressPositionSync) return
+        if (_suppressPositionSync.value) return
         playerEngine.seekTo(intent.timeMs)
         _state.update { it.copy(playhead = intent.timeMs) }
     }
@@ -830,10 +821,16 @@ class EditorViewModel @Inject constructor(
     targetMs: Long = _state.value.playhead
 ) {
     val wasPlaying = _state.value.isPlaying
-    suppressPositionSync = true
+    _suppressPositionSync.value = true
 
     viewModelScope.launch {
-        val safeTarget = targetMs.coerceIn(0L, session.duration - 1L)
+        // ★ durationが0または1の場合の境界値を適切に処理
+        val maxPosition = session.duration.coerceAtLeast(0L)
+        val safeTarget = if (maxPosition > 0) {
+            targetMs.coerceIn(0L, maxPosition)
+        } else {
+            0L
+        }
         _state.update { it.copy(playhead = safeTarget) }
 
         // 修正版 prepare
@@ -844,7 +841,7 @@ class EditorViewModel @Inject constructor(
 
         // 少し余裕を持って同期解除
         delay(300)
-        suppressPositionSync = false
+        _suppressPositionSync.value = false
     }
 }
 

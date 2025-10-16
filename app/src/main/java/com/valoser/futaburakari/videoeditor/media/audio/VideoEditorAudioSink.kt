@@ -23,6 +23,7 @@ class VideoEditorAudioSink : AudioSink {
     private var sampleRate: Int = 44100
     private var bufferSizeInBytes: Int = 0
     private var framesWritten: Long = 0
+    private var lastPlaybackHeadPosition: Long = 0
     private var sourceEnded: Boolean = false
     private var isPlaying: Boolean = false
     // ↑ フィールドはこの1か所に集約（以下の重複クラス宣言と重複フィールドは削除）
@@ -49,9 +50,26 @@ class VideoEditorAudioSink : AudioSink {
     }
 
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
-        // 再生した（投入した）フレームから概算（同期用途の最小実装）
         if (!this::inputFormat.isInitialized) return 0
-        return (framesWritten * 1_000_000L) / sampleRate
+        
+        // ⭐ 実際に再生された位置を取得
+        val at = audioTrack ?: return 0
+        if (!isPlaying) return 0
+        
+        // ★ ラップアラウンド対策
+        val currentPosition = at.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+        
+        // 巻き戻りを検出(ラップアラウンド発生)
+        if (currentPosition < lastPlaybackHeadPosition) {
+            // 2^32フレーム分を加算
+            val wrappedFrames = (1L shl 32) + currentPosition
+            lastPlaybackHeadPosition = currentPosition
+            return (wrappedFrames * 1_000_000L) / sampleRate
+        }
+        
+        lastPlaybackHeadPosition = currentPosition
+        val playedFrames = currentPosition
+        return (playedFrames * 1_000_000L) / sampleRate
     }
 
     override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {

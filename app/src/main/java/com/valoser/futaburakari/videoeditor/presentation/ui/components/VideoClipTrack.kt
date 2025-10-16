@@ -1,5 +1,6 @@
 package com.valoser.futaburakari.videoeditor.presentation.ui.components
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -95,16 +96,17 @@ fun VideoClipTrack(
                                 if (mode != EditMode.RANGE_SELECT) {
                                     detectDragGestures(
                                         onDragStart = { offset ->
+                                            try {
                                             val clipWidth = clipWidthDp.toPx()
                                             val handleWidth = 20f // ハンドル幅
 
                                             when {
                                                 offset.x < handleWidth -> {
-                                                    // 左ハンドル（トリムスタート）
+                                                    // 左ハンドル(トリムスタート)
                                                     trimStartOffset = offset.x
                                                 }
                                                 offset.x > clipWidth - handleWidth -> {
-                                                    // 右ハンドル（トリムエンド）
+                                                    // 右ハンドル(トリムエンド)
                                                     trimEndOffset = offset.x - clipWidth
                                                 }
                                                 else -> {
@@ -112,43 +114,58 @@ fun VideoClipTrack(
                                                     dragOffset = Offset.Zero
                                                 }
                                             }
+                                            } catch (e: Exception) {
+                                                Log.e("VideoClipTrack", "Error in drag start", e)
+                                                dragOffset = Offset.Zero
+                                                trimStartOffset = 0f
+                                                trimEndOffset = 0f
+                                            }
                                         },
                                         onDrag = { change, dragAmount ->
-                                            change.consume()
-                                            when {
-                                                trimStartOffset != 0f -> {
-                                                    // トリムスタート処理
-                                                    val newStart = clip.startTime + (dragAmount.x / zoom).toLong()
-                                                    onClipTrimmed(
-                                                        clip.id,
-                                                        newStart.coerceAtLeast(0L),
-                                                        clip.endTime
-                                                    )
+                                            try {
+                                                change.consume()
+                                                when {
+                                                    trimStartOffset != 0f -> {
+                                                        // トリムスタート処理
+                                                        val newStart = clip.startTime + (dragAmount.x / zoom).toLong()
+                                                        onClipTrimmed(
+                                                            clip.id,
+                                                            newStart.coerceAtLeast(0L),
+                                                            clip.endTime
+                                                        )
+                                                    }
+                                                    trimEndOffset != 0f -> {
+                                                        // トリムエンド処理
+                                                        val newEnd = clip.endTime + (dragAmount.x / zoom).toLong()
+                                                        onClipTrimmed(
+                                                            clip.id,
+                                                            clip.startTime,
+                                                            newEnd.coerceAtMost(clip.sourceEndTime)
+                                                        )
+                                                    }
+                                                    else -> {
+                                                        // 移動処理
+                                                        dragOffset += dragAmount
+                                                    }
                                                 }
-                                                trimEndOffset != 0f -> {
-                                                    // トリムエンド処理
-                                                    val newEnd = clip.endTime + (dragAmount.x / zoom).toLong()
-                                                    onClipTrimmed(
-                                                        clip.id,
-                                                        clip.startTime,
-                                                        newEnd.coerceAtMost(clip.sourceEndTime)
-                                                    )
-                                                }
-                                                else -> {
-                                                    // 移動処理
-                                                    dragOffset += dragAmount
-                                                }
+                                            } catch (e: Exception) {
+                                                Log.e("VideoClipTrack", "Error in drag", e)
                                             }
                                         },
                                         onDragEnd = {
-                                            if (dragOffset != Offset.Zero) {
-                                                val newPosition = (clip.position + (dragOffset.x / zoom).toLong())
-                                                    .coerceAtLeast(0L)
-                                                onClipMoved(clip.id, newPosition)
+                                            try {
+                                                if (dragOffset != Offset.Zero) {
+                                                    val newPosition = (clip.position + (dragOffset.x / zoom).toLong())
+                                                        .coerceAtLeast(0L)
+                                                    onClipMoved(clip.id, newPosition)
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.e("VideoClipTrack", "Error in drag end", e)
+                                            } finally {
                                                 dragOffset = Offset.Zero
+                                                trimStartOffset = 0f
+                                                trimEndOffset = 0f
                                             }
-                                            trimStartOffset = 0f
-                                            trimEndOffset = 0f
                                         }
                                     )
                                 }
