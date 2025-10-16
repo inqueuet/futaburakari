@@ -349,28 +349,44 @@ private class VideoProcessor(
                         if (doRender) {
                             Log.d(TAG, "processClip: Rendering frame $framesInClip, pts=${adjustedPts}us")
                             decoder.releaseOutputBuffer(outputBufferIndex, doRender)
+                            
                             withContext(glCoroutineContext) {
-                                // GL スレッドで描画
-                                decoderOutputSurface.awaitNewImage(encoderInputSurface)
+                                // ★ 1. デコーダーコンテキストに明示的に切り替え
+                                if (!EGL14.eglMakeCurrent(
+                                    decoderOutputSurface.eglDisplay, 
+                                    decoderOutputSurface.eglSurface, 
+                                    decoderOutputSurface.eglSurface, 
+                                    decoderOutputSurface.eglContext
+                                )) {
+                                    throw RuntimeException("Failed to switch to decoder context")
+                                }
+                                
+                                // ★ 2. フレーム待機とテクスチャ更新（デコーダーコンテキストで）
+                                decoderOutputSurface.awaitNewImageInternal()
+                                
+                                // ★ 3. エンコーダーコンテキストに切り替えて描画
+                                encoder.makeCurrent()
                                 decoderOutputSurface.drawImage(encoderInputSurface)
-                                // PTS を ns で渡してから swap
+                                
+                                // ★ 4. PTSを設定してswap
                                 encoderInputSurface.setPresentationTime(reusableBufferInfo.presentationTimeUs * 1000L)
                                 encoderInputSurface.swapBuffers()
-                                // ===== GPU フェンスで描画完了を待つ =====
+                                
+                                // ★ 5. GPUフェンスで同期
                                 val sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
                                 if (sync != 0L) {
                                     val timeoutNs = 50_000_000L // 50ms
-                                    val wait = GLES30.glClientWaitSync(sync, 0, timeoutNs)
-                                    GLES30.glDeleteSync(sync)
-                                    if (wait == GLES30.GL_TIMEOUT_EXPIRED) {
-                                        Log.w(TAG, "GL fence wait timed out for frame $framesInClip (proceeding)")
+                                    var waitResult = GLES30.GL_UNSIGNALED
+                                    while (waitResult != GLES30.GL_SIGNALED && waitResult != GLES30.GL_TIMEOUT_EXPIRED) {
+                                        waitResult = GLES30.glClientWaitSync(sync, 0, timeoutNs)
                                     }
+                                    GLES30.glDeleteSync(sync)
                                 } else {
                                     Log.w(TAG, "glFenceSync returned 0 (no sync created)")
                                 }
-                                // ===== ここまでフェンス待ち =====
                             }
-                            // フェンス待ち後にエンコーダ出力をノンブロッキングで取得
+                            
+                            // フェンス待ち後にエンコーダー出力をノンブロッキングで取得
                             var produced = drainEncoderNonBlocking()
                             if (produced == 0) {
                                 repeat(2) {

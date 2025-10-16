@@ -270,9 +270,19 @@ private fun updateVertexBuffer() {
 }
 
     fun awaitNewImage(encoder: EncoderInputSurface) {
+        // ★ 現在のコンテキストを保存
+        val prevDisplay = EGL14.eglGetCurrentDisplay()
+        val prevDrawSurface = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW)
+        val prevReadSurface = EGL14.eglGetCurrentSurface(EGL14.EGL_READ)
+        val prevContext = EGL14.eglGetCurrentContext()
+
         // デコーダの egl を current に
         if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-            throw RuntimeException("eglMakeCurrent(decoder) failed")
+            val error = EGL14.eglGetError()
+            Log.e(TAG, "eglMakeCurrent(decoder) failed: 0x${Integer.toHexString(error)}")
+            Log.e(TAG, "  prevContext=${prevContext}, prevDisplay=${prevDisplay}")
+            Log.e(TAG, "  trying to set: context=${eglContext}, display=${eglDisplay}")
+            throw RuntimeException("eglMakeCurrent(decoder) failed: 0x${Integer.toHexString(error)}")
         }
         val timeoutMs = 2500L
         val start = System.nanoTime()
