@@ -7,6 +7,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
+import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,6 +29,7 @@ class PlayerEngineImpl @Inject constructor(
 
     // 直近に準備したセッションを保持（絶対時刻→ウィンドウ変換に使用）
     private var lastSession: EditorSession? = null
+    private var sortedClips: List<VideoClip> = emptyList()
 
     private val _isPlaying = MutableStateFlow(false)
     override val isPlaying: StateFlow<Boolean> = _isPlaying
@@ -57,7 +59,9 @@ class PlayerEngineImpl @Inject constructor(
             // ExoPlayerのウィンドウ内位置をタイムライン絶対位置に変換
             val absolutePosition = convertToAbsolutePosition()
             _currentPosition.value = absolutePosition
-            handler.postDelayed(positionUpdateRunnable, 100) // 100ms間隔で位置更新
+            if (_isPlaying.value) {
+                handler.postDelayed(positionUpdateRunnable, POSITION_UPDATE_INTERVAL_MS)
+            }
         }
     }
 
@@ -79,6 +83,7 @@ class PlayerEngineImpl @Inject constructor(
         player.setMediaItems(mediaItems)
         player.prepare()
         lastSession = session
+        sortedClips = session.videoClips.sortedBy { it.position }
     }
 
     /** READY になるまで待機する prepare */
@@ -111,6 +116,7 @@ class PlayerEngineImpl @Inject constructor(
         player.prepare()
         withTimeout(15000) { ready.await() } // ★ 15秒タイムアウトに延長
         lastSession = session
+        sortedClips = session.videoClips.sortedBy { it.position }
     }
 
     override fun play() { player.play() }
@@ -125,13 +131,9 @@ class PlayerEngineImpl @Inject constructor(
             _currentPosition.value = timeMs
             return
         }
-        
-
-
         // ★ session.videoClipsの順序はMediaItemsの追加順(position順)と一致している必要がある
         // prepare()で追加した順序と同じものを使用(position順ソート)
-        val clips = session.videoClips
-            .sortedBy { it.position }
+        val clips = ensureSortedClips(session)
         
         // タイムライン上の位置からクリップを検索
         val index = clips.indexOfFirst { c ->
@@ -160,6 +162,7 @@ class PlayerEngineImpl @Inject constructor(
         player.stop()
         player.clearMediaItems()
         lastSession = null
+        sortedClips = emptyList()
         _currentPosition.value = 0L
         _isPlaying.value = false
     }
@@ -176,9 +179,7 @@ class PlayerEngineImpl @Inject constructor(
         val session = lastSession ?: return player.currentPosition
         val windowIndex = player.currentMediaItemIndex
         val positionInWindow = player.currentPosition
-        
-        // ★ position順にソートして、MediaItem追加順と一致させる
-        val clips = session.videoClips.sortedBy { it.position }
+        val clips = ensureSortedClips(session)
 
         val currentClip = clips.getOrNull(windowIndex)
         
@@ -189,5 +190,17 @@ class PlayerEngineImpl @Inject constructor(
 
         // タイムライン上の絶対位置 = クリップの開始位置 + ウィンドウ内位置
         return currentClip.position + positionInWindow
+    }
+
+    private companion object {
+        private const val POSITION_UPDATE_INTERVAL_MS = 33L
+    }
+
+    private fun ensureSortedClips(session: EditorSession): List<VideoClip> {
+        val current = sortedClips
+        if (current.isNotEmpty() && current.size == session.videoClips.size) {
+            return current
+        }
+        return session.videoClips.sortedBy { it.position }.also { sortedClips = it }
     }
 }

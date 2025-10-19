@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * タイムラインビュー
@@ -65,52 +66,52 @@ fun TimelineView(
     val horizontalScrollState = rememberScrollState()
     // ① 自動スクロール中は onSeek を抑制するためのフラグ
     var isAutoScrolling by rememberSaveable { mutableStateOf(false) }
+    var isUserScrolling by remember { mutableStateOf(false) }
     val timelineDuration = session.duration
     val coroutineScope = rememberCoroutineScope()
 
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
-        // ※ 固定プレイヘッド用の左右パディングは廃止（実座標プレイヘッドに統一）
+        val viewportWidthDp = maxWidth
+        val halfViewportDp = viewportWidthDp / 2
 
         // 連続スクロールをやめ、しきい値を越えた時だけ小さくスクロールする
         val scrollMutex = remember { androidx.compose.foundation.MutatorMutex() }
         // 直近の playhead を記録してループ/巻き戻りを検知（初期値は現在位置）
         var lastPlayhead by rememberSaveable { mutableStateOf(playhead) }
-        var isScrolling by remember { mutableStateOf(false) }
-        LaunchedEffect(playhead, zoom, timelineDuration, isPlaying) {
-            if (!isPlaying) return@LaunchedEffect  // 停止中はスクロール不要
-            val contentPx = (timelineDuration * zoom).coerceAtLeast(0f)
-            val viewportWidthPx = with(density) { maxWidth.toPx() }
-            val maxScroll = (contentPx - viewportWidthPx).coerceAtLeast(0f)
-            val playheadXPx = playhead * zoom
-            val currentScroll = horizontalScrollState.value.toFloat()
 
-            // 画面内でのプレイヘッド相対位置
-            val xInView = playheadXPx - currentScroll
-            val leftThreshold  = viewportWidthPx * 0.20f
-            val rightThreshold = viewportWidthPx * 0.80f
+        // ユーザースクロール状態を監視
+        LaunchedEffect(Unit) {
+            snapshotFlow { horizontalScrollState.isScrollInProgress }
+                .collectLatest { isScrollInProgress ->
+                    isUserScrolling = isScrollInProgress
+                }
+        }
+
+        LaunchedEffect(playhead, zoom, timelineDuration, isPlaying) {
+            val contentPx = (timelineDuration * zoom).coerceAtLeast(0f)
+            val maxScroll = contentPx.coerceAtLeast(0f)
+            val desiredScroll = (playhead * zoom).coerceIn(0f, maxScroll)
+            val currentScroll = horizontalScrollState.value.toFloat()
 
             // ループ/巻き戻り（例: 1秒以上逆行）を検知したら、このフレームは自動スクロールしない
             val jumpedBack = (lastPlayhead - playhead) > 1000L
             lastPlayhead = playhead
-            if (jumpedBack) return@LaunchedEffect
+            if (jumpedBack && isPlaying) return@LaunchedEffect
 
+            val allowAutoCenter = isPlaying || !isUserScrolling
+            if (!allowAutoCenter) return@LaunchedEffect
 
-            // しきい値を越えたら、25%位置にくる最小量だけ即時スクロール
-            if (xInView < leftThreshold || xInView > rightThreshold) {
-                val targetInView = viewportWidthPx * 0.25f
-                val desiredScroll = (playheadXPx - targetInView).coerceIn(0f, maxScroll)
-                // 自動スクロールは「前方向のみ」適用（後退は無視して揺り戻しを防止）
-                if (desiredScroll <= currentScroll) return@LaunchedEffect
-                if (isScrolling) return@LaunchedEffect  // 既にスクロール中なら無視
-                isScrolling = true
-                isAutoScrolling = true
-                scrollMutex.mutate {
-                    horizontalScrollState.scrollTo(desiredScroll.toInt())
-                }
-                isAutoScrolling = false
-                isScrolling = false
+            if (abs(desiredScroll - currentScroll) <= 1f) return@LaunchedEffect
+
+            isAutoScrolling = true
+            scrollMutex.mutate {
+                val clampedTarget = desiredScroll
+                    .coerceIn(0f, maxScroll)
+                    .roundToInt()
+                horizontalScrollState.scrollTo(clampedTarget)
             }
+            isAutoScrolling = false
         }
 
         // ③ 1本指スクロールを含む【すべてのスクロール位置の変化】で再生位置を更新
@@ -126,17 +127,18 @@ fun TimelineView(
                 }
                 .distinctUntilChanged()
                 .debounce(30)  // ★ debounce時間を短縮して応答性向上
-                .filter { !isAutoScrolling }                // 自動スクロールによるループ回避
+                .filter { !isAutoScrolling && isUserScrolling }                // 自動スクロールによるループ回避
                 .collectLatest { t ->
                     // ⭐ 閾値を拡大してさらに安定化
                     if (!isPlaying && kotlin.math.abs(t - playhead) > 50L) {
-                        onSeek(t)
+                        onSeek(t.coerceIn(0L, timelineDuration))
                     }
                 }
         }
 
         val totalContentWidth = (timelineDuration * zoom).coerceAtLeast(0f)
         val totalContentWidthDp = with(density) { totalContentWidth.toDp() }
+        val paddedContentWidthDp = totalContentWidthDp + viewportWidthDp
 
         // タイムラインコンテンツ
         Column(
@@ -153,17 +155,23 @@ fun TimelineView(
                             horizontalScrollState.dispatchRawDelta(-pan.x)
                             // 次のスクロール値から赤線下の時刻 = scroll/zoom を計算して通知
                             val nextScroll = horizontalScrollState.value
-                            onSeek((nextScroll / newZoom).toLong())
+                            val targetTime = (nextScroll / newZoom)
+                                .toLong()
+                                .coerceIn(0L, timelineDuration)
+                            onSeek(targetTime)
                         }
                     }
                 }
         ) {
-            // Boxに左右非対称のパディングを追加
+            // 中央固定プレイヘッド用に左右へ同じ余白を追加
             Box(
                 modifier = Modifier
-                    .width(totalContentWidthDp)
+                    .width(paddedContentWidthDp)
             ) {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .padding(horizontal = halfViewportDp)
+                ) {
                     // フィルムストリップ（64dp高さ）
                     FilmStripView(
                         clips = session.videoClips,
@@ -266,17 +274,13 @@ fun TimelineView(
             }
         }
 
-        // プレイヘッド（赤線）を実座標で描画：scroll に依存して等速で動く
-        val playheadXDp = with(density) {
-            (playhead * zoom - horizontalScrollState.value).toDp()
-        }
+        // プレイヘッド（赤線）は常に中央に固定表示
         Divider(
             color = Color.Red,
             modifier = Modifier
                 .fillMaxHeight()
                 .width(2.dp)
-                .align(Alignment.TopStart)
-                .offset(x = playheadXDp)
+                .align(Alignment.TopCenter)
         )
     }
 }
