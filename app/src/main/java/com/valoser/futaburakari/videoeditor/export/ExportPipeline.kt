@@ -19,7 +19,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlin.coroutines.CoroutineContext
+nihimport kotlin.math.max
+import kotlin.math.min
 import android.opengl.Matrix
+import android.os.SystemClock
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -265,6 +268,7 @@ private class VideoProcessor(
 ) {
     private val TAG = "VideoProcessor"
     private val TIMEOUT_US: Long = 10000L
+    private val EOS_DRAIN_TIMEOUT_MS = 4_000L
 
     data class Result(val durationUs: Long)
     private data class EncodedSample(val data: ByteArray, val ptsUs: Long, val flags: Int)
@@ -509,13 +513,26 @@ private class VideoProcessor(
 
         Log.d(TAG, "drainEncoder: Starting to drain encoder (endOfStream=$endOfStream)")
         var outputCount = 0
+        val eosStartRealtime = if (endOfStream) SystemClock.elapsedRealtime() else 0L
         while (true) {
             val encoderStatus = encoder.dequeueOutputBuffer(reusableBufferInfo, TIMEOUT_US)
             Log.d(TAG, "drainEncoder: encoderStatus=$encoderStatus")
 
             if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
                 Log.d(TAG, "drainEncoder: INFO_TRY_AGAIN_LATER, endOfStream=$endOfStream")
-                if (!endOfStream) break
+                if (!endOfStream) {
+                    break
+                } else {
+                    val waitedMs = SystemClock.elapsedRealtime() - eosStartRealtime
+                    if (waitedMs >= EOS_DRAIN_TIMEOUT_MS) {
+                        Log.w(
+                            TAG,
+                            "drainEncoder: timed out waiting for EOS after ${waitedMs}ms, forcing completion with $outputCount pending samples"
+                        )
+                        break
+                    }
+                    continue
+                }
             } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 Log.d(TAG, "drainEncoder: INFO_OUTPUT_FORMAT_CHANGED")
                 // should happen before receiving buffers, and should only happen once
@@ -602,6 +619,7 @@ private class AudioProcessor(
 ) {
     private val TAG = "AudioProcessor"
     private val TIMEOUT_US: Long = 10000L
+    private val EOS_DRAIN_TIMEOUT_MS = 4_000L
 
     data class Result(val durationUs: Long)
 
@@ -916,41 +934,77 @@ private class AudioProcessor(
         if (keyframes.isEmpty()) return
 
         val shortBuffer = buffer.order(ByteOrder.nativeOrder()).asShortBuffer()
-        val numSamples = info.size / 2 / channelCount
+        val totalSamples = info.size / 2 / channelCount
+        if (totalSamples <= 0) return
 
-        var previousKeyframe = keyframes.first()
-        var nextIndex = 1
-        var nextKeyframe = if (nextIndex < keyframes.size) keyframes[nextIndex] else null
+        val samples = ShortArray(totalSamples * channelCount)
+        shortBuffer.get(samples)
 
-        for (i in 0 until numSamples) {
-            val sampleTimeUs = info.presentationTimeUs + (i.toLong() * 1_000_000 / sampleRate)
-            val sampleTimeMs = sampleTimeUs / 1000
+        val startTimeUs = info.presentationTimeUs
+        val startTimeMs = startTimeUs / 1000
 
-            while (nextKeyframe != null && sampleTimeMs >= nextKeyframe.time) {
-                previousKeyframe = nextKeyframe!!
-                nextIndex++
-                nextKeyframe = if (nextIndex < keyframes.size) keyframes[nextIndex] else null
+        var frameIndex = 0
+        var keyframeIndex = 0
+
+        while (frameIndex < totalSamples) {
+            while (
+                keyframeIndex + 1 < keyframes.size &&
+                keyframes[keyframeIndex + 1].time <= startTimeMs + (frameIndex * 1_000L) / sampleRate
+            ) {
+                keyframeIndex++
             }
 
-            val volume = when {
-                sampleTimeMs <= previousKeyframe.time -> previousKeyframe.value
-                nextKeyframe == null -> previousKeyframe.value
-                nextKeyframe.time == previousKeyframe.time -> nextKeyframe.value
-                else -> {
-                    val fraction =
-                        (sampleTimeMs - previousKeyframe.time).toFloat() / (nextKeyframe.time - previousKeyframe.time)
-                    previousKeyframe.value + fraction * (nextKeyframe.value - previousKeyframe.value)
+            val currentKeyframe = keyframes[keyframeIndex]
+            val nextKeyframe = keyframes.getOrNull(keyframeIndex + 1)
+
+            val currentTimeMs = startTimeMs + (frameIndex * 1_000L) / sampleRate
+            val segmentEndTimeMs = nextKeyframe?.time ?: Long.MAX_VALUE
+
+            val remainingFrames = totalSamples - frameIndex
+            val framesUntilNext = if (segmentEndTimeMs == Long.MAX_VALUE) remainingFrames else {
+                val deltaMs = segmentEndTimeMs - currentTimeMs
+                if (deltaMs <= 0) 1 else min(remainingFrames.toLong(), (deltaMs * sampleRate) / 1000L).toInt().coerceAtLeast(1)
+            }
+
+            val framesThisSegment = min(remainingFrames, framesUntilNext)
+
+            val totalSegmentFrames = when {
+                nextKeyframe == null -> 0L
+                nextKeyframe.time == currentKeyframe.time -> 0L
+                else -> max(1L, (nextKeyframe.time - currentKeyframe.time) * sampleRate / 1000L)
+            }
+
+            val offsetFromCurrent = max(0L, (currentTimeMs - currentKeyframe.time) * sampleRate / 1000L)
+            val slope = if (nextKeyframe == null || totalSegmentFrames == 0L) {
+                0f
+            } else {
+                (nextKeyframe.value - currentKeyframe.value) / totalSegmentFrames.toFloat()
+            }
+
+            var currentVolume = if (nextKeyframe == null || totalSegmentFrames == 0L) {
+                currentKeyframe.value
+            } else {
+                currentKeyframe.value + slope * offsetFromCurrent
+            }
+
+            val baseIndex = frameIndex * channelCount
+            for (i in 0 until framesThisSegment) {
+                val volume = currentVolume
+                val frameBase = baseIndex + i * channelCount
+                for (c in 0 until channelCount) {
+                    val sample = samples[frameBase + c]
+                    samples[frameBase + c] = (sample * volume).toInt()
+                        .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                        .toShort()
                 }
+                currentVolume += slope
             }
 
-            for (c in 0 until channelCount) {
-                val index = i * channelCount + c
-                val sample = shortBuffer.get(index)
-                val newSample = (sample * volume).toInt()
-                    .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
-                shortBuffer.put(index, newSample)
-            }
+            frameIndex += framesThisSegment
         }
+
+        shortBuffer.position(0)
+        shortBuffer.put(samples)
     }
 
     fun queueToAudioEncoder(data: ByteBuffer, info: MediaCodec.BufferInfo) {
@@ -984,6 +1038,7 @@ private class AudioProcessor(
     fun drainAudioEncoder(endOfStream: Boolean): Boolean {
         if (encoder == null) return true // If no encoder, consider it drained
         var encoderOutputAvailable = false
+        val eosStartRealtime = if (endOfStream) SystemClock.elapsedRealtime() else 0L
         try {
             while (true) {
                 val encoderStatus =
@@ -994,7 +1049,19 @@ private class AudioProcessor(
                             encoderOutputAvailable = false
                             break
                         } else {
+                            val waitedMs = SystemClock.elapsedRealtime() - eosStartRealtime
+                            if (waitedMs >= EOS_DRAIN_TIMEOUT_MS) {
+                                Log.w(
+                                    TAG,
+                                    "drainAudioEncoder: timed out waiting for EOS after ${waitedMs}ms, muting audio and continuing with video-only export"
+                                )
+                                failed = true
+                                pendingAudio.clear()
+                                muxerStartCallback()
+                                return true
+                            }
                             encoderOutputAvailable = true // Keep trying if EOS
+                            continue
                         }
                     }
 
