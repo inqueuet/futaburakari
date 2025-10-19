@@ -31,12 +31,15 @@ class EncoderInputSurface(
         }
         EglRefManager.addRef(eglDisplay)
 
+        // EGLExt.EGL_RECORDABLE_ANDROID flag is required for MediaCodec input surfaces on many devices.
         val attribList = intArrayOf(
             EGL14.EGL_RED_SIZE, 8,
             EGL14.EGL_GREEN_SIZE, 8,
             EGL14.EGL_BLUE_SIZE, 8,
+            EGL14.EGL_ALPHA_SIZE, 8,
             EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
             EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+            EGLExt.EGL_RECORDABLE_ANDROID, 1,
             EGL14.EGL_NONE
         )
         val configs = arrayOfNulls<EGLConfig>(1)
@@ -295,6 +298,7 @@ private fun updateVertexBuffer() {
         }
         
         fun awaitNewImage(encoder: EncoderInputSurface) {
+            Log.v(TAG, "awaitNewImage: START - frameAvailable=$frameAvailable")
             // ★ 現在のコンテキストを保存
             val prevDisplay = EGL14.eglGetCurrentDisplay()
         val prevDrawSurface = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW)
@@ -302,6 +306,7 @@ private fun updateVertexBuffer() {
         val prevContext = EGL14.eglGetCurrentContext()
 
         // デコーダの egl を current に
+        Log.v(TAG, "awaitNewImage: making decoder context current")
         if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
             val error = EGL14.eglGetError()
             Log.e(TAG, "eglMakeCurrent(decoder) failed: 0x${Integer.toHexString(error)}")
@@ -309,24 +314,39 @@ private fun updateVertexBuffer() {
             Log.e(TAG, "  trying to set: context=${eglContext}, display=${eglDisplay}")
             throw RuntimeException("eglMakeCurrent(decoder) failed: 0x${Integer.toHexString(error)}")
         }
+        Log.v(TAG, "awaitNewImage: decoder context is now current")
         val timeoutMs = 2500L
         val start = System.nanoTime()
+        var waitIterations = 0
         synchronized(frameSync) {
+            Log.v(TAG, "awaitNewImage: entering frameSync, frameAvailable=$frameAvailable")
             while (!frameAvailable) {
+                waitIterations++
+                if (waitIterations % 20 == 0) {
+                    val elapsed = (System.nanoTime() - start) / 1_000_000
+                    Log.d(TAG, "awaitNewImage: still waiting for frame after ${elapsed}ms (iteration $waitIterations)")
+                }
                 frameSync.wait(50)
                 if ((System.nanoTime() - start) / 1_000_000 > timeoutMs) {
-                    throw RuntimeException("frame wait timed out")
+                    val elapsed = (System.nanoTime() - start) / 1_000_000
+                    Log.e(TAG, "awaitNewImage: frame wait timed out after ${elapsed}ms ($waitIterations iterations)")
+                    throw RuntimeException("frame wait timed out after ${elapsed}ms")
                 }
             }
             frameAvailable = false
-        } 
+            Log.v(TAG, "awaitNewImage: frame received after $waitIterations iterations")
+        }
+        Log.v(TAG, "awaitNewImage: calling updateTexImage")
         surfaceTexture.updateTexImage()
+        Log.v(TAG, "awaitNewImage: calling getTransformMatrix")
         surfaceTexture.getTransformMatrix(texMatrix)
-        
+
         // ★ 元のコンテキストに戻す
+        Log.v(TAG, "awaitNewImage: restoring previous context")
         if (prevContext != EGL14.EGL_NO_CONTEXT && prevDisplay != EGL14.EGL_NO_DISPLAY) {
             EGL14.eglMakeCurrent(prevDisplay, prevDrawSurface, prevReadSurface, prevContext)
         }
+        Log.v(TAG, "awaitNewImage: COMPLETE")
     }
 
     fun drawImage(encoder: EncoderInputSurface) {

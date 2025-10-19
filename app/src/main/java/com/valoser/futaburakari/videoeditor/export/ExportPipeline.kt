@@ -25,6 +25,7 @@ import android.opengl.Matrix
 import android.os.SystemClock
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Bundle
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -52,6 +53,8 @@ class ExportPipelineImpl @Inject constructor(
         preset: ExportPreset,
         outputUri: Uri
     ): Flow<ExportProgress> = flow {
+        val totalDurationUs = session.videoClips.sumOf { (it.duration / it.speed).toLong() } * 1000
+        val totalFrames = (totalDurationUs / 1_000_000f * preset.frameRate).toInt()
         // ✅ エクスポート処理全体をIOディスパッチャで実行
         withContext(Dispatchers.IO) {
             Log.d(TAG, "=== Export Started ===")
@@ -61,6 +64,16 @@ class ExportPipelineImpl @Inject constructor(
                 Log.d(TAG, "Clip $index: startTime=${clip.startTime}ms, endTime=${clip.endTime}ms, source=${clip.source}")
             }
             Log.d(TAG, "Preset: ${preset.width}x${preset.height} @ ${preset.frameRate}fps")
+
+            val sourceResolution = detectSourceResolution(session)
+            val targetWidth = sourceResolution?.first ?: preset.width
+            val targetHeight = sourceResolution?.second ?: preset.height
+            if (sourceResolution != null) {
+                Log.d(TAG, "Detected source resolution: ${sourceResolution.first}x${sourceResolution.second}")
+            } else {
+                Log.w(TAG, "Failed to detect source resolution; falling back to preset size.")
+            }
+            Log.d(TAG, "Export resolution: ${targetWidth}x${targetHeight}")
 
             val pfd = context.contentResolver.openFileDescriptor(outputUri, "w")
                 ?: throw IOException("Failed to open file descriptor for $outputUri")
@@ -76,7 +89,7 @@ class ExportPipelineImpl @Inject constructor(
             lateinit var videoProcessor: VideoProcessor
             lateinit var audioProcessor: AudioProcessor
 
-            val videoEncoder = VideoProcessor.createEncoder(preset)
+            val videoEncoder = VideoProcessor.createEncoder(preset, targetWidth, targetHeight)
             val audioEncoder = AudioProcessor.createEncoder(preset)
             // ★ セッション内に本当に音声が存在するかで判定する(MediaExtractor は Closeable ではないので try/finally)
             val hasAudioNeeded = (audioEncoder != null) && session.videoClips.any { clip ->
@@ -124,8 +137,6 @@ class ExportPipelineImpl @Inject constructor(
                 }
             }
 
-            val totalDurationUs = session.videoClips.sumOf { (it.duration / it.speed).toLong() } * 1000
-            val totalFrames = (totalDurationUs / 1_000_000f * preset.frameRate).toInt()
             val framesProcessed = java.util.concurrent.atomic.AtomicInteger(0)
 
             // ✅ EGL初期化はGLスレッドで実行
@@ -133,31 +144,19 @@ class ExportPipelineImpl @Inject constructor(
             var decoderSurface: DecoderOutputSurface? = null
             withContext(glDispatcher) {
                 encoderInputSurface.setup()
-                decoderSurface = DecoderOutputSurface(
-                    preset.width,
-                    preset.height,
+                val surface = DecoderOutputSurface(
+                    targetWidth,
+                    targetHeight,
                     encoderInputSurface.eglContext()
-                ).apply { setup() }
+                )
+                surface.setup()
+                sourceResolution?.let { (srcWidth, srcHeight) ->
+                    surface.setSourceAspectRatio(srcWidth, srcHeight)
+                }
+                decoderSurface = surface
             }
             val activeDecoderSurface = decoderSurface
                 ?: throw IllegalStateException("Decoder surface initialization failed")
-
-            // ★ 最初のクリップから元動画のサイズを取得してアスペクト比を設定
-            if (session.videoClips.isNotEmpty()) {
-                val firstClip = session.videoClips[0]
-                val extractor = MediaExtractor().apply { setDataSource(context, firstClip.source, null) }
-                val videoTrackIndex = extractor.findTrack("video/")
-                if (videoTrackIndex != null) {
-                    val format = extractor.getTrackFormat(videoTrackIndex)
-                    val srcWidth = format.getInteger(MediaFormat.KEY_WIDTH)
-                    val srcHeight = format.getInteger(MediaFormat.KEY_HEIGHT)
-                    withContext(glDispatcher) {
-                        activeDecoderSurface.setSourceAspectRatio(srcWidth, srcHeight)
-                    }
-                    Log.d(TAG, "Source video size: ${srcWidth}x${srcHeight}")
-                }
-                extractor.release()
-            }
 
             // Build processors (the REAL classes below in this file)
             videoProcessor = VideoProcessor(context, videoEncoder, muxer, muxerLock, startMuxerIfReady, glDispatcher)
@@ -175,6 +174,16 @@ class ExportPipelineImpl @Inject constructor(
 
             try {
                 videoEncoder.start()
+                runCatching {
+                    videoEncoder.setParameters(Bundle().apply {
+                        putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+                    })
+                }.onFailure {
+                    Log.w(TAG, "videoEncoder.setParameters(PARAMETER_KEY_REQUEST_SYNC_FRAME) failed", it)
+                }
+
+                Log.d(TAG, "Video encoder started, waiting for INFO_OUTPUT_FORMAT_CHANGED event...")
+
                 audioEncoder?.start()
 
                 var videoPtsOffsetUs = 0L
@@ -267,9 +276,38 @@ class ExportPipelineImpl @Inject constructor(
             }
 
             // ✅ 最終進捗を送信
-            emit(ExportProgress(totalFrames, totalFrames, 100f, 0))
-            Log.d(TAG, "Export finished.")
         } // withContext(Dispatchers.IO)
+        emit(ExportProgress(totalFrames, totalFrames, 100f, 0))
+        Log.d(TAG, "Export finished.")
+    }
+
+    private fun detectSourceResolution(session: EditorSession): Pair<Int, Int>? {
+        session.videoClips.forEach { clip ->
+            val extractor = MediaExtractor()
+            try {
+                extractor.setDataSource(context, clip.source, null)
+                val videoTrackIndex = extractor.findTrack("video/") ?: return@forEach
+                val format = extractor.getTrackFormat(videoTrackIndex)
+                var width = format.getInteger(MediaFormat.KEY_WIDTH)
+                var height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                val rotation = if (format.containsKey(MediaFormat.KEY_ROTATION)) {
+                    format.getInteger(MediaFormat.KEY_ROTATION)
+                } else {
+                    0
+                }
+                if (rotation == 90 || rotation == 270) {
+                    val tmp = width
+                    width = height
+                    height = tmp
+                }
+                return width to height
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse source resolution for ${clip.source}", e)
+            } finally {
+                extractor.release()
+            }
+        }
+        return null
     }
 }
 
@@ -373,46 +411,77 @@ private class VideoProcessor(
 
                         if (doRender) {
                             Log.d(TAG, "processClip: Rendering frame $framesInClip, pts=${adjustedPts}us")
+
+                            // ★ レンダリング前に可能な範囲でエンコーダーの出力を捌いておく
+                            val drainedBeforeDraw = drainEncoderNonBlocking()
+                            Log.d(TAG, "processClip: [BEFORE-DRAW] drainEncoderNonBlocking for frame $framesInClip, drained=$drainedBeforeDraw frames")
+
+                            Log.d(TAG, "processClip: [BEFORE] decoder.releaseOutputBuffer for frame $framesInClip")
                             decoder.releaseOutputBuffer(outputBufferIndex, doRender)
-                            
+                            Log.d(TAG, "processClip: [AFTER] decoder.releaseOutputBuffer for frame $framesInClip")
+
+                            Log.d(TAG, "processClip: [BEFORE] entering GL context for frame $framesInClip")
                             withContext(glCoroutineContext) {
+                                Log.d(TAG, "processClip: [GL] awaitNewImage for frame $framesInClip")
                                 decoderOutputSurface.awaitNewImage(encoderInputSurface)
+                                Log.d(TAG, "processClip: [GL] drawImage for frame $framesInClip")
                                 decoderOutputSurface.drawImage(encoderInputSurface)
-                                
+
                                 // ★ 4. PTSを設定してswap
+                                Log.d(TAG, "processClip: [GL] setPresentationTime for frame $framesInClip")
                                 encoderInputSurface.setPresentationTime(reusableBufferInfo.presentationTimeUs * 1000L)
+                                Log.d(TAG, "processClip: [GL] swapBuffers for frame $framesInClip")
                                 encoderInputSurface.swapBuffers()
-                                
-                                // ★ 5. GPUフェンスで同期
+                            }
+                            Log.d(TAG, "processClip: [AFTER] GL context for frame $framesInClip")
+
+                            // ★ swapBuffers後もドレインして、次のフレームに備える
+                            Log.d(TAG, "processClip: [BEFORE] drainEncoderNonBlocking for frame $framesInClip")
+                            val drained = drainEncoderNonBlocking()
+                            Log.d(TAG, "processClip: [AFTER] drainEncoderNonBlocking for frame $framesInClip, drained=$drained frames")
+
+                            // ★ GPUフェンスで同期(drainの後に移動)
+                            withContext(glCoroutineContext) {
+                                Log.d(TAG, "processClip: [GL] creating fence sync for frame $framesInClip")
                                 val sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
                                 if (sync != 0L) {
                                     val timeoutNs = 50_000_000L // 50ms
-                                    var waitResult = GLES30.GL_UNSIGNALED
-                                    while (waitResult != GLES30.GL_SIGNALED && waitResult != GLES30.GL_TIMEOUT_EXPIRED) {
-                                        waitResult = GLES30.glClientWaitSync(sync, 0, timeoutNs)
+                                    var waitCount = 0
+                                    while (true) {
+                                        val waitResult = GLES30.glClientWaitSync(sync, 0, timeoutNs)
+                                        waitCount++
+                                        Log.v(TAG, "processClip: [GL] glClientWaitSync attempt $waitCount for frame $framesInClip, result=$waitResult")
+                                        when (waitResult) {
+                                            GLES30.GL_ALREADY_SIGNALED,
+                                            GLES30.GL_CONDITION_SATISFIED,
+                                            GLES30.GL_SIGNALED -> {
+                                                Log.d(TAG, "processClip: [GL] fence sync completed for frame $framesInClip after $waitCount attempts")
+                                                break
+                                            }
+                                            GLES30.GL_TIMEOUT_EXPIRED -> {
+                                                Log.w(TAG, "processClip: [GL] fence sync timeout for frame $framesInClip, attempt $waitCount")
+                                                continue
+                                            }
+                                            GLES30.GL_WAIT_FAILED -> {
+                                                Log.e(TAG, "glClientWaitSync failed for frame $framesInClip (GL_WAIT_FAILED)")
+                                                break
+                                            }
+                                            else -> {
+                                                Log.w(TAG, "glClientWaitSync returned unexpected status=$waitResult")
+                                                break
+                                            }
+                                        }
                                     }
                                     GLES30.glDeleteSync(sync)
+                                    Log.d(TAG, "processClip: [GL] fence sync deleted for frame $framesInClip")
                                 } else {
                                     Log.w(TAG, "glFenceSync returned 0 (no sync created)")
                                 }
                             }
-                            
-                            // フェンス待ち後にエンコーダー出力をノンブロッキングで取得
-                            var produced = drainEncoderNonBlocking()
-                            if (produced == 0) {
-                                repeat(2) {
-                                    Thread.sleep(5)
-                                    produced += drainEncoderNonBlocking()
-                                }
-                            }
-                            if (produced > 0) {
-                                framesInClip++
-                                onProgress(1)
-                            } else {
-                                Log.w(TAG, "processClip: Encoder did not produce output for frame $framesInClip, continuing...")
-                                framesInClip++  // フレームカウントは進める
-                                onProgress(1)
-                            }
+
+                            framesInClip++
+                            onProgress(1)
+                            Log.d(TAG, "processClip: Frame $framesInClip completed")
                         } else {
                             decoder.releaseOutputBuffer(outputBufferIndex, false)
                         }
@@ -442,12 +511,28 @@ private class VideoProcessor(
         var outputCount = 0
 
         try {
+            var infoTryAgainCount = 0
             while (true) {
-                val encoderStatus = encoder.dequeueOutputBuffer(reusableBufferInfo, 0)
+                val waitUs = if (trackIndex < 0 || !muxerStarted.get()) TIMEOUT_US else 0L
+                val encoderStatus = encoder.dequeueOutputBuffer(reusableBufferInfo, waitUs)
 
                 when {
                     encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER -> {
-                        Log.v(TAG, "drainEncoderNonBlocking: INFO_TRY_AGAIN_LATER")
+                        // ★ トラック未追加時のみログを出す
+                        if (trackIndex < 0) {
+                            Log.v(TAG, "drainEncoderNonBlocking: INFO_TRY_AGAIN_LATER (trackIndex=$trackIndex, retryCount=$infoTryAgainCount)")
+                        }
+                        // ★ トラック未追加時は FORMAT_CHANGED を待つため、より多く再試行
+                        if (trackIndex < 0 && infoTryAgainCount < 20) {
+                            infoTryAgainCount++
+                            // ★ sleep を削除してポーリングのみに
+                            continue
+                        }
+                        // Muxer未開始でも数回待つ
+                        if (!muxerStarted.get() && trackIndex >= 0 && infoTryAgainCount < 5) {
+                            infoTryAgainCount++
+                            continue
+                        }
                         break // 出力なし
                     }
                     encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
@@ -511,6 +596,22 @@ private class VideoProcessor(
     }
 
     fun getTrackIndex(): Int = trackIndex
+
+    /**
+     * フォーマットを直接指定してトラックを追加する（INFO_OUTPUT_FORMAT_CHANGED が来ない場合の対策）
+     */
+    fun forceAddTrack(format: MediaFormat) {
+        synchronized(muxerLock) {
+            if (trackIndex == -1) {
+                Log.d(TAG, "forceAddTrack: Adding video track with format=$format")
+                trackIndex = muxer.addTrack(format)
+                Log.d(TAG, "forceAddTrack: Video track index=$trackIndex")
+                muxerStartCallback()
+            } else {
+                Log.w(TAG, "forceAddTrack: Track already added, index=$trackIndex")
+            }
+        }
+    }
 
     fun drainEncoder(endOfStream: Boolean) {
         if (endOfStream) {
@@ -591,16 +692,24 @@ private class VideoProcessor(
     }
 
     companion object {
-        fun createEncoder(preset: ExportPreset): MediaCodec {
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, preset.width, preset.height).apply {
+        fun createEncoder(preset: ExportPreset, width: Int, height: Int): MediaCodec {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, preset.videoBitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, preset.frameRate)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                // ★ ビットレートモードをVBRに設定(互換性向上)
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             }
-            return MediaCodec.createEncoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply {
-                configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            }
+            Log.d("VideoProcessor", "createEncoder: Creating encoder with format=$format")
+
+            // ★ デフォルトエンコーダーを使用(システムが最適なエンコーダーを選択)
+            val codec = MediaCodec.createEncoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+
+            Log.d("VideoProcessor", "createEncoder: Encoder name=${codec.name}, codecInfo=${codec.codecInfo.name}")
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            Log.d("VideoProcessor", "createEncoder: Encoder configured successfully in synchronous mode")
+            return codec
         }
 
         fun createDecoder(extractor: MediaExtractor, surface: android.view.Surface): MediaCodec? {
