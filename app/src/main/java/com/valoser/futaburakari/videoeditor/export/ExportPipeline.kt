@@ -10,6 +10,7 @@ import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import com.valoser.futaburakari.videoeditor.domain.model.ExportPreset
 import com.valoser.futaburakari.videoeditor.domain.model.ExportProgress
 import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
+import com.valoser.futaburakari.videoeditor.domain.model.Keyframe
 import com.valoser.futaburakari.videoeditor.utils.findTrack
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -751,6 +752,9 @@ private class AudioProcessor(
 
         val audioClip = session.audioTracks.flatMap { it.clips }
             .find { it.source == clip.source && it.startTime == clip.startTime }
+        val sortedVolumeKeyframes = audioClip?.volumeKeyframes
+            ?.takeIf { it.isNotEmpty() }
+            ?.sortedBy { it.time }
         val extractor = MediaExtractor().apply { setDataSource(context, clip.source, null) }
         val decoder = AudioProcessor.createDecoder(extractor)
             ?: return Result(durationUs = ((clip.duration / clip.speed) * 1000).toLong()).also { extractor.release() }
@@ -826,13 +830,15 @@ private class AudioProcessor(
                             true
                         if (reusableBufferInfo.size > 0) {
                             val decodedData = decoder.getOutputBuffer(outputBufferIndex)!!
-                            applyVolumeAutomation(
-                                decodedData,
-                                reusableBufferInfo,
-                                audioClip,
-                                sampleRate,
-                                channelCount
-                            )
+                            sortedVolumeKeyframes?.let { keyframes ->
+                                applyVolumeAutomation(
+                                    decodedData,
+                                    reusableBufferInfo,
+                                    sampleRate,
+                                    channelCount,
+                                    keyframes
+                                )
+                            }
 
                             // ★ リサンプリングしてターゲット仕様へ
                             val (pcmForEncoder, outFrames) = resampleIfNeeded(
@@ -903,20 +909,39 @@ private class AudioProcessor(
     private fun applyVolumeAutomation(
         buffer: ByteBuffer,
         info: MediaCodec.BufferInfo,
-        clip: com.valoser.futaburakari.videoeditor.domain.model.AudioClip?,
         sampleRate: Int,
-        channelCount: Int
+        channelCount: Int,
+        keyframes: List<Keyframe>
     ) {
-        if (clip == null || clip.volumeKeyframes.isEmpty()) return
+        if (keyframes.isEmpty()) return
 
         val shortBuffer = buffer.order(ByteOrder.nativeOrder()).asShortBuffer()
         val numSamples = info.size / 2 / channelCount
+
+        var previousKeyframe = keyframes.first()
+        var nextIndex = 1
+        var nextKeyframe = if (nextIndex < keyframes.size) keyframes[nextIndex] else null
 
         for (i in 0 until numSamples) {
             val sampleTimeUs = info.presentationTimeUs + (i.toLong() * 1_000_000 / sampleRate)
             val sampleTimeMs = sampleTimeUs / 1000
 
-            val volume = getVolumeAtTime(sampleTimeMs, clip)
+            while (nextKeyframe != null && sampleTimeMs >= nextKeyframe.time) {
+                previousKeyframe = nextKeyframe!!
+                nextIndex++
+                nextKeyframe = if (nextIndex < keyframes.size) keyframes[nextIndex] else null
+            }
+
+            val volume = when {
+                sampleTimeMs <= previousKeyframe.time -> previousKeyframe.value
+                nextKeyframe == null -> previousKeyframe.value
+                nextKeyframe.time == previousKeyframe.time -> nextKeyframe.value
+                else -> {
+                    val fraction =
+                        (sampleTimeMs - previousKeyframe.time).toFloat() / (nextKeyframe.time - previousKeyframe.time)
+                    previousKeyframe.value + fraction * (nextKeyframe.value - previousKeyframe.value)
+                }
+            }
 
             for (c in 0 until channelCount) {
                 val index = i * channelCount + c
@@ -924,28 +949,6 @@ private class AudioProcessor(
                 val newSample = (sample * volume).toInt()
                     .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
                 shortBuffer.put(index, newSample)
-            }
-        }
-    }
-
-    private fun getVolumeAtTime(
-        timeMs: Long,
-        clip: com.valoser.futaburakari.videoeditor.domain.model.AudioClip
-    ): Float {
-        val keyframes = clip.volumeKeyframes.sortedBy { it.time }
-        if (keyframes.isEmpty()) return clip.volume
-
-        val nextKeyframeIndex = keyframes.indexOfFirst { it.time >= timeMs }
-
-        return when {
-            nextKeyframeIndex == -1 -> keyframes.last().value // After last keyframe
-            nextKeyframeIndex == 0 -> keyframes.first().value // Before first keyframe
-            else -> { // Between two keyframes
-                val prev = keyframes[nextKeyframeIndex - 1]
-                val next = keyframes[nextKeyframeIndex]
-                val fraction = (timeMs - prev.time).toFloat() / (next.time - prev.time)
-                // Linear interpolation
-                prev.value + fraction * (next.value - prev.value)
             }
         }
     }
