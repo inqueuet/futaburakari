@@ -19,14 +19,17 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlin.coroutines.CoroutineContext
-nihimport kotlin.math.max
+import kotlin.math.max
 import kotlin.math.min
 import android.opengl.Matrix
 import android.os.SystemClock
+import android.os.Handler
+import android.os.HandlerThread
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.inject.Inject
+import kotlinx.coroutines.android.asCoroutineDispatcher
 
 interface ExportPipeline {
     fun export(session: EditorSession, preset: ExportPreset, outputUri: Uri): Flow<ExportProgress>
@@ -41,7 +44,8 @@ class ExportPipelineImpl @Inject constructor(
     private fun logMuxerGate(msg: String) = Log.d(TAG, "[MuxerGate] $msg")
 
     // ★ GL操作用の専用シングルスレッドDispatcher
-    private val glDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val glThread = HandlerThread("ExportGL").apply { start() }
+    private val glDispatcher = Handler(glThread.looper).asCoroutineDispatcher()
 
     override fun export(
         session: EditorSession,
@@ -126,14 +130,17 @@ class ExportPipelineImpl @Inject constructor(
 
             // ✅ EGL初期化はGLスレッドで実行
             val encoderInputSurface = EncoderInputSurface(videoEncoder.createInputSurface())
-            encoderInputSurface.setup()
-
-            val decoderOutputSurface = DecoderOutputSurface(
-                preset.width,
-                preset.height,
-                encoderInputSurface.eglContext() // ★ 共有するのは EGLContext だけ
-            )
-            decoderOutputSurface.setup() // ★ 追加
+            var decoderSurface: DecoderOutputSurface? = null
+            withContext(glDispatcher) {
+                encoderInputSurface.setup()
+                decoderSurface = DecoderOutputSurface(
+                    preset.width,
+                    preset.height,
+                    encoderInputSurface.eglContext()
+                ).apply { setup() }
+            }
+            val activeDecoderSurface = decoderSurface
+                ?: throw IllegalStateException("Decoder surface initialization failed")
 
             // ★ 最初のクリップから元動画のサイズを取得してアスペクト比を設定
             if (session.videoClips.isNotEmpty()) {
@@ -144,7 +151,9 @@ class ExportPipelineImpl @Inject constructor(
                     val format = extractor.getTrackFormat(videoTrackIndex)
                     val srcWidth = format.getInteger(MediaFormat.KEY_WIDTH)
                     val srcHeight = format.getInteger(MediaFormat.KEY_HEIGHT)
-                    decoderOutputSurface.setSourceAspectRatio(srcWidth, srcHeight)
+                    withContext(glDispatcher) {
+                        activeDecoderSurface.setSourceAspectRatio(srcWidth, srcHeight)
+                    }
                     Log.d(TAG, "Source video size: ${srcWidth}x${srcHeight}")
                 }
                 extractor.release()
@@ -180,7 +189,7 @@ class ExportPipelineImpl @Inject constructor(
                     val vRes = videoProcessor.processClip(
                         clip,
                         encoderInputSurface,
-                        decoderOutputSurface,
+                        activeDecoderSurface,
                         videoPtsOffsetUs
                     ) { progressedFrames ->
                         val currentFrames = framesProcessed.addAndGet(progressedFrames)
@@ -239,8 +248,14 @@ class ExportPipelineImpl @Inject constructor(
                 } catch (_: Throwable) {}
 
                 // Release EGL surfaces last
-                try { decoderOutputSurface.release() } catch (_: Throwable) {}
-                try { encoderInputSurface.release() } catch (_: Throwable) {}
+                try {
+                    withContext(glDispatcher) {
+                        decoderSurface?.let {
+                            try { it.release() } catch (_: Throwable) {}
+                        }
+                        try { encoderInputSurface.release() } catch (_: Throwable) {}
+                    }
+                } catch (_: Throwable) {}
 
                 if (muxerStarted.get()) {
                     try { muxer.stop() } catch (_: Throwable) {}
@@ -319,7 +334,11 @@ private class VideoProcessor(
             extractor.selectTrack(videoTrackIndex)
             extractor.seekTo(clip.startTime * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
+            var loopIteration = 0
             while (!isOutputDone) {
+                if (loopIteration % 30 == 0) { // ざっくり状態確認（約1秒おき @30fps想定）
+                    Log.d(TAG, "processClip: loop iteration=$loopIteration, inputDone=$isInputDone, outputDone=$isOutputDone, pendingVideo=${pendingVideo.size}")
+                }
                 if (!isInputDone) {
                     val inputBufferIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
                     if (inputBufferIndex >= 0) {
@@ -357,21 +376,7 @@ private class VideoProcessor(
                             decoder.releaseOutputBuffer(outputBufferIndex, doRender)
                             
                             withContext(glCoroutineContext) {
-                                // ★ 1. デコーダーコンテキストに明示的に切り替え
-                                if (!EGL14.eglMakeCurrent(
-                                        decoderOutputSurface.getEglDisplay(),
-                                        decoderOutputSurface.getEglSurface(),
-                                        decoderOutputSurface.getEglSurface(),
-                                        decoderOutputSurface.getEglContext()
-                                )) {
-                                    throw RuntimeException("Failed to switch to decoder context")
-                                }
-                                
-                                // ★ 2. フレーム待機とテクスチャ更新（デコーダーコンテキストで）
-                                decoderOutputSurface.awaitNewImageInternal()
-                                
-                                // ★ 3. エンコーダーコンテキストに切り替えて描画
-                                encoderInputSurface.makeCurrent()
+                                decoderOutputSurface.awaitNewImage(encoderInputSurface)
                                 decoderOutputSurface.drawImage(encoderInputSurface)
                                 
                                 // ★ 4. PTSを設定してswap
@@ -418,6 +423,7 @@ private class VideoProcessor(
                         decoderOutputAvailable = false
                     }
                 }
+                loopIteration++
             }
             Log.d(TAG, "processClip: Processed $framesInClip frames")
             onProgress(framesInClip)
@@ -441,6 +447,7 @@ private class VideoProcessor(
 
                 when {
                     encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                        Log.v(TAG, "drainEncoderNonBlocking: INFO_TRY_AGAIN_LATER")
                         break // 出力なし
                     }
                     encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
