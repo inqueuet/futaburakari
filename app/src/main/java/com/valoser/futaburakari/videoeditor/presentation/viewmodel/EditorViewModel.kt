@@ -185,10 +185,21 @@ class EditorViewModel @Inject constructor(
     }
 
     private suspend fun deleteRange(intent: EditorIntent.DeleteRange) {
+        val currentSession = _state.value.session ?: return
+
+        // Undo 用に現在の状態を保存し、UI からは即座に選択範囲を消す
+        sessionManager.saveState(currentSession)
+        _state.update {
+            it.copy(
+                rangeSelection = null,
+                mode = EditMode.NORMAL
+            )
+        }
+
         editClipUseCase.deleteRange(intent.clipId, intent.start, intent.end)
             .onSuccess { session ->
                 _state.update { it.copy(session = session) }
-                playerEngine.prepare(session)
+                prepareSessionPreservePosition(session, targetMs = intent.start)
             }
             .onFailure { error ->
                 _events.send(EditorEvent.ShowError(error.message ?: "範囲削除に失敗しました"))
@@ -713,6 +724,14 @@ class EditorViewModel @Inject constructor(
         // Undo用に現在の状態を保存
         sessionManager.saveState(session)
 
+        // UI から選択範囲を即座に消してモードを通常に戻す
+        _state.update {
+            it.copy(
+                rangeSelection = null,
+                mode = EditMode.NORMAL
+            )
+        }
+
         val start = intent.start
         val end = intent.end
         val delta = (end - start).coerceAtLeast(0L)
@@ -803,7 +822,7 @@ class EditorViewModel @Inject constructor(
                 it.copy(
                     session = newSession,
                     rangeSelection = null,
-                    mode = EditMode.NORMAL  // 範囲選択モードを解除
+                    mode = EditMode.NORMAL  // 念のため再セット
                 )
             }
             prepareSessionPreservePosition(newSession, targetMs = start) // プレビュー更新（既存の各編集処理と同じ流れ）
