@@ -1125,29 +1125,58 @@ private class AudioProcessor(
 
     fun queueToAudioEncoder(data: ByteBuffer, info: MediaCodec.BufferInfo) {
         if (encoder == null) return
-        val encoderInputIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
-        if (encoderInputIndex >= 0) {
+        val bytesPerFrame = targetChannelCount * 2 // 16-bit PCM * channel count
+        var remaining = info.size
+        var bufferOffset = info.offset
+        var chunkPtsUs = info.presentationTimeUs
+        val originalFlags = info.flags
+        val originalLimit = data.limit()
+        val originalPosition = data.position()
+
+        while (remaining > 0) {
+            val encoderInputIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
+            if (encoderInputIndex < 0) {
+                if (encoderInputIndex != MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    Log.w(
+                        TAG,
+                        "queueToAudioEncoder: Unexpected input buffer index=$encoderInputIndex, remaining=$remaining"
+                    )
+                    break
+                }
+                continue
+            }
+
             val inBuf = encoder.getInputBuffer(encoderInputIndex)!!
             inBuf.clear()
-            // ★ 有効範囲だけをコピー
-            val oldLimit = data.limit()
-            val oldPos = data.position()
-            data.limit(info.offset + info.size)
-            data.position(info.offset)
+            val chunkSize = min(remaining, inBuf.capacity())
+
+            data.limit(bufferOffset + chunkSize)
+            data.position(bufferOffset)
             inBuf.put(data)
-            // ★ 戻す
-            data.limit(oldLimit)
-            data.position(oldPos)
+            data.limit(originalLimit)
+            data.position(originalPosition)
+
+            val isLastChunk = remaining == chunkSize
+            val chunkFlags = if (isLastChunk) {
+                originalFlags
+            } else {
+                originalFlags and MediaCodec.BUFFER_FLAG_END_OF_STREAM.inv()
+            }
 
             encoder.queueInputBuffer(
-                encoderInputIndex, 0, info.size,
-                info.presentationTimeUs, info.flags
+                encoderInputIndex,
+                0,
+                chunkSize,
+                chunkPtsUs,
+                chunkFlags
             )
-        } else {
-            Log.w(
-                TAG,
-                "queueToAudioEncoder: Failed to get input buffer for encoder, index=$encoderInputIndex"
-            )
+
+            remaining -= chunkSize
+            bufferOffset += chunkSize
+            if (remaining > 0 && bytesPerFrame > 0) {
+                val framesAdvanced = chunkSize / bytesPerFrame
+                chunkPtsUs += (framesAdvanced * 1_000_000L) / targetSampleRate
+            }
         }
     }
 
