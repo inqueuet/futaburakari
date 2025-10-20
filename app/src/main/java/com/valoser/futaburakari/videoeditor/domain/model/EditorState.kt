@@ -11,7 +11,7 @@ data class EditorState(
     val selection: Selection? = null,
     val playhead: Long = 0L,
     val isPlaying: Boolean = false,
-    val zoom: Float = 0.25f,
+    val zoom: Float = 1.0f,
     val isLoading: Boolean = false,
     val exportProgress: Float? = null,
     val error: String? = null,

@@ -412,17 +412,6 @@ fun EditorScreen(
                             else -> {}
                         }
                     },
-                    onSpeedChange = { speed ->
-                        val videoSelection = state.selection as? com.valoser.futaburakari.videoeditor.domain.model.Selection.VideoClip
-                        if (videoSelection != null) {
-                            viewModel.handleIntent(
-                                com.valoser.futaburakari.videoeditor.domain.model.EditorIntent.SetSpeed(
-                                    videoSelection.clipId,
-                                    speed
-                                )
-                            )
-                        }
-                    },
                     onFadeInChange = { duration ->
                         if (audioSelection != null) {
                             viewModel.handleIntent(

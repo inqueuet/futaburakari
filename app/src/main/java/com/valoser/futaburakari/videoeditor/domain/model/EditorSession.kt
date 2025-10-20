@@ -1,5 +1,6 @@
 package com.valoser.futaburakari.videoeditor.domain.model
 
+import android.graphics.Bitmap
 import android.net.Uri
 
 /**
@@ -198,5 +199,6 @@ enum class EditMode {
  */
 data class Thumbnail(
     val time: Long,
-    val path: String
+    val path: String,
+    val bitmap: Bitmap? = null
 )

@@ -140,6 +140,23 @@ fun TimelineView(
         val totalContentWidthDp = with(density) { totalContentWidth.toDp() }
         val paddedContentWidthDp = totalContentWidthDp + viewportWidthDp
 
+        val viewportWidthPx = with(density) { viewportWidthDp.toPx() }
+        val safeZoomForRange = zoom.coerceAtLeast(0.01f)
+        val visibleStartPx = horizontalScrollState.value.toFloat()
+        val visibleEndPx = visibleStartPx + viewportWidthPx
+        val preloadPx = viewportWidthPx
+        val requestedStartMs = ((visibleStartPx - preloadPx).coerceAtLeast(0f) / safeZoomForRange)
+            .toLong()
+            .coerceIn(0L, timelineDuration)
+        val requestedEndMsRaw = ((visibleEndPx + preloadPx) / safeZoomForRange)
+            .toLong()
+            .coerceIn(0L, timelineDuration)
+        val requestedEndMs = if (requestedEndMsRaw <= requestedStartMs) {
+            (requestedStartMs + 1).coerceAtMost(timelineDuration)
+        } else {
+            requestedEndMsRaw
+        }
+
         // タイムラインコンテンツ
         Column(
             modifier = Modifier
@@ -188,6 +205,8 @@ fun TimelineView(
                         playhead = playhead,
                         zoom = zoom,
                         timelineDuration = timelineDuration,
+                        requestedStartMs = requestedStartMs,
+                        requestedEndMs = requestedEndMs,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(64.dp)

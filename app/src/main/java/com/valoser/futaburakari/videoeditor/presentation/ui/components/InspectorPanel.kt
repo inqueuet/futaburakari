@@ -22,14 +22,12 @@ fun InspectorPanel(
     isClipMuted: Boolean?,
     onDeleteClick: () -> Unit,
     onCopyClick: () -> Unit,
-    onSpeedChange: (Float) -> Unit,
     onFadeInChange: (FadeDuration) -> Unit,
     onFadeOutChange: (FadeDuration) -> Unit,
     onToggleMute: () -> Unit,
     onVolumeChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isVideoClip = selection is Selection.VideoClip
     val isAudioClip = selection is Selection.AudioClip
 
     Column(
@@ -64,24 +62,6 @@ fun InspectorPanel(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
-        // --- Speed Control (for video clips) ---
-        if (isVideoClip) {
-            Column {
-                Text("速度", style = MaterialTheme.typography.bodyMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    val speeds = listOf(0.5f, 1.0f, 1.5f, 2.0f)
-                    speeds.forEach { speed ->
-                        TextButton(onClick = { onSpeedChange(speed) }) {
-                            Text("${speed}x")
-                        }
-                    }
-                }
-            }
-        }
 
         // --- Audio Controls (for audio clips) ---
         if (isAudioClip) {

@@ -2,9 +2,7 @@ package com.valoser.futaburakari.videoeditor.presentation.ui.components
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
@@ -23,9 +21,15 @@ import androidx.compose.ui.unit.dp
 import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
 import com.valoser.futaburakari.videoeditor.media.thumbnail.THUMBNAIL_BASE_INTERVAL_MS
 import com.valoser.futaburakari.videoeditor.media.thumbnail.ThumbnailGenerator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -38,6 +42,8 @@ fun FilmStripView(
     playhead: Long,
     zoom: Float,
     timelineDuration: Long,
+    requestedStartMs: Long,
+    requestedEndMs: Long,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -70,22 +76,170 @@ fun FilmStripView(
         staleKeys.forEach { thumbnailCache.remove(it) }
     }
 
-    // サムネイル生成
-    LaunchedEffect(clipSignature) {
+    val thumbnailHeightPx = with(density) { 64.dp.toPx() }
+    val targetTileWidthPx = with(density) { 24.dp.toPx() }
+
+    val requestedRanges = remember { mutableStateMapOf<String, Pair<Long, Long>>() }
+    val clipLocks = remember { mutableMapOf<String, Mutex>() }
+    val viewportSpanMs = (requestedEndMs - requestedStartMs).coerceAtLeast(0L)
+    val preloadWindowMs = min(viewportSpanMs, 1_500L)
+    val requestStart = (requestedStartMs - preloadWindowMs).coerceAtLeast(0L)
+    val requestEnd = requestedEndMs + preloadWindowMs
+    val triggerIntervalMs = max(THUMBNAIL_BASE_INTERVAL_MS * 5, THUMBNAIL_BASE_INTERVAL_MS)
+    val quantizedStart = (requestStart / triggerIntervalMs) * triggerIntervalMs
+    val quantizedEnd = ((requestEnd + triggerIntervalMs - 1) / triggerIntervalMs) * triggerIntervalMs
+
+    fun mapTimelineToSource(clip: VideoClip, timelineTime: Long): Long {
+        val speed = clip.speed.takeIf { it > 0f } ?: 1f
+        val timelineOffset = (timelineTime - clip.position).coerceAtLeast(0L)
+        val sourceOffset = (timelineOffset.toDouble() * speed.toDouble()).toLong()
+        val sourceTime = clip.startTime + sourceOffset
+        return sourceTime.coerceIn(clip.startTime, clip.endTime)
+    }
+
+    fun normalizeTimeForCache(timeMs: Long): Long {
+        val grid = THUMBNAIL_BASE_INTERVAL_MS.coerceAtLeast(1)
+        return ((timeMs + grid / 2) / grid) * grid
+    }
+
+    fun mergeSegments(segments: List<Pair<Long, Long>>): List<Pair<Long, Long>> {
+        if (segments.isEmpty()) return segments
+        val sorted = segments.sortedBy { it.first }
+        val result = mutableListOf<Pair<Long, Long>>()
+        var current = sorted.first()
+        for (i in 1 until sorted.size) {
+            val next = sorted[i]
+            if (next.first <= current.second) {
+                current = current.first to max(current.second, next.second)
+            } else {
+                result.add(current)
+                current = next
+            }
+        }
+        result.add(current)
+        return result
+    }
+
+    fun getThumbnailBitmap(clipId: String, targetTime: Long): android.graphics.Bitmap? {
+        val directKey = "${clipId}_${targetTime}"
+        thumbnailCache[directKey]?.let { return it }
+
+        val prefix = "${clipId}_"
+        var closestKey: String? = null
+        var smallestDiff = Long.MAX_VALUE
+        thumbnailCache.forEach { (key, _) ->
+            if (!key.startsWith(prefix)) return@forEach
+            val time = key.substringAfter('_').toLongOrNull() ?: return@forEach
+            val diff = abs(time - targetTime)
+            if (diff < smallestDiff) {
+                smallestDiff = diff
+                closestKey = key
+            }
+        }
+        return closestKey?.let { thumbnailCache[it] }
+    }
+
+    // サムネイル生成（表示範囲に応じてオンデマンド実行）
+    LaunchedEffect(clipSignature, quantizedStart, quantizedEnd, zoom) {
+        val safeZoom = zoom.coerceAtLeast(0.01f)
+        val zoomScaledMinInterval = when {
+            safeZoom >= 8f -> THUMBNAIL_BASE_INTERVAL_MS * 4
+            safeZoom >= 4f -> THUMBNAIL_BASE_INTERVAL_MS * 3
+            else -> THUMBNAIL_BASE_INTERVAL_MS * 2
+        }
+        val baseIntervalMs = ((targetTileWidthPx / safeZoom).toLong())
+            .coerceAtLeast(zoomScaledMinInterval)
+        val activeIds = clipSignature.map { it.id }.toSet()
+        val staleRangeKeys = requestedRanges.keys.filter { it !in activeIds }
+        staleRangeKeys.forEach { requestedRanges.remove(it) }
+
         clipSignature.forEach { signature ->
             val clip = clips.firstOrNull { it.id == signature.id } ?: return@forEach
-            val hasCache = thumbnailCache.keys.any { it.startsWith("${clip.id}_") }
-            if (hasCache) return@forEach
+            val clipStart = clip.position
+            val clipEnd = clip.position + clip.duration
+            val overlapStart = max(clipStart, quantizedStart)
+            val overlapEnd = min(clipEnd, quantizedEnd)
+
+            if (overlapEnd <= overlapStart) return@forEach
+
+            var sourceStart = mapTimelineToSource(clip, overlapStart)
+            var sourceEnd = mapTimelineToSource(clip, overlapEnd)
+            if (sourceEnd <= sourceStart) {
+                sourceEnd = (sourceStart + THUMBNAIL_BASE_INTERVAL_MS).coerceAtMost(clip.endTime)
+            }
+            if (sourceEnd <= sourceStart) return@forEach
+
+            var normalizedStart = normalizeTimeForCache(sourceStart)
+            var normalizedEnd = normalizeTimeForCache(sourceEnd)
+            if (normalizedEnd <= normalizedStart) {
+                normalizedEnd = normalizedStart + baseIntervalMs
+            }
+
+            val existingRange = requestedRanges[clip.id]
+            val missingSegments = mutableListOf<Pair<Long, Long>>()
+
+            if (existingRange == null) {
+                missingSegments += normalizedStart to normalizedEnd
+            } else {
+                if (normalizedStart < existingRange.first) {
+                    val segmentEnd = min(existingRange.first, normalizedEnd)
+                    if (segmentEnd > normalizedStart) {
+                        missingSegments += normalizedStart to segmentEnd
+                    }
+                }
+                if (normalizedEnd > existingRange.second) {
+                    val segmentStart = max(normalizedStart, existingRange.second)
+                    if (normalizedEnd > segmentStart) {
+                        missingSegments += segmentStart to normalizedEnd
+                    }
+                }
+            }
+
+            if (missingSegments.isEmpty()) return@forEach
+
+            val mergedSegments = mergeSegments(missingSegments)
+            if (mergedSegments.isEmpty()) return@forEach
+
+            val mergedStart = mergedSegments.minOf { it.first }
+            val mergedEnd = mergedSegments.maxOf { it.second }
+            val updatedStart = existingRange?.first?.let { min(it, mergedStart) } ?: mergedStart
+            val updatedEnd = existingRange?.second?.let { max(it, mergedEnd) } ?: mergedEnd
+            requestedRanges[clip.id] = updatedStart to updatedEnd
+
+            val mutex = clipLocks.getOrPut(clip.id) { Mutex() }
 
             scope.launch {
-                thumbnailGenerator.generate(clip).onSuccess { thumbnails ->
-                    // 生成完了時点でクリップが残っているか再確認
-                    if (!currentClipIdsState.value.contains(clip.id)) return@onSuccess
-                    thumbnails.forEach { thumbnail ->
-                        val file = File(thumbnail.path)
-                        if (file.exists()) {
-                            val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
-                            thumbnailCache["${clip.id}_${thumbnail.time}"] = bitmap
+                mutex.withLock {
+                    mergedSegments.forEach { (segmentStart, segmentEnd) ->
+                        if (segmentEnd <= segmentStart) return@forEach
+                        thumbnailGenerator.generateRange(
+                            clip = clip,
+                            rangeStartMs = segmentStart,
+                            rangeEndMs = segmentEnd,
+                            interval = baseIntervalMs,
+                            persistToDisk = false
+                        ).onSuccess { thumbnails ->
+                            if (!currentClipIdsState.value.contains(clip.id)) return@onSuccess
+                            thumbnails.forEach { thumbnail ->
+                                val normalizedTime = normalizeTimeForCache(thumbnail.time)
+                                val cacheKey = "${clip.id}_${normalizedTime}"
+                                if (!thumbnailCache.containsKey(cacheKey)) {
+                                    val cachedBitmap = thumbnail.bitmap
+                                    if (cachedBitmap != null) {
+                                        thumbnailCache[cacheKey] = cachedBitmap
+                                    } else {
+                                        val file = File(thumbnail.path)
+                                        if (file.exists()) {
+                                            val bitmap = withContext(Dispatchers.IO) {
+                                                BitmapFactory.decodeFile(file.absolutePath)
+                                            }
+                                            if (bitmap != null) {
+                                                thumbnailCache[cacheKey] = bitmap
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -93,9 +247,7 @@ fun FilmStripView(
         }
     }
 
-    val thumbnailHeightPx = with(density) { 64.dp.toPx() }
     // 可変密度：画面上のタイル幅を一定に保つ（zoomに応じて時間間隔を自動計算）
-    val targetTileWidthPx = with(density) { 96.dp.toPx() } // 好みで 64–128dp 程度
     val contentDuration = max(
         timelineDuration,
         clips.maxOfOrNull { it.position + it.duration } ?: 0L
@@ -116,8 +268,13 @@ fun FilmStripView(
                 val speed = 1.0f // 将来: clip.playbackSpeed が入ったら置き換え
                 val clipTimelineDuration = clip.duration.coerceAtLeast(0L)
                 // 画面上のタイル幅 -> 実時間間隔（ms）に変換（下限/上限で暴れ防止）
+                val zoomScaledMinInterval = when {
+                    zoom >= 8f -> THUMBNAIL_BASE_INTERVAL_MS * 4
+                    zoom >= 4f -> THUMBNAIL_BASE_INTERVAL_MS * 3
+                    else -> THUMBNAIL_BASE_INTERVAL_MS * 2
+                }
                 val intervalMs = ((targetTileWidthPx / zoom).toLong())
-                    .coerceAtLeast(100L)
+                    .coerceAtLeast(zoomScaledMinInterval)
                 val baseIntervalMs = THUMBNAIL_BASE_INTERVAL_MS
 
                 var currentDisplayMs = 0L
@@ -129,8 +286,7 @@ fun FilmStripView(
                     // 既存キャッシュ(0.1s刻み)から最も近いキーを選ぶ（当面の改善）
                     // 例: baseIntervalMs（現状は100ms）グリッドへ丸める。将来的には generateAt() で厳密生成へ。
                     val nearestTime = ((desiredSourceTime + baseIntervalMs / 2) / baseIntervalMs) * baseIntervalMs
-                    val thumbnailKey = "${clip.id}_${nearestTime}"
-                    val thumbnail = thumbnailCache[thumbnailKey]
+                    val thumbnail = getThumbnailBitmap(clip.id, nearestTime)
 
                     val thumbnailStartX = (clip.position + currentDisplayMs) * zoom
                     val thumbnailDisplayWidth = (intervalMs * zoom)
