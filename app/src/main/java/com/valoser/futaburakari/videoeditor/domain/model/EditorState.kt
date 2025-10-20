@@ -13,6 +13,7 @@ data class EditorState(
     val isPlaying: Boolean = false,
     val zoom: Float = 0.25f,
     val isLoading: Boolean = false,
+    val exportProgress: Float? = null,
     val error: String? = null,
     val rangeSelection: TimeRange? = null,
     val splitMarkerPosition: Long? = null

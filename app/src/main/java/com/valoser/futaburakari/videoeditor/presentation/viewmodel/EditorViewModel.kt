@@ -133,13 +133,14 @@ class EditorViewModel @Inject constructor(
     }
 
     private suspend fun createSession(intent: EditorIntent.CreateSession) {
-        _state.update { it.copy(isLoading = true) }
+        _state.update { it.copy(isLoading = true, exportProgress = null) }
         sessionManager.createSession(intent.videoUris)
             .onSuccess { session ->
                 _state.update {
                     it.copy(
                         session = session,
                         isLoading = false,
+                        exportProgress = null,
                         error = null
                     )
                 }
@@ -150,6 +151,7 @@ class EditorViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         isLoading = false,
+                        exportProgress = null,
                         error = error.message
                     )
                 }
@@ -526,22 +528,21 @@ class EditorViewModel @Inject constructor(
         // SessionManagerも同期
         sessionManager.updateSession(session)
 
-        _state.update { it.copy(isLoading = true) }
+        _state.update { it.copy(isLoading = true, exportProgress = 0f) }
 
         try {
             exportVideoUseCase.export(session, intent.outputUri)
                 .collect { progress ->
                     android.util.Log.d("EditorViewModel", "Export progress: ${progress.percentage}%")
-                    // エクスポート進捗を更新（必要に応じてstateに追加）
-                    if (progress.percentage >= 100f) {
-                        _state.update { it.copy(isLoading = false) }
-                        _events.send(EditorEvent.ExportComplete)
-                        _events.send(EditorEvent.ShowSuccess("エクスポートが完了しました"))
-                    }
+                    val percentage = progress.percentage.coerceIn(0f, 100f)
+                    _state.update { it.copy(exportProgress = percentage) }
                 }
+            _state.update { it.copy(isLoading = false, exportProgress = null) }
+            _events.send(EditorEvent.ExportComplete)
+            _events.send(EditorEvent.ShowSuccess("エクスポートが完了しました"))
         } catch (e: Exception) {
             android.util.Log.e("EditorViewModel", "Export failed", e)
-            _state.update { it.copy(isLoading = false) }
+            _state.update { it.copy(isLoading = false, exportProgress = null) }
             _events.send(EditorEvent.ShowError(e.message ?: "エクスポートに失敗しました"))
         }
     }

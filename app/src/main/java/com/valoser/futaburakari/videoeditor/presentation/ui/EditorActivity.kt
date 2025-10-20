@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlin.math.roundToInt
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import com.valoser.futaburakari.videoeditor.domain.model.EditorIntent
 import com.valoser.futaburakari.videoeditor.presentation.ui.editor.EditorScreen
@@ -85,7 +86,7 @@ class EditorActivity : ComponentActivity() {
                     }
                     state.isLoading -> {
                         // ローディング画面
-                        LoadingScreen()
+                        LoadingScreen(progress = state.exportProgress)
                     }
                     else -> {
                         // 編集画面
@@ -211,7 +212,7 @@ fun VideoSelectionScreen(
  * ローディング画面
  */
 @Composable
-fun LoadingScreen() {
+fun LoadingScreen(progress: Float? = null) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -220,8 +221,14 @@ fun LoadingScreen() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            CircularProgressIndicator()
-            Text("読み込み中...")
+            val clampedProgress = progress?.coerceIn(0f, 100f)
+            if (clampedProgress != null) {
+                CircularProgressIndicator(progress = clampedProgress / 100f)
+                Text("エクスポート中... ${clampedProgress.roundToInt()}%")
+            } else {
+                CircularProgressIndicator()
+                Text("読み込み中...")
+            }
         }
     }
 }

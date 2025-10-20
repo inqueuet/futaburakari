@@ -148,14 +148,24 @@ fun TimelineView(
                 .horizontalScroll(horizontalScrollState)
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, gestureZoom, _ ->
-                        val newZoom = (zoom * gestureZoom).coerceIn(0.25f, 4f)
-                        onZoomChange(newZoom)
+                        val minZoom = 0.25f
+                        val maxZoom = 4f
+                        val zoomMultiplier = gestureZoom
+                            .takeIf { it.isFinite() && it > 0f }
+                            ?: 1f
+                        val proposedZoom = (zoom * zoomMultiplier).coerceIn(minZoom, maxZoom)
+                        val effectiveZoom = if (abs(proposedZoom - zoom) > 0.0001f) {
+                            onZoomChange(proposedZoom)
+                            proposedZoom
+                        } else {
+                            zoom
+                        }
                         coroutineScope.launch {
                             // スクロールを先に適用
                             horizontalScrollState.dispatchRawDelta(-pan.x)
                             // 次のスクロール値から赤線下の時刻 = scroll/zoom を計算して通知
                             val nextScroll = horizontalScrollState.value
-                            val targetTime = (nextScroll / newZoom)
+                            val targetTime = (nextScroll / effectiveZoom)
                                 .toLong()
                                 .coerceIn(0L, timelineDuration)
                             onSeek(targetTime)

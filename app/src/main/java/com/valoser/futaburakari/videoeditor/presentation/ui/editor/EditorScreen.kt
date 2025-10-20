@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Slider
 import androidx.compose.ui.Alignment
+import kotlin.math.roundToInt
 
 /**
  * エディタ画面
@@ -519,7 +520,19 @@ fun EditorScreen(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = androidx.compose.ui.Alignment.Center
         ) {
-            CircularProgressIndicator()
+            Column(
+                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                val clampedProgress = state.exportProgress?.coerceIn(0f, 100f)
+                if (clampedProgress != null) {
+                    CircularProgressIndicator(progress = clampedProgress / 100f)
+                    Text("エクスポート中... ${clampedProgress.roundToInt()}%")
+                } else {
+                    CircularProgressIndicator()
+                    Text("処理中...")
+                }
+            }
         }
     }
 }
