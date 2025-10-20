@@ -8,10 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.valoser.futaburakari.videoeditor.domain.model.ExportPreset
 import com.valoser.futaburakari.videoeditor.presentation.viewmodel.EditorViewModel
 import com.valoser.futaburakari.videoeditor.presentation.ui.components.TimelineView
 import com.valoser.futaburakari.videoeditor.presentation.ui.components.PreviewView
@@ -50,26 +48,19 @@ fun EditorScreen(
     onBack: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
-    var showExportDialog by remember { mutableStateOf(false) }
     var showTransitionDialog by remember { mutableStateOf(false) }
     var selectedTransitionPosition by remember { mutableStateOf(0L) }
-
-    var selectedPreset by remember { mutableStateOf<ExportPreset?>(null) }
 
     // エクスポート先ファイル選択ランチャー
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("video/mp4")
     ) { uri: Uri? ->
         uri?.let { outputUri ->
-            selectedPreset?.let { preset ->
-                viewModel.handleIntent(
-                    com.valoser.futaburakari.videoeditor.domain.model.EditorIntent.Export(
-                        preset = preset,
-                        outputUri = outputUri
-                    )
+            viewModel.handleIntent(
+                com.valoser.futaburakari.videoeditor.domain.model.EditorIntent.Export(
+                    outputUri = outputUri
                 )
-            }
+            )
         }
     }
 
@@ -140,7 +131,7 @@ fun EditorScreen(
                     }
 
                     TextButton(
-                        onClick = { showExportDialog = true },
+                        onClick = { exportLauncher.launch("edited_video.mp4") },
                         enabled = state.session != null && !state.isLoading
                     ) {
                         Text("書き出し")
@@ -486,59 +477,6 @@ fun EditorScreen(
         LaunchedEffect(error) {
             // Snackbarなどで表示
         }
-    }
-
-    // エクスポートダイアログ
-    if (showExportDialog) {
-        AlertDialog(
-            onDismissRequest = { showExportDialog = false },
-            title = { Text("エクスポート") },
-            text = {
-                Column {
-                    Text("動画を保存します。品質を選択してください。")
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    TextButton(
-                        onClick = {
-                            showExportDialog = false
-                            selectedPreset = ExportPreset.SNS
-                            exportLauncher.launch("edited_video_sns.mp4")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("SNS最適化（720p, 30fps）")
-                    }
-
-                    TextButton(
-                        onClick = {
-                            showExportDialog = false
-                            selectedPreset = ExportPreset.STANDARD
-                            exportLauncher.launch("edited_video_standard.mp4")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("標準品質（1080p, 30fps）")
-                    }
-
-                    TextButton(
-                        onClick = {
-                            showExportDialog = false
-                            selectedPreset = ExportPreset.HIGH_QUALITY
-                            exportLauncher.launch("edited_video_high.mp4")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("高品質（1080p, 60fps）")
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showExportDialog = false }) {
-                    Text("キャンセル")
-                }
-            }
-        )
     }
 
     // トランジション設定ダイアログ

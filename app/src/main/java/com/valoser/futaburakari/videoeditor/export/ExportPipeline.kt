@@ -7,7 +7,6 @@ import android.util.Log
 import android.opengl.GLES30
 import android.opengl.EGL14
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
-import com.valoser.futaburakari.videoeditor.domain.model.ExportPreset
 import com.valoser.futaburakari.videoeditor.domain.model.ExportProgress
 import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
 import com.valoser.futaburakari.videoeditor.domain.model.Keyframe
@@ -32,8 +31,26 @@ import java.nio.ByteOrder
 import javax.inject.Inject
 import kotlinx.coroutines.android.asCoroutineDispatcher
 
+private data class ExportSpec(
+    val width: Int,
+    val height: Int,
+    val frameRate: Int,
+    val videoBitrate: Int,
+    val audioBitrate: Int,
+    val audioSampleRate: Int,
+    val audioChannels: Int
+)
+
+private const val DEFAULT_WIDTH = 1920
+private const val DEFAULT_HEIGHT = 1080
+private const val DEFAULT_FRAME_RATE = 30
+private const val DEFAULT_VIDEO_BITRATE = 10_000_000
+private const val DEFAULT_AUDIO_BITRATE = 192_000
+private const val DEFAULT_AUDIO_SAMPLE_RATE = 48_000
+private const val DEFAULT_AUDIO_CHANNELS = 2
+
 interface ExportPipeline {
-    fun export(session: EditorSession, preset: ExportPreset, outputUri: Uri): Flow<ExportProgress>
+    fun export(session: EditorSession, outputUri: Uri): Flow<ExportProgress>
 }
 
 class ExportPipelineImpl @Inject constructor(
@@ -50,11 +67,11 @@ class ExportPipelineImpl @Inject constructor(
 
     override fun export(
         session: EditorSession,
-        preset: ExportPreset,
         outputUri: Uri
     ): Flow<ExportProgress> = flow {
         val totalDurationUs = session.videoClips.sumOf { (it.duration / it.speed).toLong() } * 1000
-        val totalFrames = (totalDurationUs / 1_000_000f * preset.frameRate).toInt()
+        val exportSpec = detectExportSpec(session)
+        val totalFrames = (totalDurationUs / 1_000_000f * exportSpec.frameRate).toInt()
         // ✅ エクスポート処理全体をIOディスパッチャで実行
         withContext(Dispatchers.IO) {
             Log.d(TAG, "=== Export Started ===")
@@ -63,16 +80,11 @@ class ExportPipelineImpl @Inject constructor(
                 Log.d(TAG, "Clip $index: duration=${clip.duration}ms, speed=${clip.speed}, position=${clip.position}ms")
                 Log.d(TAG, "Clip $index: startTime=${clip.startTime}ms, endTime=${clip.endTime}ms, source=${clip.source}")
             }
-            Log.d(TAG, "Preset: ${preset.width}x${preset.height} @ ${preset.frameRate}fps")
+            Log.d(TAG, "Export spec: ${exportSpec.width}x${exportSpec.height} @ ${exportSpec.frameRate}fps (videoBitrate=${exportSpec.videoBitrate}, audioSampleRate=${exportSpec.audioSampleRate}, audioChannels=${exportSpec.audioChannels}, audioBitrate=${exportSpec.audioBitrate})")
 
-            val sourceResolution = detectSourceResolution(session)
-            val targetWidth = sourceResolution?.first ?: preset.width
-            val targetHeight = sourceResolution?.second ?: preset.height
-            if (sourceResolution != null) {
-                Log.d(TAG, "Detected source resolution: ${sourceResolution.first}x${sourceResolution.second}")
-            } else {
-                Log.w(TAG, "Failed to detect source resolution; falling back to preset size.")
-            }
+            val sourceResolution = exportSpec.width to exportSpec.height
+            val targetWidth = exportSpec.width
+            val targetHeight = exportSpec.height
             Log.d(TAG, "Export resolution: ${targetWidth}x${targetHeight}")
 
             val pfd = context.contentResolver.openFileDescriptor(outputUri, "w")
@@ -89,8 +101,8 @@ class ExportPipelineImpl @Inject constructor(
             lateinit var videoProcessor: VideoProcessor
             lateinit var audioProcessor: AudioProcessor
 
-            val videoEncoder = VideoProcessor.createEncoder(preset, targetWidth, targetHeight)
-            val audioEncoder = AudioProcessor.createEncoder(preset)
+            val videoEncoder = VideoProcessor.createEncoder(exportSpec, targetWidth, targetHeight)
+            val audioEncoder = AudioProcessor.createEncoder(exportSpec)
             // ★ セッション内に本当に音声が存在するかで判定する(MediaExtractor は Closeable ではないので try/finally)
             val hasAudioNeeded = (audioEncoder != null) && session.videoClips.any { clip ->
                 var hasAudio = false
@@ -167,8 +179,8 @@ class ExportPipelineImpl @Inject constructor(
                 muxer,
                 muxerLock,
                 session,
-                preset.audioSampleRate,
-                preset.audioChannels,
+                exportSpec.audioSampleRate,
+                exportSpec.audioChannels,
                 startMuxerIfReady
             )
 
@@ -281,34 +293,83 @@ class ExportPipelineImpl @Inject constructor(
         Log.d(TAG, "Export finished.")
     }
 
-    private fun detectSourceResolution(session: EditorSession): Pair<Int, Int>? {
+    private fun detectExportSpec(session: EditorSession): ExportSpec {
+        var detectedWidth: Int? = null
+        var detectedHeight: Int? = null
+        var detectedFrameRate: Int? = null
+        var detectedVideoBitrate: Int? = null
+        var detectedAudioSampleRate: Int? = null
+        var detectedAudioChannels: Int? = null
+        var detectedAudioBitrate: Int? = null
+
         session.videoClips.forEach { clip ->
             val extractor = MediaExtractor()
             try {
                 extractor.setDataSource(context, clip.source, null)
-                val videoTrackIndex = extractor.findTrack("video/") ?: return@forEach
-                val format = extractor.getTrackFormat(videoTrackIndex)
-                var width = format.getInteger(MediaFormat.KEY_WIDTH)
-                var height = format.getInteger(MediaFormat.KEY_HEIGHT)
-                val rotation = if (format.containsKey(MediaFormat.KEY_ROTATION)) {
-                    format.getInteger(MediaFormat.KEY_ROTATION)
-                } else {
-                    0
+                val videoTrackIndex = extractor.findTrack("video/")
+                if (videoTrackIndex != null) {
+                    val format = extractor.getTrackFormat(videoTrackIndex)
+                    var width = format.getInteger(MediaFormat.KEY_WIDTH)
+                    var height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                    val rotation = if (format.containsKey(MediaFormat.KEY_ROTATION)) {
+                        format.getInteger(MediaFormat.KEY_ROTATION)
+                    } else {
+                        0
+                    }
+                    if (rotation == 90 || rotation == 270) {
+                        val tmp = width
+                        width = height
+                        height = tmp
+                    }
+                    if (detectedWidth == null || detectedHeight == null) {
+                        detectedWidth = width
+                        detectedHeight = height
+                        Log.d(TAG, "Detected source resolution: ${width}x${height}")
+                    }
+                    if (detectedFrameRate == null && format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                        detectedFrameRate = format.getInteger(MediaFormat.KEY_FRAME_RATE)
+                        Log.d(TAG, "Detected source frameRate: $detectedFrameRate")
+                    }
+                    if (detectedVideoBitrate == null && format.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                        detectedVideoBitrate = format.getInteger(MediaFormat.KEY_BIT_RATE)
+                        Log.d(TAG, "Detected source video bitrate: $detectedVideoBitrate")
+                    }
                 }
-                if (rotation == 90 || rotation == 270) {
-                    val tmp = width
-                    width = height
-                    height = tmp
+
+                val audioTrackIndex = extractor.findTrack("audio/")
+                if (audioTrackIndex != null) {
+                    val audioFormat = extractor.getTrackFormat(audioTrackIndex)
+                    if (detectedAudioSampleRate == null && audioFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        detectedAudioSampleRate = audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        Log.d(TAG, "Detected source audio sampleRate: $detectedAudioSampleRate")
+                    }
+                    if (detectedAudioChannels == null && audioFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                        detectedAudioChannels = audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        Log.d(TAG, "Detected source audio channels: $detectedAudioChannels")
+                    }
+                    if (detectedAudioBitrate == null && audioFormat.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                        detectedAudioBitrate = audioFormat.getInteger(MediaFormat.KEY_BIT_RATE)
+                        Log.d(TAG, "Detected source audio bitrate: $detectedAudioBitrate")
+                    }
                 }
-                return width to height
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse source resolution for ${clip.source}", e)
+                Log.w(TAG, "Failed to parse source spec for ${clip.source}", e)
             } finally {
                 extractor.release()
             }
         }
-        return null
+
+        return ExportSpec(
+            width = detectedWidth ?: DEFAULT_WIDTH,
+            height = detectedHeight ?: DEFAULT_HEIGHT,
+            frameRate = detectedFrameRate ?: DEFAULT_FRAME_RATE,
+            videoBitrate = detectedVideoBitrate ?: DEFAULT_VIDEO_BITRATE,
+            audioBitrate = detectedAudioBitrate ?: DEFAULT_AUDIO_BITRATE,
+            audioSampleRate = detectedAudioSampleRate ?: DEFAULT_AUDIO_SAMPLE_RATE,
+            audioChannels = detectedAudioChannels ?: DEFAULT_AUDIO_CHANNELS
+        )
     }
+
 }
 
 private class VideoProcessor(
@@ -692,11 +753,11 @@ private class VideoProcessor(
     }
 
     companion object {
-        fun createEncoder(preset: ExportPreset, width: Int, height: Int): MediaCodec {
+        fun createEncoder(exportSpec: ExportSpec, width: Int, height: Int): MediaCodec {
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, preset.videoBitrate)
-                setInteger(MediaFormat.KEY_FRAME_RATE, preset.frameRate)
+                setInteger(MediaFormat.KEY_BIT_RATE, exportSpec.videoBitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, exportSpec.frameRate)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 // ★ ビットレートモードをVBRに設定(互換性向上)
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
@@ -1277,13 +1338,13 @@ private class AudioProcessor(
     }
 
     companion object {
-        fun createEncoder(preset: ExportPreset): MediaCodec? {
+        fun createEncoder(exportSpec: ExportSpec): MediaCodec? {
             val format = MediaFormat.createAudioFormat(
                 MediaFormat.MIMETYPE_AUDIO_AAC,
-                preset.audioSampleRate,
-                preset.audioChannels
+                exportSpec.audioSampleRate,
+                exportSpec.audioChannels
             ).apply {
-                setInteger(MediaFormat.KEY_BIT_RATE, preset.audioBitrate)
+                setInteger(MediaFormat.KEY_BIT_RATE, exportSpec.audioBitrate)
                 setInteger(
                     MediaFormat.KEY_AAC_PROFILE,
                     MediaCodecInfo.CodecProfileLevel.AACObjectLC

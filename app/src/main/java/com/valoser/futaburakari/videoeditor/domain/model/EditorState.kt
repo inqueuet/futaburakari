@@ -116,7 +116,6 @@ sealed class EditorIntent {
 
     // エクスポート
     data class Export(
-        val preset: ExportPreset,
         val outputUri: android.net.Uri
     ) : EditorIntent()
 

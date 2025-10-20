@@ -529,7 +529,7 @@ class EditorViewModel @Inject constructor(
         _state.update { it.copy(isLoading = true) }
 
         try {
-            exportVideoUseCase.export(session, intent.preset, intent.outputUri)
+            exportVideoUseCase.export(session, intent.outputUri)
                 .collect { progress ->
                     android.util.Log.d("EditorViewModel", "Export progress: ${progress.percentage}%")
                     // エクスポート進捗を更新（必要に応じてstateに追加）
