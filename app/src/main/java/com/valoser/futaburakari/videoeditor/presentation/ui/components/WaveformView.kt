@@ -42,13 +42,34 @@ fun WaveformView(
 
     // 波形キャッシュ
     val waveformCache = remember { mutableStateMapOf<String, FloatArray>() }
+    val clipSignature = remember(track.clips) {
+        track.clips.map { clip ->
+            WaveformClipSignature(
+                id = clip.id,
+                start = clip.startTime,
+                end = clip.endTime,
+                position = clip.position
+            )
+        }
+    }
+    val currentClipIdsState = rememberUpdatedState(clipSignature.map { it.id }.toSet())
+
+    LaunchedEffect(clipSignature) {
+        // 存在しなくなったクリップIDの波形を即座に除去
+        val activeIds = currentClipIdsState.value
+        val staleKeys = waveformCache.keys.filter { it !in activeIds }
+        staleKeys.forEach { waveformCache.remove(it) }
+    }
 
     // 波形生成
-    LaunchedEffect(track) {
-        track.clips.forEach { clip ->
-            if (clip.sourceType != AudioSourceType.SILENCE && !waveformCache.containsKey(clip.id)) {
-                scope.launch {
-                    waveformGenerator.generate(clip).getOrNull()?.let { waveform ->
+    LaunchedEffect(clipSignature) {
+        clipSignature.forEach { signature ->
+            val clip = track.clips.firstOrNull { it.id == signature.id } ?: return@forEach
+            if (clip.sourceType == AudioSourceType.SILENCE || waveformCache.containsKey(clip.id)) return@forEach
+
+            scope.launch {
+                waveformGenerator.generate(clip).getOrNull()?.let { waveform ->
+                    if (currentClipIdsState.value.contains(clip.id)) {
                         waveformCache[clip.id] = waveform
                     }
                 }
@@ -120,3 +141,10 @@ fun WaveformView(
         }
     }
 }
+
+private data class WaveformClipSignature(
+    val id: String,
+    val start: Long,
+    val end: Long,
+    val position: Long
+)

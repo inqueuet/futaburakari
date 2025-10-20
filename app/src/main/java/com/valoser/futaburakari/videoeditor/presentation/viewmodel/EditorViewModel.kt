@@ -10,6 +10,8 @@ import com.valoser.futaburakari.videoeditor.domain.usecase.ExportVideoUseCase
 import com.valoser.futaburakari.videoeditor.domain.usecase.ApplyTransitionUseCase
 import com.valoser.futaburakari.videoeditor.media.player.PlayerEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -38,6 +40,7 @@ class EditorViewModel @Inject constructor(
     val events = _events.receiveAsFlow()
 
     private val _suppressPositionSync = MutableStateFlow(false)
+    private var prepareJob: Job? = null
 
     init {
         // PlayerEngineの現在位置をStateに同期
@@ -689,33 +692,41 @@ class EditorViewModel @Inject constructor(
             audioTracks = newAudioTracks
         )
 
-        val newSelection =
-            if (newSelectedVideoId != null) {
-                Selection.VideoClip(newSelectedVideoId!!)
-            } else if (newSelectedAudio != null) {
-                Selection.AudioClip(newSelectedAudio!!.first, newSelectedAudio!!.second)
-            } else {
-                _state.value.selection // If nothing was split, keep current selection
+        sessionManager.updateSession(newSession)
+            .onSuccess {
+                val newSelection =
+                    if (newSelectedVideoId != null) {
+                        Selection.VideoClip(newSelectedVideoId!!)
+                    } else if (newSelectedAudio != null) {
+                        Selection.AudioClip(newSelectedAudio!!.first, newSelectedAudio!!.second)
+                    } else {
+                        _state.value.selection // If nothing was split, keep current selection
+                    }
+
+                // Calculate new range selection
+                val currentRangeSelection = _state.value.rangeSelection
+                val updatedRangeSelection = currentRangeSelection?.let { r ->
+                    val rangeStart = r.start.value
+                    val newStart = minOf(rangeStart, playhead)
+                    val newEnd = maxOf(rangeStart, playhead)
+                    TimeRange.fromMillis(newStart, newEnd)
+                }
+
+                _state.update {
+                    it.copy(
+                        session = newSession,
+                        selection = newSelection,
+                        rangeSelection = updatedRangeSelection, // Update range selection
+                        splitMarkerPosition = null // Clear the marker after processing
+                    )
+                }
+                prepareSessionPreservePosition(newSession)
             }
-
-        // Calculate new range selection
-        val currentRangeSelection = _state.value.rangeSelection
-        val updatedRangeSelection = currentRangeSelection?.let { r ->
-            val rangeStart = r.start.value
-            val newStart = minOf(rangeStart, playhead)
-            val newEnd = maxOf(rangeStart, playhead)
-            TimeRange.fromMillis(newStart, newEnd)
-        }
-
-        _state.update {
-            it.copy(
-                session = newSession,
-                selection = newSelection,
-                rangeSelection = updatedRangeSelection, // Update range selection
-                splitMarkerPosition = null // Clear the marker after processing
-            )
-        }
-        prepareSessionPreservePosition(newSession)
+            .onFailure { error ->
+                android.util.Log.e("EditorViewModel", "splitAtPlayhead failed to persist session", error)
+                _events.send(EditorEvent.ShowError(error.message ?: "分割に失敗しました"))
+                _state.update { it.copy(splitMarkerPosition = null) }
+            }
     }
 
     private suspend fun deleteTimeRange(intent: EditorIntent.DeleteTimeRange) {
@@ -836,33 +847,41 @@ class EditorViewModel @Inject constructor(
     }
 
     private fun prepareSessionPreservePosition(
-    session: EditorSession,
-    targetMs: Long = _state.value.playhead
-) {
-    val wasPlaying = _state.value.isPlaying
-    _suppressPositionSync.value = true
+        session: EditorSession,
+        targetMs: Long = _state.value.playhead
+    ) {
+        val wasPlaying = _state.value.isPlaying
+        _suppressPositionSync.value = true
+        prepareJob?.cancel()
 
-    viewModelScope.launch {
-        // ★ durationが0または1の場合の境界値を適切に処理
-        val maxPosition = session.duration.coerceAtLeast(0L)
-        val safeTarget = if (maxPosition > 0) {
-            targetMs.coerceIn(0L, maxPosition)
-        } else {
-            0L
+        prepareJob = viewModelScope.launch {
+            try {
+                val maxPosition = session.duration.coerceAtLeast(0L)
+                val safeTarget = if (maxPosition > 0) {
+                    targetMs.coerceIn(0L, maxPosition)
+                } else {
+                    0L
+                }
+                _state.update { it.copy(playhead = safeTarget) }
+
+                playerEngine.prepareAndAwaitReady(session)
+
+                playerEngine.seekTo(safeTarget)
+                if (wasPlaying) {
+                    playerEngine.play()
+                } else {
+                    playerEngine.pause()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("EditorViewModel", "prepareSessionPreservePosition failed", e)
+            } finally {
+                _suppressPositionSync.value = false
+                prepareJob = null
+            }
         }
-        _state.update { it.copy(playhead = safeTarget) }
-
-        // 修正版 prepare
-        playerEngine.prepareAndAwaitReady(session)
-
-        playerEngine.seekTo(safeTarget)
-        if (wasPlaying) playerEngine.play() else playerEngine.pause()
-
-        // 少し余裕を持って同期解除
-        delay(300)
-        _suppressPositionSync.value = false
     }
-}
 
     override fun onCleared() {
         super.onCleared()
