@@ -31,13 +31,17 @@ media3 = "1.8.0"
 exifinterface = "1.4.1"
 hilt = "2.57.2"
 hiltWork = "1.3.0"
+hiltNavigation = "1.3.0"
 activityKtx = "1.11.0"
 preferenceKtx = "1.2.1"
 playServicesAds = "24.6.0"
 workManager = "2.10.5"
 firebaseBom = "34.3.0"
+javaxInject = "1"
 
 [libraries]
+media3-transformer = { group = "androidx.media3", name = "media3-transformer", version.ref = "media3" }
+inject-javax = { group = "javax.inject", name = "javax.inject", version.ref = "javaxInject" }
 # Compose/AndroidX の BOM/各種モジュールはバージョン参照に依存
 # 個別ライブラリの追加はこのセクションへ（重複登録に注意）
 # 注意: BOMを利用するもの（Compose/OkHttpなど）は必要に応じて `version.ref` を省略し、BOMに解決を委ねます
@@ -81,6 +85,7 @@ play-services-ads = { group = "com.google.android.gms", name = "play-services-ad
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }
 androidx-hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
 androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
+androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigation" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
 androidx-startup-runtime = { group = "androidx.startup", name = "startup-runtime", version.ref = "startup" }

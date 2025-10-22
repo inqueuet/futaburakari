@@ -39,7 +39,7 @@ android {
         applicationId = "com.valoser.futaburakari"
         minSdk = 24
         targetSdk = 36 // Android API 36
-        versionCode = 114 // 内部バージョン（Play Console 配信管理で使用）
+        versionCode = 122 // 内部バージョン（Play Console 配信管理で使用）
         versionName = "1.3" // 表示バージョン
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -113,6 +113,8 @@ dependencies {
     // Media3（ExoPlayer）
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    implementation(libs.media3.transformer)
+    implementation(libs.inject.javax)
     // Media3 Extractor は不要（動画プロンプト解析を削除済み）
     implementation(libs.androidx.exifinterface)
 
@@ -122,6 +124,7 @@ dependencies {
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+    implementation(libs.androidx.hilt.navigation.compose)
 
     // レガシー View 依存は最小限に留めつつ Compose に移行
     implementation(libs.androidx.activity.ktx)

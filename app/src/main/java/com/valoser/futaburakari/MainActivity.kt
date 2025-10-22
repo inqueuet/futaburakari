@@ -216,6 +216,7 @@ class MainActivity : BaseActivity() {
                         onOpenSettings = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
                         onOpenHistory = { startActivity(Intent(this@MainActivity, HistoryActivity::class.java)) },
                         onImageEdit = { startActivity(Intent(this@MainActivity, ImagePickerActivity::class.java)) },
+                        onVideoEdit = { startActivity(Intent(this@MainActivity, com.valoser.futaburakari.videoeditor.presentation.ui.EditorActivity::class.java)) },
                         onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
                         onItemClick = { item -> handleItemClick(item) },
                         ngRules = ngRulesState.value,

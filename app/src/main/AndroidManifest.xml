@@ -114,6 +114,12 @@
             android:name=".ExpressiveDemoActivity"
             android:exported="false"
             android:label="Expressive Demo" />
+        <!-- 動画編集画面 -->
+        <activity
+            android:name=".videoeditor.presentation.ui.EditorActivity"
+            android:exported="false"
+            android:label="動画編集"
+            android:theme="@style/Theme.Futaburakari" />
     </application>
 
 </manifest>
