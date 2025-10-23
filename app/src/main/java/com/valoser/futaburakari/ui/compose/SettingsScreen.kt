@@ -109,7 +109,14 @@ fun SettingsScreen(onBack: () -> Unit) {
     // カタログモード設定
     var catalogCx by remember { mutableStateOf(prefs.getString("pref_key_catalog_cx", "20") ?: "20") }
     var catalogCy by remember { mutableStateOf(prefs.getString("pref_key_catalog_cy", "10") ?: "10") }
-    var catalogCl by remember { mutableStateOf(prefs.getString("pref_key_catalog_cl", "10") ?: "10") }
+    var catalogCl by remember {
+        val stored = prefs.getString("pref_key_catalog_cl", "10")
+        val normalized = stored?.toIntOrNull()?.coerceIn(3, 15)?.toString() ?: "10"
+        if (normalized != stored) {
+            prefs.edit().putString("pref_key_catalog_cl", normalized).apply()
+        }
+        mutableStateOf(normalized)
+    }
     // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
     // 旧「カラーモード」設定は廃止
@@ -152,6 +159,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val themeValues = remember { ctx.resources.getStringArray(R.array.pref_theme_mode_values).toList() }
     val catalogDisplayEntries = remember { ctx.resources.getStringArray(R.array.pref_catalog_display_mode_entries).toList() }
     val catalogDisplayValues = remember { ctx.resources.getStringArray(R.array.pref_catalog_display_mode_values).toList() }
+    val catalogCharLimitOptions = remember { (3..15).map { it.toString() } }
     // removed: color mode entries/values
     val cleanupEntries = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_entries).toList() }
     val cleanupValues = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_values).toList() }
@@ -264,8 +272,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             item {
                 DropdownPreferenceRow(
                     title = "文字数",
-                    entries = listOf("5", "8", "10", "12", "15", "20"),
-                    values = listOf("5", "8", "10", "12", "15", "20"),
+                    entries = catalogCharLimitOptions,
+                    values = catalogCharLimitOptions,
                     value = catalogCl,
                     onValueChange = { v -> catalogCl = v; prefs.edit().putString("pref_key_catalog_cl", v).apply() }
                 )
