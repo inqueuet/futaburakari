@@ -58,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +89,7 @@ import com.valoser.futaburakari.ReplyViewModel
  * - `initialQuote`/`initialPassword`: コメント/削除キーの初期値。
  * - `uiState`: 送信状態（Loading 中は UI をロック）。
  * - `onBack`: 戻る押下時のハンドラ。
+ * - `onCommentChange`: コメント本文が変更された際に呼び出されるコールバック。
  * - `onSubmit`: 投稿実行のハンドラ（名前/メール/題名/削除キーは空文字を null に変換して渡す）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,6 +100,7 @@ fun ReplyScreen(
     initialPassword: String?,
     uiState: ReplyViewModel.UiState,
     onBack: () -> Unit,
+    onCommentChange: (String) -> Unit,
     onSubmit: (
         name: String?,
         email: String?,
@@ -111,7 +114,7 @@ fun ReplyScreen(
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var sub by remember { mutableStateOf("") }
-    var comment by remember { mutableStateOf(initialQuote) }
+    var comment by rememberSaveable(initialQuote) { mutableStateOf(initialQuote) }
     var pwd by remember { mutableStateOf(initialPassword ?: "") }
     var textOnly by remember { mutableStateOf(false) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
@@ -219,7 +222,10 @@ fun ReplyScreen(
             // コメント（必須）
             OutlinedTextField(
                 value = comment,
-                onValueChange = { comment = it },
+                onValueChange = {
+                    comment = it
+                    onCommentChange(it)
+                },
                 label = { Text("コメント") },
                 modifier = Modifier
                     .fillMaxWidth()

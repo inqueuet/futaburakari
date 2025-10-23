@@ -52,6 +52,44 @@ object AppPreferences {
         getPreferences(context).edit().putString(KEY_PWD, pwd).apply()
     }
 
+    /** レス投稿の下書き本文を保存するキーのプレフィックス。 */
+    private const val KEY_REPLY_DRAFT_PREFIX = "reply_draft_"
+
+    /** レス投稿の下書き本文を保存する際のキーを生成する。 */
+    private fun buildReplyDraftKey(boardUrl: String, threadId: String): String {
+        val boardHash = boardUrl.hashCode()
+        return "${KEY_REPLY_DRAFT_PREFIX}${boardHash}_$threadId"
+    }
+
+    /**
+     * 指定スレッド用のコメント下書きを保存する。
+     * 空文字列が渡された場合は保存済み下書きを削除する。
+     */
+    fun saveReplyDraft(context: Context, boardUrl: String, threadId: String, comment: String) {
+        if (boardUrl.isBlank() || threadId.isBlank()) return
+        val prefs = getPreferences(context)
+        val key = buildReplyDraftKey(boardUrl, threadId)
+        if (comment.isBlank()) {
+            prefs.edit().remove(key).apply()
+        } else {
+            prefs.edit().putString(key, comment).apply()
+        }
+    }
+
+    /** 指定スレッドのコメント下書きを取得する（未保存時は `null`）。 */
+    fun getReplyDraft(context: Context, boardUrl: String, threadId: String): String? {
+        if (boardUrl.isBlank() || threadId.isBlank()) return null
+        val key = buildReplyDraftKey(boardUrl, threadId)
+        return getPreferences(context).getString(key, null)
+    }
+
+    /** 指定スレッドのコメント下書きを削除する。 */
+    fun clearReplyDraft(context: Context, boardUrl: String, threadId: String) {
+        if (boardUrl.isBlank() || threadId.isBlank()) return
+        val key = buildReplyDraftKey(boardUrl, threadId)
+        getPreferences(context).edit().remove(key).apply()
+    }
+
     /** GUID を付与する設定かどうかを返す。未設定時は `true`。 */
     fun getAppendGuidOn(context: Context): Boolean {
         return getPreferences(context).getBoolean(KEY_APPEND_GUID, true)

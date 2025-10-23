@@ -32,7 +32,6 @@ class ReplyActivity : BaseActivity() {
 
     private val viewModel: ReplyViewModel by viewModels()
     private var pickedUri: Uri? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
@@ -57,16 +56,22 @@ class ReplyActivity : BaseActivity() {
         // 設定画面で保存している削除パスワードを取得
         val savedPwd = AppPreferences.getPwd(this)
 
+        val initialDraft = AppPreferences.getReplyDraft(this, boardUrl, threadId)
+        val initialComment = initialDraft?.takeUnless { it.isBlank() } ?: quote
+
 
         setContent {
             FutaburakariTheme(expressive = true) {
                 val uiState by viewModel.uiState.observeAsState(ReplyViewModel.UiState.Idle)
                 ReplyScreen(
                     title = threadTitle,
-                    initialQuote = quote,
+                    initialQuote = initialComment,
                     initialPassword = savedPwd,
                     uiState = uiState,
                     onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onCommentChange = { comment ->
+                        AppPreferences.saveReplyDraft(this, boardUrl, threadId, comment)
+                    },
                     onSubmit = { name, email, sub, com, pwd, upfile, textOnly ->
                         val comment = sanitizeComment(com)
                         if (boardUrl.isBlank() || threadId.isBlank()) {
@@ -102,6 +107,7 @@ class ReplyActivity : BaseActivity() {
             when (st) {
                 is ReplyViewModel.UiState.Success -> {
                     Toast.makeText(this, "投稿に成功しました", Toast.LENGTH_SHORT).show()
+                    AppPreferences.clearReplyDraft(this, boardUrl, threadId)
                     // レス番号を抽出して返す（例: "送信完了 No.12345"）
                     val resNumber = Regex("""No\.(\d+)""").find(st.html)?.groupValues?.getOrNull(1)
                     val resultIntent = Intent().apply {
