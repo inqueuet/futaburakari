@@ -118,6 +118,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
 import androidx.collection.LruCache
+import java.text.Normalizer
 
 /**
  * Compose の LazyColumn で利用する安定キー。
@@ -212,6 +213,90 @@ private fun isDeletedRes(text: DetailContent.Text): Boolean {
            text.htmlContent.contains("書き込みをした人によって削除されました")
 }
 
+/** 空白圧縮用の正規表現（重複レス検出向け）。 */
+private val duplicateWhitespaceRegex = Regex("\\s+")
+
+/**
+ * テキスト本文から重複検出に用いるキーを生成する。
+ * - 行ごとにZWSPや全角空白/＞/≫を正規化し、引用行(>)とヘッダ行(No./ID:)を除外。
+ * - 残った本文行を NFKC 正規化＋空白圧縮したうえで改行結合し、完全一致判定キーとする。
+ * - 本文行が存在しない場合は null を返し、重複判定の対象外とする。
+ */
+private fun buildDuplicateContentKey(plainText: String): String? {
+    val bodyLines = mutableListOf<String>()
+    for (line in plainText.lines()) {
+        var normalized = line.replace("\u200B", "")
+            .replace('　', ' ')
+            .replace('＞', '>')
+            .replace('≫', '>')
+            .trim()
+        if (normalized.isEmpty()) continue
+        if (normalized.startsWith(">")) continue
+        normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKC)
+        val collapsed = duplicateWhitespaceRegex.replace(normalized, " ").trim()
+        if (collapsed.isEmpty()) continue
+        if (collapsed.startsWith("No.", ignoreCase = true)) continue
+        if (collapsed.startsWith("ID:", ignoreCase = true)) continue
+        bodyLines += collapsed
+    }
+
+    if (bodyLines.isEmpty()) return null
+    return bodyLines.joinToString("\n")
+}
+
+/**
+ * 同一本文レスの過剰表示を制限する。対象レスを除去した際は、直後の Image/Video も併せて非表示にする。
+ *
+ * @param items 対象コンテンツ一覧（削除レス除去後）
+ * @param threshold 同一本文を許容する回数（この回数までは表示、それ以降は非表示）
+ */
+private fun filterDuplicateResponses(
+    items: List<DetailContent>,
+    threshold: Int,
+    plainTextCache: Map<String, String>,
+    plainTextOf: (DetailContent.Text) -> String
+): List<DetailContent> {
+    if (items.isEmpty()) return items
+    val limit = threshold.coerceAtLeast(1)
+    val result = mutableListOf<DetailContent>()
+    val counters = mutableMapOf<String, Int>()
+    var index = 0
+    var anyFiltered = false
+
+    while (index < items.size) {
+        val item = items[index]
+        if (item is DetailContent.Text) {
+            val plain = plainTextCache[item.id] ?: plainTextOf(item)
+            val key = buildDuplicateContentKey(plain)
+            if (key != null) {
+                val newCount = (counters[key] ?: 0) + 1
+                counters[key] = newCount
+                if (newCount <= limit) {
+                    result += item
+                    index++
+                } else {
+                    anyFiltered = true
+                    index++
+                    while (index < items.size) {
+                        val attachment = items[index]
+                        if (attachment is DetailContent.Image || attachment is DetailContent.Video) {
+                            anyFiltered = true
+                            index++
+                        } else {
+                            break
+                        }
+                    }
+                }
+                continue
+            }
+        }
+        result += item
+        index++
+    }
+
+    return if (anyFiltered) result else items
+}
+
 @Composable
 fun DetailListCompose(
     items: List<DetailContent>,
@@ -266,10 +351,19 @@ fun DetailListCompose(
 
     // 削除レス非表示設定を読み込み
     val hideDeletedRes = remember { com.valoser.futaburakari.AppPreferences.getHideDeletedRes(context) }
+    val hideDuplicateRes = remember { com.valoser.futaburakari.AppPreferences.getHideDuplicateRes(context) }
+    val duplicateResThreshold = remember { com.valoser.futaburakari.AppPreferences.getDuplicateResThreshold(context) }
 
-    // 削除レスをフィルタリング（設定が有効な場合のみ）
-    val filteredItems = remember(items, hideDeletedRes) {
-        if (hideDeletedRes) {
+    // 削除レス・重複レスをフィルタリング（各設定が有効な場合のみ）
+    val filteredItems = remember(
+        items,
+        hideDeletedRes,
+        hideDuplicateRes,
+        duplicateResThreshold,
+        plainTextCache,
+        plainTextOf
+    ) {
+        val withoutDeleted = if (hideDeletedRes) {
             items.filter { item ->
                 when (item) {
                     is DetailContent.Text -> !isDeletedRes(item)
@@ -278,6 +372,17 @@ fun DetailListCompose(
             }
         } else {
             items
+        }
+
+        if (hideDuplicateRes) {
+            filterDuplicateResponses(
+                withoutDeleted,
+                duplicateResThreshold,
+                plainTextCache,
+                plainTextOf
+            )
+        } else {
+            withoutDeleted
         }
     }
 

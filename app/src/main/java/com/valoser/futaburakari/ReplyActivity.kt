@@ -2,18 +2,17 @@ package com.valoser.futaburakari
 
 import android.content.Intent
 import android.net.Uri
-import java.nio.charset.Charset
 import android.os.Bundle
 import android.view.MenuItem
 import android.widget.Toast
-import androidx.activity.viewModels
 import androidx.activity.compose.setContent
-import androidx.preference.PreferenceManager
-import dagger.hilt.android.AndroidEntryPoint
-import com.valoser.futaburakari.ui.compose.ReplyScreen
-import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import com.valoser.futaburakari.ui.compose.ReplyScreen
+import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import dagger.hilt.android.AndroidEntryPoint
+import java.nio.charset.Charset
 
 /**
  * Compose ベースの返信画面。
@@ -33,7 +32,6 @@ class ReplyActivity : BaseActivity() {
 
     private val viewModel: ReplyViewModel by viewModels()
     private var pickedUri: Uri? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
@@ -58,16 +56,22 @@ class ReplyActivity : BaseActivity() {
         // 設定画面で保存している削除パスワードを取得
         val savedPwd = AppPreferences.getPwd(this)
 
+        val initialDraft = AppPreferences.getReplyDraft(this, boardUrl, threadId)
+        val initialComment = initialDraft?.takeUnless { it.isBlank() } ?: quote
+
 
         setContent {
             FutaburakariTheme(expressive = true) {
                 val uiState by viewModel.uiState.observeAsState(ReplyViewModel.UiState.Idle)
                 ReplyScreen(
                     title = threadTitle,
-                    initialQuote = quote,
+                    initialQuote = initialComment,
                     initialPassword = savedPwd,
                     uiState = uiState,
                     onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onCommentChange = { comment ->
+                        AppPreferences.saveReplyDraft(this, boardUrl, threadId, comment)
+                    },
                     onSubmit = { name, email, sub, com, pwd, upfile, textOnly ->
                         val comment = sanitizeComment(com)
                         if (boardUrl.isBlank() || threadId.isBlank()) {
@@ -103,6 +107,7 @@ class ReplyActivity : BaseActivity() {
             when (st) {
                 is ReplyViewModel.UiState.Success -> {
                     Toast.makeText(this, "投稿に成功しました", Toast.LENGTH_SHORT).show()
+                    AppPreferences.clearReplyDraft(this, boardUrl, threadId)
                     // レス番号を抽出して返す（例: "送信完了 No.12345"）
                     val resNumber = Regex("""No\.(\d+)""").find(st.html)?.groupValues?.getOrNull(1)
                     val resultIntent = Intent().apply {
@@ -124,7 +129,7 @@ class ReplyActivity : BaseActivity() {
     /**
      * 入力本文を送信用に正規化する。
      * - 改行コード（CR/LF）や不可視文字を統一/除去
-     * - Shift_JIS にエンコードできない文字を '?' に置換
+     * - Shift_JIS にエンコードできない文字を HTML 数値文字参照に変換
      */
     private fun sanitizeComment(text: String): String {
         // 1. 既存の正規化処理を先に実行
@@ -135,19 +140,28 @@ class ReplyActivity : BaseActivity() {
             .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
             .replace(Regex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]"), "")
 
-        // 2. Shift_JISでエンコードできない文字をチェックして '?' に置き換える
-        val sjisCharset = Charset.forName("Shift_JIS")
-        val encoder = sjisCharset.newEncoder()
+        // 2. Shift_JISでエンコードできない文字は数値文字参照へフォールバック
+        val encoder = Charset.forName("Shift_JIS").newEncoder()
         val builder = StringBuilder(normalizedText.length)
+        var index = 0
 
-        for (char in normalizedText) {
-            if (encoder.canEncode(char)) {
-                // エンコード可能な文字はそのまま追加
-                builder.append(char)
-            } else {
-                // エンコード不能な文字は '?' に置き換える（または除去も可能）
-                builder.append('?')
+        while (index < normalizedText.length) {
+            val codePoint = normalizedText.codePointAt(index)
+            val chars = Character.toChars(codePoint)
+            val encodable = try {
+                encoder.canEncode(String(chars))
+            } finally {
+                encoder.reset()
             }
+
+            if (encodable) {
+                builder.append(chars)
+            } else {
+                // Shift_JISに無い文字（例: 絵文字）は数値文字参照にして送信
+                builder.append("&#").append(codePoint).append(';')
+            }
+
+            index += chars.size
         }
         return builder.toString()
     }

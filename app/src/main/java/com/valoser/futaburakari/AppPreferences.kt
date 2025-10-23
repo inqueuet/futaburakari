@@ -22,6 +22,10 @@ object AppPreferences {
     private const val KEY_APPEND_GUID = "append_guid_on"
     /** 削除されたレスを非表示にするかどうかのフラグキー。 */
     private const val KEY_HIDE_DELETED_RES = "hide_deleted_res"
+    /** 重複レスを非表示にするかどうかのフラグキー。 */
+    private const val KEY_HIDE_DUPLICATE_RES = "hide_duplicate_res"
+    /** 重複レスの非表示閾値を保存するキー。 */
+    private const val KEY_DUPLICATE_RES_THRESHOLD = "duplicate_res_threshold"
     /** 全体の並列度（1..4）のキー。 */
     private const val KEY_CONCURRENCY_LEVEL = "concurrency_level"
     /** フル画像アップグレード用の並列度（レガシー。現状は全体と統合）のキー。 */
@@ -52,6 +56,44 @@ object AppPreferences {
         getPreferences(context).edit().putString(KEY_PWD, pwd).apply()
     }
 
+    /** レス投稿の下書き本文を保存するキーのプレフィックス。 */
+    private const val KEY_REPLY_DRAFT_PREFIX = "reply_draft_"
+
+    /** レス投稿の下書き本文を保存する際のキーを生成する。 */
+    private fun buildReplyDraftKey(boardUrl: String, threadId: String): String {
+        val boardHash = boardUrl.hashCode()
+        return "${KEY_REPLY_DRAFT_PREFIX}${boardHash}_$threadId"
+    }
+
+    /**
+     * 指定スレッド用のコメント下書きを保存する。
+     * 空文字列が渡された場合は保存済み下書きを削除する。
+     */
+    fun saveReplyDraft(context: Context, boardUrl: String, threadId: String, comment: String) {
+        if (boardUrl.isBlank() || threadId.isBlank()) return
+        val prefs = getPreferences(context)
+        val key = buildReplyDraftKey(boardUrl, threadId)
+        if (comment.isBlank()) {
+            prefs.edit().remove(key).apply()
+        } else {
+            prefs.edit().putString(key, comment).apply()
+        }
+    }
+
+    /** 指定スレッドのコメント下書きを取得する（未保存時は `null`）。 */
+    fun getReplyDraft(context: Context, boardUrl: String, threadId: String): String? {
+        if (boardUrl.isBlank() || threadId.isBlank()) return null
+        val key = buildReplyDraftKey(boardUrl, threadId)
+        return getPreferences(context).getString(key, null)
+    }
+
+    /** 指定スレッドのコメント下書きを削除する。 */
+    fun clearReplyDraft(context: Context, boardUrl: String, threadId: String) {
+        if (boardUrl.isBlank() || threadId.isBlank()) return
+        val key = buildReplyDraftKey(boardUrl, threadId)
+        getPreferences(context).edit().remove(key).apply()
+    }
+
     /** GUID を付与する設定かどうかを返す。未設定時は `true`。 */
     fun getAppendGuidOn(context: Context): Boolean {
         return getPreferences(context).getBoolean(KEY_APPEND_GUID, true)
@@ -70,6 +112,28 @@ object AppPreferences {
     /** 削除されたレスの非表示を有効/無効にする。 */
     fun setHideDeletedRes(context: Context, enabled: Boolean) {
         getPreferences(context).edit().putBoolean(KEY_HIDE_DELETED_RES, enabled).apply()
+    }
+
+    /** 重複するレスを非表示にする設定かどうかを返す。未設定時は `false`。 */
+    fun getHideDuplicateRes(context: Context): Boolean {
+        return getPreferences(context).getBoolean(KEY_HIDE_DUPLICATE_RES, false)
+    }
+
+    /** 重複するレスの非表示を有効/無効にする。 */
+    fun setHideDuplicateRes(context: Context, enabled: Boolean) {
+        getPreferences(context).edit().putBoolean(KEY_HIDE_DUPLICATE_RES, enabled).apply()
+    }
+
+    /** 重複レスを非表示にする際の閾値（n回目以降を隠す）を取得。未設定時は `3`、最小値は `2`。 */
+    fun getDuplicateResThreshold(context: Context): Int {
+        val raw = getPreferences(context).getInt(KEY_DUPLICATE_RES_THRESHOLD, 3)
+        return raw.coerceAtLeast(2)
+    }
+
+    /** 重複レスの非表示閾値を保存。2〜20の範囲に丸める。 */
+    fun setDuplicateResThreshold(context: Context, threshold: Int) {
+        val value = threshold.coerceIn(2, 20)
+        getPreferences(context).edit().putInt(KEY_DUPLICATE_RES_THRESHOLD, value).apply()
     }
 
     /**

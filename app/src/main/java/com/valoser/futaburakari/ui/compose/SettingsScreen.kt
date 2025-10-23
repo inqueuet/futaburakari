@@ -68,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.preference.PreferenceManager
@@ -109,7 +110,14 @@ fun SettingsScreen(onBack: () -> Unit) {
     // カタログモード設定
     var catalogCx by remember { mutableStateOf(prefs.getString("pref_key_catalog_cx", "20") ?: "20") }
     var catalogCy by remember { mutableStateOf(prefs.getString("pref_key_catalog_cy", "10") ?: "10") }
-    var catalogCl by remember { mutableStateOf(prefs.getString("pref_key_catalog_cl", "10") ?: "10") }
+    var catalogCl by remember {
+        val stored = prefs.getString("pref_key_catalog_cl", "10")
+        val normalized = stored?.toIntOrNull()?.coerceIn(3, 15)?.toString() ?: "10"
+        if (normalized != stored) {
+            prefs.edit().putString("pref_key_catalog_cl", normalized).apply()
+        }
+        mutableStateOf(normalized)
+    }
     // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
     // 旧「カラーモード」設定は廃止
@@ -152,6 +160,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val themeValues = remember { ctx.resources.getStringArray(R.array.pref_theme_mode_values).toList() }
     val catalogDisplayEntries = remember { ctx.resources.getStringArray(R.array.pref_catalog_display_mode_entries).toList() }
     val catalogDisplayValues = remember { ctx.resources.getStringArray(R.array.pref_catalog_display_mode_values).toList() }
+    val catalogCharLimitOptions = remember { (3..15).map { it.toString() } }
     // removed: color mode entries/values
     val cleanupEntries = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_entries).toList() }
     val cleanupValues = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_values).toList() }
@@ -264,8 +273,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             item {
                 DropdownPreferenceRow(
                     title = "文字数",
-                    entries = listOf("5", "8", "10", "12", "15", "20"),
-                    values = listOf("5", "8", "10", "12", "15", "20"),
+                    entries = catalogCharLimitOptions,
+                    values = catalogCharLimitOptions,
                     value = catalogCl,
                     onValueChange = { v -> catalogCl = v; prefs.edit().putString("pref_key_catalog_cl", v).apply() }
                 )
@@ -291,6 +300,36 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ) { on ->
                     hideDeletedRes = on
                     AppPreferences.setHideDeletedRes(ctx, on)
+                }
+            }
+            item {
+                var hideDuplicateRes by remember { mutableStateOf(AppPreferences.getHideDuplicateRes(ctx)) }
+                var duplicateThreshold by remember { mutableStateOf(AppPreferences.getDuplicateResThreshold(ctx)) }
+                val entries = remember { (2..10).map { "$it 回まで表示" } }
+                val values = remember { (2..10).map { it.toString() } }
+                Column {
+                    SwitchRow(
+                        title = "同一本文レスを制限",
+                        checked = hideDuplicateRes,
+                        summary = "同じ本文が繰り返される荒らしレスを閾値以降は表示しません"
+                    ) { on ->
+                        hideDuplicateRes = on
+                        AppPreferences.setHideDuplicateRes(ctx, on)
+                    }
+                    Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
+                    DropdownPreferenceRow(
+                        title = "同じ本文を表示する回数",
+                        entries = entries,
+                        values = values,
+                        value = duplicateThreshold.toString(),
+                        summary = "同じ本文は${duplicateThreshold + 1}回目から非表示になります",
+                        enabled = hideDuplicateRes,
+                        onValueChange = { v ->
+                            val newValue = v.toIntOrNull()?.coerceIn(2, 10) ?: duplicateThreshold
+                            duplicateThreshold = newValue
+                            AppPreferences.setDuplicateResThreshold(ctx, newValue)
+                        }
+                    )
                 }
             }
 
@@ -573,6 +612,7 @@ private fun DropdownPreferenceRow(
     values: List<String>,
     value: String,
     summary: String = "",
+    enabled: Boolean = true,
     onValueChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -583,11 +623,17 @@ private fun DropdownPreferenceRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
+            .alpha(if (enabled) 1f else 0.5f)
     ) {
-        Column(
-            modifier = Modifier
+        val contentModifier = if (enabled) {
+            Modifier
                 .fillMaxWidth()
                 .clickable { expanded = true }
+        } else {
+            Modifier.fillMaxWidth()
+        }
+        Column(
+            modifier = contentModifier
         ) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Spacer(modifier = Modifier.size(LocalSpacing.current.xxs))
@@ -599,7 +645,7 @@ private fun DropdownPreferenceRow(
         }
 
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && enabled,
             onDismissRequest = { expanded = false }
         ) {
             values.forEachIndexed { index, v ->

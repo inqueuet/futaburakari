@@ -511,7 +511,12 @@ class MainActivity : BaseActivity() {
         // 設定から値を取得
         val cx = prefs.getString("pref_key_catalog_cx", "20") ?: "20"
         val cy = prefs.getString("pref_key_catalog_cy", "10") ?: "10"
-        val cl = prefs.getString("pref_key_catalog_cl", "10") ?: "10"
+        val rawCl = prefs.getString("pref_key_catalog_cl", "10")
+        val clInt = rawCl?.toIntOrNull()?.coerceIn(3, 15) ?: 10
+        val cl = clInt.toString()
+        if (cl != rawCl) {
+            prefs.edit().putString("pref_key_catalog_cl", cl).apply()
+        }
 
         val settings = mapOf("mode" to "catset", "cx" to cx, "cy" to cy, "cl" to cl)
         withContext(Dispatchers.IO) {
