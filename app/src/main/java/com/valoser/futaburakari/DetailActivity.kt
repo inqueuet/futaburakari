@@ -243,15 +243,6 @@ class DetailActivity : BaseActivity() {
                         if (resBody.isNotEmpty()) launchReplyActivity(resBody)
                     },
                     onResNumConfirmClick = { _ -> },
-                    onResNumDelClick = { resNum ->
-                        // 旧アダプタと同等の削除動作を実行
-                        val url = currentUrl ?: return@DetailScreenScaffold
-                        val threadId = url.substringAfterLast("/").substringBefore(".htm")
-                        val boardBasePath = url.substringBeforeLast("/").substringBeforeLast("/") + "/"
-                        val postUrl = boardBasePath + "futaba.php?guid=on"
-                        val pwd = AppPreferences.getPwd(this)
-                        viewModel.deletePost(postUrl, url, resNum, pwd ?: "", onlyImage = false)
-                    },
                     onBodyClick = { quotedBody -> launchReplyActivity(quotedBody) },
                     // Compose側でNG追加ダイアログを表示するため、ここでは何もしない
                     onAddNgFromBody = { _ -> },

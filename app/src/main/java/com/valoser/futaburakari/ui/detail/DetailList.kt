@@ -968,7 +968,7 @@ fun DetailListCompose(
         }
     }
 
-    // No. タップメニュー（返信 / 確認）
+    // No. タップメニュー（返信 / 確認 / 削除）
     resNumForDialog?.let { resDialog ->
         AlertDialog(
             onDismissRequest = { resNumForDialog = null },
@@ -987,6 +987,12 @@ fun DetailListCompose(
                         onResNumConfirmClick?.invoke(resDialog)
                         resNumForDialog = null
                     }) { androidx.compose.material3.Text("確認") }
+                    onResNumDelClick?.let { handleDelete ->
+                        TextButton(onClick = {
+                            handleDelete(resDialog)
+                            resNumForDialog = null
+                        }) { androidx.compose.material3.Text("削除") }
+                    }
                 }
             }
         )
