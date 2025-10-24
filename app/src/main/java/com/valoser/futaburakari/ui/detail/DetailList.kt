@@ -245,6 +245,107 @@ private fun buildDuplicateContentKey(plainText: String): String? {
 }
 
 /**
+ * 荒らし判定向けに本文行を正規化する。
+ * - ZWSP や全角空白/＞を標準化し、NFKC 正規化＋空白圧縮を行う。
+ * - 空文字列やヘッダ行(No./ID:)は対象外とする。
+ */
+private fun normalizeBodyLineForQuoteDetection(raw: String): String? {
+    var normalized = raw
+        .replace("\u200B", "")
+        .replace('　', ' ')
+        .replace('＞', '>')
+        .trim()
+    if (normalized.isEmpty()) return null
+    normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKC)
+    normalized = duplicateWhitespaceRegex.replace(normalized, " ").trim()
+    if (normalized.isEmpty()) return null
+    if (normalized.startsWith("No.", ignoreCase = true)) return null
+    if (normalized.startsWith("ID:", ignoreCase = true)) return null
+    return normalized
+}
+
+/**
+ * 実在しない本文への引用行（>xxx）が突然出現したレスを除去する。
+ *
+ * 直前までのレス本文（引用行を除く）を記録し、シングル引用行 (> もしくは 全角＞) が
+ * 既出本文に一致しない場合は荒らしと見なしてレス＋後続メディアを非表示とする。
+ */
+private fun filterPhantomQuoteResponses(
+    items: List<DetailContent>,
+    plainTextCache: Map<String, String>,
+    plainTextOf: (DetailContent.Text) -> String
+): List<DetailContent> {
+    if (items.isEmpty()) return items
+    val seenBodyLines = mutableSetOf<String>()
+    val result = mutableListOf<DetailContent>()
+    var index = 0
+    var anyFiltered = false
+
+    while (index < items.size) {
+        val item = items[index]
+        if (item is DetailContent.Text) {
+            val plain = plainTextCache[item.id] ?: plainTextOf(item)
+            val lines = plain.lines()
+
+            var hide = false
+            lines@ for (line in lines) {
+                val normalizedSource = line
+                    .replace("\u200B", "")
+                    .replace('　', ' ')
+                    .replace('＞', '>')
+                val trimmedStart = normalizedSource.trimStart()
+                if (!trimmedStart.startsWith(">")) continue
+                val leadingGtCount = trimmedStart.takeWhile { it == '>' }.length
+                if (leadingGtCount != 1) continue
+                val quoteBody = trimmedStart.drop(leadingGtCount).trimStart()
+                val normalizedQuote = normalizeBodyLineForQuoteDetection(quoteBody) ?: continue
+                if (normalizedQuote.length < 2) continue
+                if (normalizedQuote.all { it.isDigit() }) continue
+                if (normalizedQuote !in seenBodyLines) {
+                    hide = true
+                    break@lines
+                }
+            }
+
+            if (hide) {
+                anyFiltered = true
+                index++
+                while (index < items.size) {
+                    val attachment = items[index]
+                    if (attachment is DetailContent.Image || attachment is DetailContent.Video) {
+                        anyFiltered = true
+                        index++
+                    } else {
+                        break
+                    }
+                }
+                continue
+            } else {
+                result += item
+                for (line in lines) {
+                    val normalized = normalizeBodyLineForQuoteDetection(line) ?: continue
+                    val trimmedStart = line
+                        .replace("\u200B", "")
+                        .replace('　', ' ')
+                        .replace('＞', '>')
+                        .trimStart()
+                    val leadingGt = trimmedStart.takeWhile { it == '>' }.length
+                    if (leadingGt == 0) {
+                        seenBodyLines += normalized
+                    }
+                }
+                index++
+            }
+        } else {
+            result += item
+            index++
+        }
+    }
+
+    return if (anyFiltered) result else items
+}
+
+/**
  * 同一本文レスの過剰表示を制限する。対象レスを除去した際は、直後の Image/Video も併せて非表示にする。
  *
  * @param items 対象コンテンツ一覧（削除レス除去後）
@@ -374,15 +475,21 @@ fun DetailListCompose(
             items
         }
 
+        val withoutPhantomQuotes = filterPhantomQuoteResponses(
+            withoutDeleted,
+            plainTextCache,
+            plainTextOf
+        )
+
         if (hideDuplicateRes) {
             filterDuplicateResponses(
-                withoutDeleted,
+                withoutPhantomQuotes,
                 duplicateResThreshold,
                 plainTextCache,
                 plainTextOf
             )
         } else {
-            withoutDeleted
+            withoutPhantomQuotes
         }
     }
 
@@ -968,7 +1075,7 @@ fun DetailListCompose(
         }
     }
 
-    // No. タップメニュー（返信 / 確認）
+    // No. タップメニュー（返信 / 確認 / 削除）
     resNumForDialog?.let { resDialog ->
         AlertDialog(
             onDismissRequest = { resNumForDialog = null },
@@ -987,6 +1094,12 @@ fun DetailListCompose(
                         onResNumConfirmClick?.invoke(resDialog)
                         resNumForDialog = null
                     }) { androidx.compose.material3.Text("確認") }
+                    onResNumDelClick?.let { handleDelete ->
+                        TextButton(onClick = {
+                            handleDelete(resDialog)
+                            resNumForDialog = null
+                        }) { androidx.compose.material3.Text("削除") }
+                    }
                 }
             }
         )

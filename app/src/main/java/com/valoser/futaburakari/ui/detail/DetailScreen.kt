@@ -213,7 +213,6 @@ fun DetailScreenScaffold(
     promptLoadingIdsFlow: StateFlow<Set<String>>? = null,
 ) {
     var query by remember { mutableStateOf("") }
-    var reportTarget by remember { mutableStateOf<String?>(null) }
     val localSearchActive = remember { mutableStateOf(false) }
     val searchActive: Boolean = searchActiveFlow?.collectAsState(initial = false)?.value ?: localSearchActive.value
     val setSearchActive = remember(onSearchActiveChange) {
@@ -496,7 +495,7 @@ fun DetailScreenScaffold(
                         onSodaneClick = onSodaneClick,
                         onThreadEndTimeClick = onThreadEndTimeClick,
                         onResNumClick = { resNum, resBody ->
-                            if (resBody.isEmpty()) deleteTarget = resNum else onResNumClick?.invoke(resNum, resBody)
+                            onResNumClick?.invoke(resNum, resBody)
                         },
                         onResNumConfirmClick = { resNum ->
                             // No. 参照の集計は重いためバックグラウンドで実施し、完了後にシートへ反映
@@ -513,7 +512,9 @@ fun DetailScreenScaffold(
                                 }
                             }
                         },
-                        onResNumDelClick = { resNum -> reportTarget = resNum },
+                        onResNumDelClick = { resNum ->
+                            deleteTarget = resNum
+                        },
                         onIdClick = { id -> idMenuTarget = id },
                         onBodyClick = onBodyClick,
                         onAddNgFromBody = { body -> pendingNgBody = body },

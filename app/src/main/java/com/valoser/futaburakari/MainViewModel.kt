@@ -58,6 +58,7 @@ import javax.inject.Inject
 import android.util.LruCache
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
+import com.valoser.futaburakari.worker.ThreadMonitorWorker
 
 @HiltViewModel
 /**
@@ -107,6 +108,7 @@ class MainViewModel @Inject constructor(
     // URL推測結果をキャッシュ（サイズを拡大）
     private val urlGuessCache = LruCache<String, String?>(500)
     private val failedUrlCache = LruCache<String, Boolean>(200)
+    private val threadWatchStore by lazy { ThreadWatchStore(appContext) }
 
     // 画像ロード/解析などの IO をまとめる専用 Dispatcher（並列度を制限）
     private val ImageLoadingDispatcher = Dispatchers.IO.limitedParallelism(16)
@@ -665,6 +667,8 @@ class MainViewModel @Inject constructor(
                         "VM_FETCH",
                         "Merged ${merged.size} items, ${merged.count { it.fullImageUrl != null }} have full URLs"
                     )
+                    runCatching { autoRegisterThreadWatch(merged) }
+                        .onFailure { e -> Log.w("MainViewModel", "Thread watch auto registration failed", e) }
                 } else {
                     Log.d("VM_FETCH", "Drop merged result for stale fetch: $url")
                 }
@@ -693,6 +697,54 @@ class MainViewModel @Inject constructor(
 
         fetchJob = job
         fetchJobUrl = url
+    }
+
+    /** 監視キーワードとタイトルが一致したスレッドを履歴へ登録し、監視をスケジュールする。 */
+    private fun autoRegisterThreadWatch(items: List<ImageItem>) {
+        if (items.isEmpty()) return
+
+        val watchEntries = runCatching { threadWatchStore.getEntries() }.getOrElse { emptyList() }
+        if (watchEntries.isEmpty()) return
+
+        val keywords = watchEntries.mapNotNull { entry ->
+            val keyword = entry.keyword.trim()
+            keyword.takeIf { it.isNotEmpty() }
+        }
+        if (keywords.isEmpty()) return
+
+        val historyKeys = runCatching { HistoryManager.getAll(appContext) }
+            .getOrElse { emptyList() }
+            .map { it.key }
+            .toSet()
+
+        items.forEach { item ->
+            val normalizedTitle = item.title.trim()
+            if (normalizedTitle.isEmpty()) return@forEach
+
+            val matched = keywords.any { keyword ->
+                normalizedTitle.contains(keyword, ignoreCase = true)
+            }
+            if (!matched) return@forEach
+
+            val threadUrl = item.detailUrl
+            val historyKey = UrlNormalizer.threadKey(threadUrl)
+
+            if (!historyKeys.contains(historyKey)) {
+                runCatching {
+                    HistoryManager.addOrUpdate(
+                        appContext,
+                        threadUrl,
+                        normalizedTitle,
+                        item.previewUrl.takeUnless { it.isBlank() }
+                    )
+                }.onFailure { e ->
+                    Log.w("MainViewModel", "Failed to add history for watched thread: $threadUrl", e)
+                }
+            }
+
+            runCatching { ThreadMonitorWorker.schedule(appContext, threadUrl) }
+                .onFailure { e -> Log.w("MainViewModel", "Failed to schedule monitor for $threadUrl", e) }
+        }
     }
 
     /**
