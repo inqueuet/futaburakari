@@ -83,6 +83,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.valoser.futaburakari.MyApplication
+import com.valoser.futaburakari.ThreadWatchManagerActivity
 import kotlin.math.roundToInt
 
 /**
@@ -289,6 +290,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                     ctx.startActivity(Intent(ctx, NgManagerActivity::class.java).apply {
                         putExtra(NgManagerActivity.EXTRA_LIMIT_RULE_TYPE, RuleType.TITLE.name)
                     })
+                }
+            }
+            item {
+                ListRow(
+                    title = "スレ監視キーワード",
+                    summary = "タイトルと一致したスレッドを自動で履歴へ追加・監視します"
+                ) {
+                    ctx.startActivity(Intent(ctx, ThreadWatchManagerActivity::class.java))
                 }
             }
             item {

@@ -109,6 +109,11 @@
         <activity android:name=".NgManagerActivity"
             android:label="NG管理"
             android:exported="false" />
+        <!-- スレ監視キーワード管理画面（外部公開なし） -->
+        <activity
+            android:name=".ThreadWatchManagerActivity"
+            android:label="スレ監視キーワード"
+            android:exported="false" />
         <!-- 開発用: Material 3 Expressive デモ（外部公開なし） -->
         <activity
             android:name=".ExpressiveDemoActivity"
