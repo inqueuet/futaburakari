@@ -81,10 +81,10 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     // Compose Foundation（LazyVerticalGrid など）
-    implementation("androidx.compose.foundation:foundation")
+    implementation(libs.androidx.compose.foundation)
 
     // Material Icons（拡張）
-    implementation("androidx.compose.material:material-icons-extended")
+    implementation(libs.androidx.compose.material.icons.extended)
 
     // ViewModel for Compose（compose-viewmodel）
     implementation(libs.androidx.lifecycle.viewmodel.compose.android)
@@ -95,18 +95,17 @@ dependencies {
     // Lifecycle 対応の state 収集
     implementation(libs.androidx.lifecycle.runtime.compose)
     // LiveData → Compose State 変換
-    implementation("androidx.compose.runtime:runtime-livedata")
+    implementation(libs.androidx.compose.runtime.livedata)
 
     // ネットワーク（OkHttp）/ JSON（Gson）
     // - `libs.okhttp` と BOM によりバージョンを統一しつつ、必要な OkHttp モジュールを明示的に追加
     implementation(libs.okhttp)
     implementation(platform(libs.okhttp.bom))
-    implementation("com.squareup.okhttp3:okhttp")
-    implementation("com.squareup.okhttp3:okhttp-android")
-    implementation("com.squareup.okhttp3:okhttp-tls")
-    implementation("com.squareup.okhttp3:okhttp-sse")
-    implementation("com.squareup.okhttp3:okhttp-urlconnection")
-    implementation("com.squareup.okhttp3:okhttp-coroutines")
+    implementation(libs.okhttp.android)
+    implementation(libs.okhttp.tls)
+    implementation(libs.okhttp.sse)
+    implementation(libs.okhttp.urlconnection)
+    implementation(libs.okhttp.coroutines)
     
     implementation(libs.gson)
 
