@@ -76,6 +76,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 import coil3.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
+import com.valoser.futaburakari.PromptSettings
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.cache.DetailCacheManagerProvider
@@ -142,6 +143,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
         mutableStateOf(initialValue)
     }
+    var promptFetchEnabled by remember { mutableStateOf(prefs.getBoolean(PromptSettings.PREF_KEY_FETCH_ENABLED, false)) }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", true)) }
     // 同時接続数（1..4）。AppPreferences に保存（フル画像アップグレードはこの設定に統合）
     var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
@@ -248,6 +250,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                     expressiveDynamicColor = on
                     prefs.edit().putBoolean("pref_key_expressive_use_dynamic_color", on).apply()
                     (ctx as? Activity)?.recreate()
+                }
+            }
+            item {
+                // 画像プロンプト（メタデータ）解析の有効/無効を切り替える
+                SwitchRow(
+                    title = "画像プロンプトを取得",
+                    checked = promptFetchEnabled,
+                    summary = "Detail/メディア画面でメタデータを解析してプロンプトを表示します"
+                ) { enabled ->
+                    promptFetchEnabled = enabled
+                    prefs.edit().putBoolean(PromptSettings.PREF_KEY_FETCH_ENABLED, enabled).apply()
                 }
             }
             // removed: color mode selection

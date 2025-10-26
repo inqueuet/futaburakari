@@ -145,7 +145,11 @@ class MainActivity : BaseActivity() {
             if (uri != null) {
                 lifecycleScope.launch {
                     Log.d("MainActivity", "Selected image URI: $uri")
-                    val promptInfo = MetadataExtractor.extract(this@MainActivity, uri.toString(), networkClient)
+                    val promptInfo = if (PromptSettings.isPromptFetchEnabled(this@MainActivity)) {
+                        MetadataExtractor.extract(this@MainActivity, uri.toString(), networkClient)
+                    } else {
+                        null
+                    }
                     Log.d("MainActivity", "Extracted prompt info: $promptInfo")
 
                     val intent = Intent(this@MainActivity, ImageDisplayActivity::class.java).apply {

@@ -68,6 +68,7 @@ import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.MetadataExtractor
+import com.valoser.futaburakari.PromptSettings
 import com.valoser.futaburakari.NetworkClient
 import kotlinx.coroutines.launch
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -113,7 +114,12 @@ fun MediaViewScreen(
 
     // 画像の場合、プロンプト/メタデータを非同期に抽出して `text` を補完
     LaunchedEffect(type, url) {
-        if (type == "image" && !url.isNullOrBlank() && text.isNullOrBlank()) {
+        if (
+            type == "image" &&
+            !url.isNullOrBlank() &&
+            text.isNullOrBlank() &&
+            PromptSettings.isPromptFetchEnabled(ctx)
+        ) {
             text = MetadataExtractor.extract(ctx, url, networkClient)
         }
     }

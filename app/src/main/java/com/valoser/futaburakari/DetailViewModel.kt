@@ -1411,6 +1411,10 @@ class DetailViewModel @Inject constructor(
                         return@forEach
                     }
 
+                    if (!PromptSettings.isPromptFetchEnabled(appContext)) {
+                        return@forEach
+                    }
+
                     markPromptLoading(content.id, true)
                     eventStore.applyEvent(DetailEvent.MetadataExtractionStarted(content.id))
 
