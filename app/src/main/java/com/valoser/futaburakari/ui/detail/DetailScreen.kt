@@ -109,6 +109,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
  * - プロンプト: `promptFeaturesEnabled` が false の場合はプロンプト関連のダウンロードメニューを非表示にする。
+ * - 低帯域モード: `lowBandwidthMode` が true の場合、表示に使う画像はサムネイルを優先し、タップ時のみフルサイズを開く。
  *   一覧グリッドは可視範囲の前後にあるサムネイルを Coil でプリフェッチし、スクロール直後の表示遅延を低減。
  * - AppBar: 戻る/更新/検索/メディア一覧のアイコンに加え、
  *            右上メニュー（More）から「返信 / NG 管理 / 音声読み上げ / 画像一括DL（通常・プロンプト） / 画像編集（任意）」を提供。
@@ -147,6 +148,7 @@ fun DetailScreenScaffold(
     onOpenNg: () -> Unit,
     onOpenMedia: () -> Unit,
     promptFeaturesEnabled: Boolean = true,
+    lowBandwidthMode: Boolean = false,
     onImageEdit: (() -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
     onDeletePost: (resNum: String, onlyImage: Boolean) -> Unit,
@@ -253,6 +255,7 @@ fun DetailScreenScaffold(
 
             var selectionMode by remember { mutableStateOf(false) }
             val selectedImages = remember { mutableStateListOf<String>() }
+            var jumpToBottomRequest by remember { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
@@ -302,6 +305,13 @@ fun DetailScreenScaffold(
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("音声読み上げ") },
                         onClick = { moreExpanded = false; onTtsStart?.invoke() }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("一番下まで飛ぶ") },
+                        onClick = {
+                            moreExpanded = false
+                            jumpToBottomRequest = if (jumpToBottomRequest == Int.MAX_VALUE) 1 else jumpToBottomRequest + 1
+                        }
                     )
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("画像一括ダウンロード") },
@@ -404,6 +414,16 @@ fun DetailScreenScaffold(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
                 initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
             )
+            var lastHandledJumpRequest by remember { mutableIntStateOf(0) }
+            LaunchedEffect(jumpToBottomRequest, itemsVersion) {
+                if (jumpToBottomRequest == 0 || jumpToBottomRequest == lastHandledJumpRequest) return@LaunchedEffect
+                if (items.isEmpty()) return@LaunchedEffect
+                val targetIndex = items.lastIndex
+                if (targetIndex >= 0) {
+                    listState.animateScrollToItem(targetIndex)
+                    lastHandledJumpRequest = jumpToBottomRequest
+                }
+            }
             // 検索ナビ（Compose 内でリストに吸着）を上位スコープで保持
             var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
             var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -470,6 +490,7 @@ fun DetailScreenScaffold(
                         items = items,
                         searchQuery = searchQuery,
                         threadUrl = threadUrl,
+                        useLowBandwidthThumbnails = lowBandwidthMode,
                         myPostNumbers = myPostNumbers,
                         modifier = Modifier
                             .fillMaxSize()
@@ -847,6 +868,7 @@ fun DetailScreenScaffold(
                             items = idItems,
                             searchQuery = null,
                             threadUrl = threadUrl,
+                            useLowBandwidthThumbnails = lowBandwidthMode,
                             modifier = Modifier.wrapContentHeight(),
                             promptLoadingIds = promptLoadingIds,
                             plainTextCache = plainTextCache,
@@ -888,6 +910,7 @@ fun DetailScreenScaffold(
                             items = refItems,
                             searchQuery = null,
                             threadUrl = threadUrl,
+                            useLowBandwidthThumbnails = lowBandwidthMode,
                             modifier = Modifier.wrapContentHeight(),
                             promptLoadingIds = promptLoadingIds,
                             plainTextCache = plainTextCache,
@@ -949,8 +972,14 @@ fun DetailScreenScaffold(
                             }
                         }
                         // Compose 標準のグリッドで表示
-                        val images = remember(items) {
-                            data class Entry(val imageIdx: Int, val parentTextIdx: Int, val url: String, val prompt: String?)
+                        val images = remember(items, lowBandwidthMode) {
+                            data class Entry(
+                                val imageIdx: Int,
+                                val parentTextIdx: Int,
+                                val fullUrl: String,
+                                val previewUrl: String,
+                                val prompt: String?
+                            )
                             val out = ArrayList<Entry>()
                             // 各画像/動画に対して、直前のTextレスを探して関連付ける
                             for (i in items.indices) {
@@ -960,14 +989,20 @@ fun DetailScreenScaffold(
                                         val parentTextIdx = (i - 1 downTo 0).firstOrNull { idx ->
                                             items[idx] is com.valoser.futaburakari.DetailContent.Text
                                         } ?: i
-                                        out += Entry(i, parentTextIdx, c.imageUrl, c.prompt)
+                                        val preview = if (lowBandwidthMode) {
+                                            c.thumbnailUrl?.takeIf { it.isNotBlank() } ?: c.imageUrl
+                                        } else {
+                                            c.imageUrl
+                                        }
+                                        out += Entry(i, parentTextIdx, c.imageUrl, preview, c.prompt)
                                     }
                                     is com.valoser.futaburakari.DetailContent.Video -> {
                                         // 直前のTextレスを探す
                                         val parentTextIdx = (i - 1 downTo 0).firstOrNull { idx ->
                                             items[idx] is com.valoser.futaburakari.DetailContent.Text
                                         } ?: i
-                                        out += Entry(i, parentTextIdx, c.videoUrl, c.prompt)
+                                        val preview = c.thumbnailUrl ?: c.videoUrl
+                                        out += Entry(i, parentTextIdx, c.videoUrl, preview, c.prompt)
                                     }
                                     else -> {}
                                 }
@@ -1008,7 +1043,7 @@ fun DetailScreenScaffold(
                                     val startBack = (first - prefetchBack).coerceAtLeast(0)
                                     val endBack = (first - 1).coerceAtLeast(-1)
 
-                                    fun urlFor(i: Int): String? = images.getOrNull(i)?.url
+                                    fun urlFor(i: Int): String? = images.getOrNull(i)?.previewUrl
 
                                     // 前方プリフェッチ
                                     for (i in startAhead..endAhead) {
@@ -1092,7 +1127,7 @@ fun DetailScreenScaffold(
                             val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
 
                             val request = coil3.request.ImageRequest.Builder(ctx)
-                                .data(e.url)
+                                .data(e.previewUrl)
                                 .apply {
                                     val ref = threadUrl
                                     if (!ref.isNullOrBlank()) {
@@ -1106,27 +1141,30 @@ fun DetailScreenScaffold(
                                 .size(coil3.size.Size(coil3.size.Dimension.Pixels(cellWidthPx), coil3.size.Dimension.Pixels(cellHeightPx)))
                                 .scale(coil3.size.Scale.FILL)
                                 .precision(coil3.size.Precision.INEXACT)
-                                .memoryCacheKey(ImageKeys.full(e.url ?: ""))
-                                .placeholderMemoryCacheKey(ImageKeys.full(e.url ?: ""))
+                                .memoryCacheKey(ImageKeys.full(e.previewUrl))
+                                .placeholderMemoryCacheKey(ImageKeys.full(e.previewUrl))
                                 .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                                 .build()
 
-                            val isSelected = selectedImages.contains(e.url)
+                            val isSelected = selectedImages.contains(e.fullUrl)
 
                             Box(modifier = Modifier.padding(LocalSpacing.current.xs)
                                 .pointerInput(Unit) {
                                     detectTapGestures(
                                         onLongPress = {
                                             selectionMode = true
-                                            selectedImages.add(e.url)
+                                            if (!selectedImages.contains(e.fullUrl)) {
+                                                selectedImages.add(e.fullUrl)
+                                            }
                                         },
                                         onTap = {
                                             if (selectionMode) {
-                                                if (isSelected) {
-                                                    selectedImages.remove(e.url)
+                                                val alreadySelected = selectedImages.contains(e.fullUrl)
+                                                if (alreadySelected) {
+                                                    selectedImages.remove(e.fullUrl)
                                                 } else {
-                                                    selectedImages.add(e.url)
+                                                    selectedImages.add(e.fullUrl)
                                                 }
                                             } else {
                                                 scope.launch { listState.scrollToItem(e.parentTextIdx) }

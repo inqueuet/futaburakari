@@ -30,6 +30,8 @@ object AppPreferences {
     private const val KEY_CONCURRENCY_LEVEL = "concurrency_level"
     /** フル画像アップグレード用の並列度（レガシー。現状は全体と統合）のキー。 */
     private const val KEY_FULL_UPGRADE_CONCURRENCY = "full_upgrade_concurrency"
+    /** 低帯域モードの有効フラグ。 */
+    private const val KEY_LOW_BANDWIDTH_MODE = "low_bandwidth_mode"
 
     /** アプリ専用の `SharedPreferences` を返す。 */
     private fun getPreferences(context: Context): SharedPreferences {
@@ -160,6 +162,16 @@ object AppPreferences {
     fun setConcurrencyLevel(context: Context, level: Int) {
         val v = level.coerceIn(1, 4)
         getPreferences(context).edit().putInt(KEY_CONCURRENCY_LEVEL, v).apply()
+    }
+
+    /** 低帯域モードが有効かどうか。未設定時は `false`。 */
+    fun isLowBandwidthModeEnabled(context: Context): Boolean {
+        return getPreferences(context).getBoolean(KEY_LOW_BANDWIDTH_MODE, false)
+    }
+
+    /** 低帯域モードの有効/無効を保存する。 */
+    fun setLowBandwidthMode(context: Context, enabled: Boolean) {
+        getPreferences(context).edit().putBoolean(KEY_LOW_BANDWIDTH_MODE, enabled).apply()
     }
 
     /** フル画像アップグレードの並列度を取得（全体設定と統一）。 */

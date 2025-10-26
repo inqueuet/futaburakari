@@ -404,6 +404,7 @@ fun DetailListCompose(
     searchQuery: String?,
     // 画像/動画取得時の Referer（通常はスレの res/*.htm）
     threadUrl: String? = null,
+    useLowBandwidthThumbnails: Boolean = false,
     modifier: Modifier = Modifier,
     // HTML->プレーンテキストの取得（ViewModelのキャッシュを利用するため注入可能）
     plainTextOf: (DetailContent.Text) -> String = { t -> android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString() },
@@ -454,6 +455,16 @@ fun DetailListCompose(
     val hideDeletedRes = remember { com.valoser.futaburakari.AppPreferences.getHideDeletedRes(context) }
     val hideDuplicateRes = remember { com.valoser.futaburakari.AppPreferences.getHideDuplicateRes(context) }
     val duplicateResThreshold = remember { com.valoser.futaburakari.AppPreferences.getDuplicateResThreshold(context) }
+    val displayImageUrl = remember(useLowBandwidthThumbnails) {
+        { image: DetailContent.Image ->
+            if (useLowBandwidthThumbnails) {
+                val thumb = image.thumbnailUrl
+                if (!thumb.isNullOrBlank()) thumb else image.imageUrl
+            } else {
+                image.imageUrl
+            }
+        }
+    }
 
     // 削除レス・重複レスをフィルタリング（各設定が有効な場合のみ）
     val filteredItems = remember(
@@ -588,7 +599,7 @@ fun DetailListCompose(
                     val endBack = (first - 1).coerceAtLeast(-1)
 
                     fun urlFor(i: Int): String? = when (val c = filteredItems.getOrNull(i)) {
-                        is DetailContent.Image -> c.imageUrl
+                        is DetailContent.Image -> displayImageUrl(c)
                         is DetailContent.Video -> c.thumbnailUrl ?: c.videoUrl
                         else -> null
                     }
@@ -855,9 +866,10 @@ fun DetailListCompose(
 
                 is DetailContent.Image -> {
                     val ctx = LocalContext.current
+                    val displayUrl = displayImageUrl(item)
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // 空のimageUrlの場合は直接「画像なし」を表示
-                        if (item.imageUrl.isBlank()) {
+                        if (displayUrl.isBlank()) {
                             androidx.compose.foundation.layout.Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -876,7 +888,7 @@ fun DetailListCompose(
                             }
                         } else {
                             coil3.compose.SubcomposeAsyncImage(
-                                model = createImageRequest(ctx, item.imageUrl, threadUrl, forDisplay = true),
+                                model = createImageRequest(ctx, displayUrl, threadUrl, forDisplay = true),
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxWidth()

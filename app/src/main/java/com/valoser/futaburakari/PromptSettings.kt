@@ -13,6 +13,9 @@ object PromptSettings {
 
     /** 現在の画像プロンプト取得設定（既定: 有効）を返す。 */
     fun isPromptFetchEnabled(context: Context): Boolean {
+        if (AppPreferences.isLowBandwidthModeEnabled(context)) {
+            return false
+        }
         return PreferenceManager.getDefaultSharedPreferences(context)
             .getBoolean(PREF_KEY_FETCH_ENABLED, false)
     }
