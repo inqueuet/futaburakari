@@ -108,6 +108,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
  * - 広告: バナーの実測高さを下部インセットとして反映（呼び出し側へ状態通知可能）。
  * - パフォーマンス: ID/No./引用/ファイル名/被引用の集計は `Dispatchers.Default` で実行し、結果のみを状態反映。
  * - メディア: メディア一覧は内部シートで扱い、`onOpenMedia` は互換維持のためのダミーとして引数に残す。
+ * - プロンプト: `promptFeaturesEnabled` が false の場合はプロンプト関連のダウンロードメニューを非表示にする。
  *   一覧グリッドは可視範囲の前後にあるサムネイルを Coil でプリフェッチし、スクロール直後の表示遅延を低減。
  * - AppBar: 戻る/更新/検索/メディア一覧のアイコンに加え、
  *            右上メニュー（More）から「返信 / NG 管理 / 音声読み上げ / 画像一括DL（通常・プロンプト） / 画像編集（任意）」を提供。
@@ -145,6 +146,7 @@ fun DetailScreenScaffold(
     onReload: () -> Unit,
     onOpenNg: () -> Unit,
     onOpenMedia: () -> Unit,
+    promptFeaturesEnabled: Boolean = true,
     onImageEdit: (() -> Unit)? = null,
     onSodaneClick: ((String) -> Unit)? = null,
     onDeletePost: (resNum: String, onlyImage: Boolean) -> Unit,
@@ -308,13 +310,15 @@ fun DetailScreenScaffold(
                             onBulkDownloadImagesSkipExisting?.invoke()
                         }
                     )
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("プロンプト付き画像ダウンロード") },
-                        onClick = {
-                            moreExpanded = false
-                            onBulkDownloadPromptImagesSkipExisting?.invoke()
-                        }
-                    )
+                    if (promptFeaturesEnabled) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("プロンプト付き画像ダウンロード") },
+                            onClick = {
+                                moreExpanded = false
+                                onBulkDownloadPromptImagesSkipExisting?.invoke()
+                            }
+                        )
+                    }
                     if (onImageEdit != null) {
                         androidx.compose.material3.DropdownMenuItem(
                             text = { Text("画像編集") },
@@ -375,20 +379,24 @@ fun DetailScreenScaffold(
             }
 
             // 画像一括ダウンロードのコールバックを設定（重複チェック付き）
-            LaunchedEffect(items) {
+            LaunchedEffect(items, promptFeaturesEnabled) {
                 onBulkDownloadImagesSkipExisting = {
                     val imageUrls = items.filterIsInstance<DetailContent.Image>().map { it.imageUrl }
                     if (imageUrls.isNotEmpty()) {
                         onDownloadImagesSkipExisting?.invoke(imageUrls)
                     }
                 }
-                onBulkDownloadPromptImagesSkipExisting = {
-                    val promptImageUrls = items.filterIsInstance<DetailContent.Image>()
-                        .filter { !it.prompt.isNullOrBlank() }
-                        .map { it.imageUrl }
-                    if (promptImageUrls.isNotEmpty()) {
-                        onDownloadImagesSkipExisting?.invoke(promptImageUrls)
+                onBulkDownloadPromptImagesSkipExisting = if (promptFeaturesEnabled) {
+                    {
+                        val promptImageUrls = items.filterIsInstance<DetailContent.Image>()
+                            .filter { !it.prompt.isNullOrBlank() }
+                            .map { it.imageUrl }
+                        if (promptImageUrls.isNotEmpty()) {
+                            onDownloadImagesSkipExisting?.invoke(promptImageUrls)
+                        }
                     }
+                } else {
+                    null
                 }
             }
             // リストと高速スクロールで同じ listState を共有

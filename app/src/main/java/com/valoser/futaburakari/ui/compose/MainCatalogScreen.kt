@@ -76,7 +76,8 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  * 機能概要:
  * - 更新: プルリフレッシュに加え、端での強いオーバースクロール（バウンス）でも再読み込みを実行（連発抑止あり）。
  * - 操作: トップバーに「再読み込み／ブックマーク選択／並び順／履歴／検索」を配置。
- *         右上メニューには「ブックマーク管理 → 設定 → ローカル画像を開く → 画像編集」を用意。
+ *         右上メニューには「ブックマーク管理 → 設定 → 画像編集」を常設し、
+ *         プロンプト機能が有効な場合のみ「ローカル画像を開く」を追加表示。
  * - トップバー: 通常時はサブタイトル（選択中ブックマーク名）のみを大きく表示。タイトルは非表示。
  *               検索中はタイトル領域を検索ボックスに切り替える。
  * - 絞込: NG タイトルルール、検索クエリ、画像有無（常時適用）で一覧をフィルタし、グリッド表示。
@@ -99,6 +100,7 @@ import com.valoser.futaburakari.CatalogPrefetchHint
  * - `onOpenHistory`: 履歴画面を開くアクション（トップバーのアイコン）。
  * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
  * - `onVideoEdit`: 動画編集のメニュー操作。
+ * - `promptFeaturesEnabled`: プロンプト機能が有効な場合に追加メニューを表示するフラグ。
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
@@ -128,6 +130,7 @@ fun MainCatalogScreen(
     onImageEdit: () -> Unit,
     onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
+    promptFeaturesEnabled: Boolean = true,
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
@@ -354,6 +357,7 @@ fun MainCatalogScreen(
                         onVideoEdit = onVideoEdit,
                         onBrowseLocalImages = onBrowseLocalImages,
                         onSettings = onOpenSettings,
+                        promptFeaturesEnabled = promptFeaturesEnabled,
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -432,7 +436,8 @@ fun MainCatalogScreen(
 }
 
 /**
- * 右上「その他」メニュー。ブックマーク管理・設定・ローカル画像・画像編集・動画編集を提供。
+ * 右上「その他」メニュー。ブックマーク管理・設定・画像編集・動画編集を提供し、
+ * プロンプト機能が有効な場合のみ「ローカル画像を開く」を追加表示する。
  * 選択時はメニューを閉じてから各ハンドラを呼び出す。
  */
 @Composable
@@ -442,6 +447,7 @@ private fun MoreMenu(
     onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
     onSettings: () -> Unit,
+    promptFeaturesEnabled: Boolean,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -451,7 +457,12 @@ private fun MoreMenu(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("ブックマーク管理") }, onClick = { expanded = false; onManageBookmarks() })
             DropdownMenuItem(text = { Text("設定") }, onClick = { expanded = false; onSettings() })
-            DropdownMenuItem(text = { Text("ローカル画像を開く") }, onClick = { expanded = false; onBrowseLocalImages() })
+            if (promptFeaturesEnabled) {
+                DropdownMenuItem(
+                    text = { Text("ローカル画像を開く") },
+                    onClick = { expanded = false; onBrowseLocalImages() }
+                )
+            }
             DropdownMenuItem(text = { Text("画像編集") }, onClick = { expanded = false; onImageEdit() })
             DropdownMenuItem(text = { Text("動画編集") }, onClick = { expanded = false; onVideoEdit() })
         }

@@ -105,6 +105,9 @@ class MainActivity : BaseActivity() {
             "pref_key_catalog_cx", "pref_key_catalog_cy", "pref_key_catalog_cl" -> {
                 clearCurrentBoardCatsetState()
             }
+            PromptSettings.PREF_KEY_FETCH_ENABLED -> {
+                promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this@MainActivity)
+            }
             // 旧カラー設定は廃止（現在はテーマ側で動的/既定に統合）
         }
     }
@@ -129,6 +132,7 @@ class MainActivity : BaseActivity() {
     private val itemsState = mutableStateOf<List<ImageItem>>(emptyList())
     private val listIdentityState = mutableStateOf("")
     private val ngRulesState = mutableStateOf<List<NgRule>>(emptyList())
+    private val promptFetchEnabledState = mutableStateOf(false)
     private var listIdentityVersion = 0L
     private var pendingScrollReset = false
 
@@ -168,6 +172,7 @@ class MainActivity : BaseActivity() {
         spanCountState.intValue = getGridSpanCount()
         catalogDisplayModeState.value = getCatalogDisplayMode()
         ngRulesState.value = ngStore.getRules()
+        promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this)
 
         // Compose UI
         setContent {
@@ -222,6 +227,7 @@ class MainActivity : BaseActivity() {
                         onImageEdit = { startActivity(Intent(this@MainActivity, ImagePickerActivity::class.java)) },
                         onVideoEdit = { startActivity(Intent(this@MainActivity, com.valoser.futaburakari.videoeditor.presentation.ui.EditorActivity::class.java)) },
                         onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
+                        promptFeaturesEnabled = promptFetchEnabledState.value,
                         onItemClick = { item -> handleItemClick(item) },
                         ngRules = ngRulesState.value,
                         onImageLoadHttp404 = { item, failedUrl ->
