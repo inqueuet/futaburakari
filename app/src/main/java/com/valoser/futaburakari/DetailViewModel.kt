@@ -704,15 +704,57 @@ class DetailViewModel @Inject constructor(
         documentUrl: String,
         fullImageUrl: String
     ): String? {
-        val base = try {
-            URL(documentUrl)
-        } catch (_: Exception) {
-            null
+        val base = runCatching { URL(documentUrl) }.getOrNull()
+        fun Element?.resolveAttr(vararg names: String): String? {
+            if (this == null) return null
+            for (name in names) {
+                if (!hasAttr(name)) continue
+                val raw = attr(name).trim()
+                if (raw.isEmpty()) continue
+                val normalized = raw.substringBefore(' ').substringBefore(',')
+                if (normalized.isEmpty() || normalized.startsWith("data:", ignoreCase = true)) continue
+                val absolute = if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+                    normalized
+                } else {
+                    base?.let { runCatching { URL(it, normalized).toString() }.getOrNull() }
+                }
+                if (!absolute.isNullOrBlank()) return absolute
+            }
+            return null
         }
 
-        val imgSrc = linkNode.selectFirst("img[src]")?.attr("src")?.takeIf { it.isNotBlank() }
-        if (!imgSrc.isNullOrBlank() && base != null) {
-            runCatching { URL(base, imgSrc).toString() }.getOrNull()?.let { return it }
+        // 1. <img> や <source> の各属性(src/data-src/srcset等)を優先的に解決
+        val imgNodes = linkNode.select("img,source")
+        for (node in imgNodes) {
+            node.resolveAttr(
+                "src",
+                "data-src",
+                "data-original",
+                "data-thumb",
+                "data-lazy-src",
+                "data-lazy",
+                "data-llsrc",
+                "data-placeholder",
+                "data-url"
+            )?.let { return it }
+            node.resolveAttr("srcset", "data-srcset")?.let { return it }
+        }
+
+        // 2. 属性で取得できない場合は HTML の構造上に存在する子孫の <img> を走査
+        linkNode.select("*[src],*[data-src],*[srcset],*[data-srcset]").forEach { element ->
+            element.resolveAttr(
+                "src",
+                "data-src",
+                "data-original",
+                "data-thumb",
+                "data-lazy-src",
+                "data-lazy",
+                "data-llsrc",
+                "data-placeholder",
+                "data-url",
+                "srcset",
+                "data-srcset"
+            )?.let { return it }
         }
 
         return guessThumbnailFromFull(fullImageUrl)
@@ -720,20 +762,39 @@ class DetailViewModel @Inject constructor(
 
     /** `/src/12345.jpg` -> `/thumb/12345s.jpg` 形式でサムネイルURLを推測する。 */
     private fun guessThumbnailFromFull(fullImageUrl: String): String? {
+        val sanitized = fullImageUrl
+            .substringBefore('#')
+            .substringBefore('?')
         val marker = "/src/"
-        val markerIndex = fullImageUrl.indexOf(marker)
+        val markerIndex = sanitized.indexOf(marker)
         if (markerIndex == -1) return null
-        val dot = fullImageUrl.lastIndexOf('.')
-        if (dot <= markerIndex || dot == fullImageUrl.length - 1) return null
-        val extension = fullImageUrl.substring(dot)
-        val core = fullImageUrl.substring(0, dot)
+        val dot = sanitized.lastIndexOf('.')
+        val hasExtension = dot > markerIndex && dot < sanitized.length - 1
+        val baseWithoutExt = if (hasExtension) sanitized.substring(0, dot) else sanitized
+        val originalExtension = if (hasExtension) sanitized.substring(dot + 1).lowercase() else ""
+        val extensionCandidates = buildList {
+            if (originalExtension.isNotBlank()) {
+                if (originalExtension != "jpg" && originalExtension != "jpeg") add("jpg")
+                add(originalExtension)
+            } else {
+                add("jpg")
+            }
+        }
         val replacements = listOf("/thumb/", "/cat/")
         for (replacement in replacements) {
-            val replaced = core.replaceFirst(marker, replacement)
-            if (replaced == core) continue
-            val withSuffix = if (replaced.endsWith("s")) replaced else replaced + "s"
-            val candidate = withSuffix + extension
-            if (candidate != fullImageUrl) return candidate
+            val replaced = baseWithoutExt.replaceFirst(marker, replacement)
+            if (replaced == baseWithoutExt) continue
+            val baseCandidates = buildList {
+                val withSuffix = if (replaced.endsWith("s")) replaced else replaced + "s"
+                add(withSuffix)
+                if (withSuffix != replaced) add(replaced)
+            }
+            for (baseCandidate in baseCandidates) {
+                for (ext in extensionCandidates) {
+                    val candidate = if (ext.isNotBlank()) "$baseCandidate.$ext" else baseCandidate
+                    if (!candidate.equals(sanitized, ignoreCase = true)) return candidate
+                }
+            }
         }
         return null
     }
