@@ -32,7 +32,8 @@ object DetailContentMigration {
                         StaticDetailContent.StaticImage(
                             id = content.id,
                             imageUrl = content.imageUrl,
-                            fileName = content.fileName
+                            fileName = content.fileName,
+                            thumbnailUrl = content.thumbnailUrl
                         )
                     )
 

@@ -60,14 +60,16 @@ sealed class StaticDetailContent {
     data class StaticImage(
         override val id: String,
         val imageUrl: String,
-        val fileName: String? = null
+        val fileName: String? = null,
+        val thumbnailUrl: String? = null
     ) : StaticDetailContent() {
         override fun toDetailContent(metadata: DynamicMetadata?): DetailContent.Image {
             return DetailContent.Image(
                 id = id,
                 imageUrl = imageUrl,
                 prompt = metadata?.prompt,
-                fileName = fileName
+                fileName = fileName,
+                thumbnailUrl = thumbnailUrl
             )
         }
     }

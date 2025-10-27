@@ -76,6 +76,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 import coil3.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
+import com.valoser.futaburakari.PromptSettings
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.cache.DetailCacheManagerProvider
@@ -142,6 +143,8 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
         mutableStateOf(initialValue)
     }
+    var lowBandwidthMode by remember { mutableStateOf(AppPreferences.isLowBandwidthModeEnabled(ctx)) }
+    var promptFetchEnabled by remember { mutableStateOf(prefs.getBoolean(PromptSettings.PREF_KEY_FETCH_ENABLED, false)) }
     var adsEnabled by remember { mutableStateOf(prefs.getBoolean("pref_key_ads_enabled", true)) }
     // 同時接続数（1..4）。AppPreferences に保存（フル画像アップグレードはこの設定に統合）
     var concurrencyLevel by remember { mutableStateOf(AppPreferences.getConcurrencyLevel(ctx).toString()) }
@@ -250,6 +253,24 @@ fun SettingsScreen(onBack: () -> Unit) {
                     (ctx as? Activity)?.recreate()
                 }
             }
+            item {
+                // 画像プロンプト（メタデータ）解析の有効/無効を切り替える
+                val promptSummary = if (lowBandwidthMode) {
+                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します（低帯域モード中は利用できません）"
+                } else {
+                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します"
+                }
+                SwitchRow(
+                    title = "画像プロンプトを取得",
+                    checked = if (lowBandwidthMode) false else promptFetchEnabled,
+                    summary = promptSummary,
+                    enabled = !lowBandwidthMode
+                ) { enabled ->
+                    if (lowBandwidthMode) return@SwitchRow
+                    promptFetchEnabled = enabled
+                    prefs.edit().putBoolean(PromptSettings.PREF_KEY_FETCH_ENABLED, enabled).apply()
+                }
+            }
             // removed: color mode selection
 
             item { SectionHeader(text = "カタログモードの設定") }
@@ -344,6 +365,21 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             // ネットワーク（同時接続数）
             item { SectionHeader(text = "ネットワーク") }
+            item {
+                SwitchRow(
+                    title = "低帯域モード",
+                    checked = lowBandwidthMode,
+                    summary = "スレ詳細ではサムネイルのみを読み込みます（タップ時はフル画像）"
+                ) { enabled ->
+                    lowBandwidthMode = enabled
+                    AppPreferences.setLowBandwidthMode(ctx, enabled)
+                    android.widget.Toast.makeText(
+                        ctx,
+                        if (enabled) "低帯域モードを有効にしました。スレを再読み込みしてください。" else "低帯域モードを無効にしました。",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
             item {
                 DropdownPreferenceRow(
                     title = "同時接続数",
@@ -673,12 +709,19 @@ private fun DropdownPreferenceRow(
 
 /** タイトル＋任意サマリ＋トグルスイッチの設定行。`checked` の変化は `onToggle` で受け取ります。 */
 @Composable
-private fun SwitchRow(title: String, checked: Boolean, summary: String = "", onToggle: (Boolean) -> Unit) {
+private fun SwitchRow(
+    title: String,
+    checked: Boolean,
+    summary: String = "",
+    enabled: Boolean = true,
+    onToggle: (Boolean) -> Unit
+) {
     // タイトル＋サマリ＋スイッチの1行
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m),
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
+            .alpha(if (enabled) 1f else 0.5f),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -688,6 +731,6 @@ private fun SwitchRow(title: String, checked: Boolean, summary: String = "", onT
                 Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
             }
         }
-        Switch(checked = checked, onCheckedChange = onToggle)
+        Switch(checked = checked, onCheckedChange = onToggle, enabled = enabled)
     }
 }

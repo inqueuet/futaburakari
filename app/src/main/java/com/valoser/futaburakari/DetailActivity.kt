@@ -94,6 +94,8 @@ class DetailActivity : BaseActivity() {
     private lateinit var prefs: SharedPreferences
     private val adsEnabledFlowInternal = MutableStateFlow(true)
     private val adsEnabledFlow = adsEnabledFlowInternal.asStateFlow()
+    private val promptFetchEnabledState = mutableStateOf(false)
+    private val lowBandwidthModeState = mutableStateOf(false)
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             // 広告設定の即時反映
@@ -104,6 +106,9 @@ class DetailActivity : BaseActivity() {
             }
             // NGルール変更を即時反映（NgStore は DefaultSharedPreferences を使用）
             "ng_rules_json" -> viewModel.reapplyNgFilter()
+            PromptSettings.PREF_KEY_FETCH_ENABLED -> {
+                promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this@DetailActivity)
+            }
         }
     }
 
@@ -172,6 +177,8 @@ class DetailActivity : BaseActivity() {
             .getBoolean("pref_key_ads_enabled", true)
         adsEnabledFlowInternal.value = showAdsPref
         val adUnitId = getString(R.string.admob_banner_id)
+        promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this)
+        lowBandwidthModeState.value = AppPreferences.isLowBandwidthModeEnabled(this)
         setContent {
             FutaburakariTheme(expressive = true) {
                 val showAds by adsEnabledFlow.collectAsState()
@@ -189,6 +196,8 @@ class DetailActivity : BaseActivity() {
                     onReload = { reloadDetails() },
                     onOpenNg = { openNgManager() },
                     onOpenMedia = { },
+                    promptFeaturesEnabled = promptFetchEnabledState.value,
+                    lowBandwidthMode = lowBandwidthModeState.value,
                     // 画像編集: 端末の画像を選んで `ImageEditActivity` へ渡すフローの起点
                     onImageEdit = { startActivity(Intent(this@DetailActivity, ImagePickerActivity::class.java)) },
                     onSodaneClick = { resNum -> viewModel.postSodaNe(resNum) },
@@ -342,6 +351,14 @@ class DetailActivity : BaseActivity() {
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
         // Compose 側で初期スクロールを受け取るため、ここでの復元は不要
         isInitialLoad = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val latest = AppPreferences.isLowBandwidthModeEnabled(this)
+        if (lowBandwidthModeState.value != latest) {
+            lowBandwidthModeState.value = latest
+        }
     }
 
     /**

@@ -607,6 +607,7 @@ class DetailViewModel @Inject constructor(
                 try {
                     val absoluteUrl = URL(URL(url), hrefAttr).toString()
                     val fileName = absoluteUrl.substringAfterLast('/')
+                    val thumbnailUrl = resolveThumbnailUrl(link, url, absoluteUrl)
 
                     // 効率的な拡張子チェック
                     val extension = hrefAttr.substringAfterLast('.', "").lowercase()
@@ -617,7 +618,8 @@ class DetailViewModel @Inject constructor(
                                 id = "image_${absoluteUrl.hashCode().toUInt().toString(16)}",
                                 imageUrl = absoluteUrl,
                                 prompt = null,
-                                fileName = fileName
+                                fileName = fileName,
+                                thumbnailUrl = thumbnailUrl
                             )
                         }
                         extension in VIDEO_EXTENSIONS -> {
@@ -694,6 +696,46 @@ class DetailViewModel @Inject constructor(
     private fun deriveResFromFileName(fileName: String): String? {
         val candidate = fileName.substringBeforeLast('.', "").takeIf { it.isNotBlank() }
         return candidate?.takeIf { it.any(Char::isDigit) }
+    }
+
+    /** アンカータグ内の <img> からサムネイルURLを解決し、なければフルURLから推測する。 */
+    private fun resolveThumbnailUrl(
+        linkNode: Element,
+        documentUrl: String,
+        fullImageUrl: String
+    ): String? {
+        val base = try {
+            URL(documentUrl)
+        } catch (_: Exception) {
+            null
+        }
+
+        val imgSrc = linkNode.selectFirst("img[src]")?.attr("src")?.takeIf { it.isNotBlank() }
+        if (!imgSrc.isNullOrBlank() && base != null) {
+            runCatching { URL(base, imgSrc).toString() }.getOrNull()?.let { return it }
+        }
+
+        return guessThumbnailFromFull(fullImageUrl)
+    }
+
+    /** `/src/12345.jpg` -> `/thumb/12345s.jpg` 形式でサムネイルURLを推測する。 */
+    private fun guessThumbnailFromFull(fullImageUrl: String): String? {
+        val marker = "/src/"
+        val markerIndex = fullImageUrl.indexOf(marker)
+        if (markerIndex == -1) return null
+        val dot = fullImageUrl.lastIndexOf('.')
+        if (dot <= markerIndex || dot == fullImageUrl.length - 1) return null
+        val extension = fullImageUrl.substring(dot)
+        val core = fullImageUrl.substring(0, dot)
+        val replacements = listOf("/thumb/", "/cat/")
+        for (replacement in replacements) {
+            val replaced = core.replaceFirst(marker, replacement)
+            if (replaced == core) continue
+            val withSuffix = if (replaced.endsWith("s")) replaced else replaced + "s"
+            val candidate = withSuffix + extension
+            if (candidate != fullImageUrl) return candidate
+        }
+        return null
     }
 
     /**
@@ -1408,6 +1450,10 @@ class DetailViewModel @Inject constructor(
                         viewModelScope.launch(Dispatchers.IO) {
                             runCatching { metadataCache.put(content.imageUrl, content.prompt!!) }
                         }
+                        return@forEach
+                    }
+
+                    if (!PromptSettings.isPromptFetchEnabled(appContext)) {
                         return@forEach
                     }
 

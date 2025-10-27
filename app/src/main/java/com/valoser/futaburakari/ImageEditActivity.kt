@@ -364,7 +364,7 @@ class ImageEditActivity : BaseActivity() {
 
         CoroutineScope(Dispatchers.Main).launch {
             var prompt: String? = null
-            if (imageUri != null) {
+            if (imageUri != null && PromptSettings.isPromptFetchEnabled(this@ImageEditActivity)) {
                 prompt = try {
                     MetadataExtractor.extract(this@ImageEditActivity, imageUri.toString(), networkClient)
                 } catch (e: Exception) {

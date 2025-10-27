@@ -191,6 +191,11 @@ object MetadataExtractor {
      */
     suspend fun extract(context: Context, uriOrUrl: String, networkClient: NetworkClient): String? = withContext(Dispatchers.IO) {
         try {
+            if (!PromptSettings.isPromptFetchEnabled(context)) {
+                Log.d(TAG, "Prompt extraction disabled. Skipping for $uriOrUrl")
+                return@withContext null
+            }
+
             // ScreenShotファイルは早期リターン（プロンプト抽出をスキップ）
             if (isScreenShotFile(uriOrUrl)) {
                 Log.d(TAG, "Skipping prompt extraction for screenshot file: $uriOrUrl")

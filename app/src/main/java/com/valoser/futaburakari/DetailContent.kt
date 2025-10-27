@@ -12,7 +12,8 @@ sealed class DetailContent {
         override val id: String,
         val imageUrl: String,
         val prompt: String? = null,
-        val fileName: String? = null
+        val fileName: String? = null,
+        val thumbnailUrl: String? = null
     ) : DetailContent()
 
     /** HTML本文を含むテキストコンテンツ。`resNum` は投稿番号等（任意）。 */
