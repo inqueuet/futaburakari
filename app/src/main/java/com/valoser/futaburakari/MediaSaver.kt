@@ -70,7 +70,8 @@ object MediaSaver {
             context = context,
             urls = imageUrls,
             mediaContentUri = imagesContentUri(),
-            relativeBaseDir = Environment.DIRECTORY_PICTURES
+            relativeBaseDir = Environment.DIRECTORY_PICTURES,
+            defaultMime = "image/jpeg"
         )
     }
 
@@ -130,7 +131,7 @@ object MediaSaver {
                 "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.DATA} LIKE ?"
             }
             val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                arrayOf(fileName, "$relativeBaseDir/Futaburakari/")
+                arrayOf(fileName, brandRelativePath(relativeBaseDir))
             } else {
                 arrayOf(fileName, "%/Futaburakari/%")
             }
@@ -156,13 +157,13 @@ object MediaSaver {
     ) {
         withContext(Dispatchers.IO) {
             try {
-                val fileName = url.substring(url.lastIndexOf('/') + 1)
+                val fileName = resolveDisplayName(url, mimeType)
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         // ImageEditActivity と同じブランドフォルダ配下に保存（RELATIVE_PATH）
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, brandRelativePath(relativeBaseDir))
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     } else {
                         // Pre-Q: DATA で保存先パスを直接指定。必要ならブランドフォルダを作成。
@@ -257,7 +258,7 @@ object MediaSaver {
         networkClient: NetworkClient
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val fileName = url.substring(url.lastIndexOf('/') + 1)
+            val fileName = resolveDisplayName(url, mimeType)
 
             // 既存ファイルをチェック
             if (isFileExists(context, fileName, mediaContentUri, relativeBaseDir)) {
@@ -270,7 +271,7 @@ object MediaSaver {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                 mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, brandRelativePath(relativeBaseDir))
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 } else {
                     @Suppress("DEPRECATION")
@@ -355,7 +356,8 @@ object MediaSaver {
         context: Context,
         urls: List<String>,
         mediaContentUri: Uri,
-        relativeBaseDir: String
+        relativeBaseDir: String,
+        defaultMime: String
     ): Map<String, List<ExistingMedia>> = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val result = mutableMapOf<String, MutableList<ExistingMedia>>()
@@ -372,7 +374,8 @@ object MediaSaver {
         )
 
         urls.forEach { url ->
-            val fileName = url.substringAfterLast('/')
+            val mimeType = getMimeTypeOrDefault(url, defaultMime)
+            val fileName = resolveDisplayName(url, mimeType)
             val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) projectionQ else projectionLegacy
             try {
                 resolver.query(
@@ -386,8 +389,8 @@ object MediaSaver {
                         val pathMatches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             val relIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
                             val relPath = cursor.getString(relIndex)
-                            val expectedRelative = "$relativeBaseDir/Futaburakari"
-                            relPath?.contains("Futaburakari") == true || relPath?.contains(expectedRelative) == true
+                            relPath?.equals(brandRelativePath(relativeBaseDir), ignoreCase = true) == true ||
+                                relPath?.contains("Futaburakari", ignoreCase = true) == true
                         } else {
                             val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
                             val dataPath = cursor.getString(dataIndex)
@@ -417,9 +420,40 @@ object MediaSaver {
 
     // 拡張子からMIME Typeを推測し、取得できなければ既定値を返す
     private fun getMimeTypeOrDefault(url: String, defaultMime: String): String {
-        val extension = MimeTypeMap.getFileExtensionFromUrl(url)
+        val sanitized = url.substringBefore('?').substringBefore('#')
+        val extension = MimeTypeMap.getFileExtensionFromUrl(sanitized)
         val guessed = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
         return guessed ?: defaultMime
+    }
+
+    private fun resolveDisplayName(url: String, mimeType: String?): String {
+        val parsed = runCatching { Uri.parse(url) }.getOrNull()
+        val rawName = buildList {
+            parsed?.lastPathSegment?.takeIf { it.isNotBlank() }?.let { add(it) }
+            val pathCandidate = parsed?.path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            if (pathCandidate != null) add(pathCandidate)
+            add(url.substringAfterLast('/', ""))
+        }.firstOrNull { it.isNotBlank() }.orEmpty()
+
+        var name = Uri.decode(rawName)
+            .substringBefore('?')
+            .substringBefore('#')
+            .ifBlank { "download" }
+
+        name = name.replace(Regex("""[\\/:*?"<>|]"""), "_")
+
+        if (!name.contains('.') && !mimeType.isNullOrBlank()) {
+            val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+            if (!ext.isNullOrBlank()) {
+                name = "$name.$ext"
+            }
+        }
+
+        return name.ifBlank { "download_${System.currentTimeMillis()}" }
+    }
+
+    private fun brandRelativePath(relativeBaseDir: String): String {
+        return "$relativeBaseDir/Futaburakari/"
     }
 
     // 画像用の MediaStore コンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）

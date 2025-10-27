@@ -1009,10 +1009,12 @@ fun DetailScreenScaffold(
                             }
                             out
                         }
+                        val gridColumns = if (lowBandwidthMode) 2 else 3
+                        val cellHeightDp = if (lowBandwidthMode) 160.dp else 110.dp
                     
                     // グリッドの可視範囲を監視し、オフスクリーンを先読み
                     // - 前方12件・後方6件を目安にサムネイルを事前デコード
-                    // - セルサイズに近い解像度（幅=画面幅/3, 高さ=110dp, Precision.INEXACT）でキャッシュを温める
+                    // - セルサイズに近い解像度（幅=画面幅/列数, 高さ=cellHeightDp, Precision.INEXACT）でキャッシュを温める
                     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
                     run {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -1023,8 +1025,8 @@ fun DetailScreenScaffold(
                         val screenWidthPx = remember(config.screenWidthDp, density) {
                             with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
                         }
-                        val cellWidthPx = remember(screenWidthPx) { (screenWidthPx / 3).coerceAtLeast(1) }
-                        val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+                        val cellWidthPx = remember(screenWidthPx, gridColumns) { (screenWidthPx / gridColumns).coerceAtLeast(1) }
+                        val cellHeightPx = with(density) { cellHeightDp.toPx().toInt().coerceAtLeast(1) }
                         val prefetchAhead = 12
                         val prefetchBack = 6
 
@@ -1112,7 +1114,7 @@ fun DetailScreenScaffold(
                         }
                     }
                     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
                         state = gridState,
                         contentPadding = PaddingValues(LocalSpacing.current.s)
                     ) {
@@ -1123,8 +1125,8 @@ fun DetailScreenScaffold(
                             val config = androidx.compose.ui.platform.LocalConfiguration.current
                             val density = androidx.compose.ui.platform.LocalDensity.current
                             val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
-                            val cellWidthPx = (screenWidthPx / 3).coerceAtLeast(1)
-                            val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+                            val cellWidthPx = (screenWidthPx / gridColumns).coerceAtLeast(1)
+                            val cellHeightPx = with(density) { cellHeightDp.toPx().toInt().coerceAtLeast(1) }
 
                             val request = coil3.request.ImageRequest.Builder(ctx)
                                 .data(e.previewUrl)
@@ -1180,13 +1182,13 @@ fun DetailScreenScaffold(
                                     contentDescription = null,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(110.dp),
+                                        .height(cellHeightDp),
                                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                     loading = {
                                         androidx.compose.foundation.layout.Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(110.dp)
+                                                .height(cellHeightDp)
                                         ) {
                                             androidx.compose.material3.CircularProgressIndicator(
                                                 modifier = Modifier

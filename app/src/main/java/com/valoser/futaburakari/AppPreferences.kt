@@ -164,9 +164,9 @@ object AppPreferences {
         getPreferences(context).edit().putInt(KEY_CONCURRENCY_LEVEL, v).apply()
     }
 
-    /** 低帯域モードが有効かどうか。未設定時は `false`。 */
+    /** 低帯域モードが有効かどうか。未設定時は `true`。 */
     fun isLowBandwidthModeEnabled(context: Context): Boolean {
-        return getPreferences(context).getBoolean(KEY_LOW_BANDWIDTH_MODE, false)
+        return getPreferences(context).getBoolean(KEY_LOW_BANDWIDTH_MODE, true)
     }
 
     /** 低帯域モードの有効/無効を保存する。 */

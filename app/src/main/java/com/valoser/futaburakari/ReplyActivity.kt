@@ -36,17 +36,6 @@ class ReplyActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
-        // 不可視 WebView ワーカーをアタッチして TokenProvider をセット
-        val tag = "reply_token_worker"
-        val worker = supportFragmentManager.findFragmentByTag(tag) as? ReplyTokenWorkerFragment
-            ?: ReplyTokenWorkerFragment().also {
-                supportFragmentManager
-                    .beginTransaction()
-                    .add(android.R.id.content, it, tag)
-                    .commitNow()
-            }
-        viewModel.tokenProvider = worker
-
         // ---- Intent パラメータ（DetailActivity から渡される）----
         val threadId = intent.getStringExtra(EXTRA_THREAD_ID) ?: ""
         val threadTitle = intent.getStringExtra(EXTRA_THREAD_TITLE) ?: ""
@@ -101,6 +90,17 @@ class ReplyActivity : BaseActivity() {
                 )
             }
         }
+
+        // 不可視 WebView ワーカーを Compose 設置後にアタッチして TokenProvider をセット
+        val tag = "reply_token_worker"
+        val worker = supportFragmentManager.findFragmentByTag(tag) as? ReplyTokenWorkerFragment
+            ?: ReplyTokenWorkerFragment().also {
+                supportFragmentManager
+                    .beginTransaction()
+                    .add(android.R.id.content, it, tag)
+                    .commitNow()
+            }
+        viewModel.tokenProvider = worker
 
         // Success/Error ハンドリングはActivity側で継続
         viewModel.uiState.observe(this) { st ->
