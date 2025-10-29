@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import com.valoser.futaburakari.ui.detail.SearchState
 import androidx.collection.LruCache
+import java.text.Normalizer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -99,6 +100,9 @@ class DetailViewModel @Inject constructor(
     val detailContent: StateFlow<List<DetailContent>> = detailScreenState
         .map { state -> state.computeDisplayContent() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _displayContent = MutableStateFlow<List<DetailContent>>(emptyList())
+    val displayContent: StateFlow<List<DetailContent>> = _displayContent.asStateFlow()
 
     // TTS音声読み上げマネージャー
     private val ttsManager = TtsManager(appContext)
@@ -704,15 +708,57 @@ class DetailViewModel @Inject constructor(
         documentUrl: String,
         fullImageUrl: String
     ): String? {
-        val base = try {
-            URL(documentUrl)
-        } catch (_: Exception) {
-            null
+        val base = runCatching { URL(documentUrl) }.getOrNull()
+        fun Element?.resolveAttr(vararg names: String): String? {
+            if (this == null) return null
+            for (name in names) {
+                if (!hasAttr(name)) continue
+                val raw = attr(name).trim()
+                if (raw.isEmpty()) continue
+                val normalized = raw.substringBefore(' ').substringBefore(',')
+                if (normalized.isEmpty() || normalized.startsWith("data:", ignoreCase = true)) continue
+                val absolute = if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+                    normalized
+                } else {
+                    base?.let { runCatching { URL(it, normalized).toString() }.getOrNull() }
+                }
+                if (!absolute.isNullOrBlank()) return absolute
+            }
+            return null
         }
 
-        val imgSrc = linkNode.selectFirst("img[src]")?.attr("src")?.takeIf { it.isNotBlank() }
-        if (!imgSrc.isNullOrBlank() && base != null) {
-            runCatching { URL(base, imgSrc).toString() }.getOrNull()?.let { return it }
+        // 1. <img> や <source> の各属性(src/data-src/srcset等)を優先的に解決
+        val imgNodes = linkNode.select("img,source")
+        for (node in imgNodes) {
+            node.resolveAttr(
+                "src",
+                "data-src",
+                "data-original",
+                "data-thumb",
+                "data-lazy-src",
+                "data-lazy",
+                "data-llsrc",
+                "data-placeholder",
+                "data-url"
+            )?.let { return it }
+            node.resolveAttr("srcset", "data-srcset")?.let { return it }
+        }
+
+        // 2. 属性で取得できない場合は HTML の構造上に存在する子孫の <img> を走査
+        linkNode.select("*[src],*[data-src],*[srcset],*[data-srcset]").forEach { element ->
+            element.resolveAttr(
+                "src",
+                "data-src",
+                "data-original",
+                "data-thumb",
+                "data-lazy-src",
+                "data-lazy",
+                "data-llsrc",
+                "data-placeholder",
+                "data-url",
+                "srcset",
+                "data-srcset"
+            )?.let { return it }
         }
 
         return guessThumbnailFromFull(fullImageUrl)
@@ -720,20 +766,39 @@ class DetailViewModel @Inject constructor(
 
     /** `/src/12345.jpg` -> `/thumb/12345s.jpg` 形式でサムネイルURLを推測する。 */
     private fun guessThumbnailFromFull(fullImageUrl: String): String? {
+        val sanitized = fullImageUrl
+            .substringBefore('#')
+            .substringBefore('?')
         val marker = "/src/"
-        val markerIndex = fullImageUrl.indexOf(marker)
+        val markerIndex = sanitized.indexOf(marker)
         if (markerIndex == -1) return null
-        val dot = fullImageUrl.lastIndexOf('.')
-        if (dot <= markerIndex || dot == fullImageUrl.length - 1) return null
-        val extension = fullImageUrl.substring(dot)
-        val core = fullImageUrl.substring(0, dot)
+        val dot = sanitized.lastIndexOf('.')
+        val hasExtension = dot > markerIndex && dot < sanitized.length - 1
+        val baseWithoutExt = if (hasExtension) sanitized.substring(0, dot) else sanitized
+        val originalExtension = if (hasExtension) sanitized.substring(dot + 1).lowercase() else ""
+        val extensionCandidates = buildList {
+            if (originalExtension.isNotBlank()) {
+                if (originalExtension != "jpg" && originalExtension != "jpeg") add("jpg")
+                add(originalExtension)
+            } else {
+                add("jpg")
+            }
+        }
         val replacements = listOf("/thumb/", "/cat/")
         for (replacement in replacements) {
-            val replaced = core.replaceFirst(marker, replacement)
-            if (replaced == core) continue
-            val withSuffix = if (replaced.endsWith("s")) replaced else replaced + "s"
-            val candidate = withSuffix + extension
-            if (candidate != fullImageUrl) return candidate
+            val replaced = baseWithoutExt.replaceFirst(marker, replacement)
+            if (replaced == baseWithoutExt) continue
+            val baseCandidates = buildList {
+                val withSuffix = if (replaced.endsWith("s")) replaced else replaced + "s"
+                add(withSuffix)
+                if (withSuffix != replaced) add(replaced)
+            }
+            for (baseCandidate in baseCandidates) {
+                for (ext in extensionCandidates) {
+                    val candidate = if (ext.isNotBlank()) "$baseCandidate.$ext" else baseCandidate
+                    if (!candidate.equals(sanitized, ignoreCase = true)) return candidate
+                }
+            }
         }
         return null
     }
@@ -931,6 +996,7 @@ class DetailViewModel @Inject constructor(
         private val IMG_PATTERN = Regex("<img[^>]*>")
         private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp")
         private val VIDEO_EXTENSIONS = setOf("webm", "mp4")
+        private val DUPLICATE_WHITESPACE_REGEX = Regex("\\s+")
     }
 
     // ===== NG フィルタリング =====
@@ -965,14 +1031,25 @@ class DetailViewModel @Inject constructor(
             sourceIds - filteredIds
         }
 
-        eventStore.applyEvent(DetailEvent.NgFilterApplied(rules, hiddenIds))
-
-        val cache = buildPlainTextCache(filtered)
-        withContext(Dispatchers.Main) {
-            _plainTextCache.value = cache
+        val plainTextMap = computePlainTextMap(filtered)
+        val displayPreferences = withContext(Dispatchers.Default) { loadDisplayFilterConfig() }
+        val displayFiltered = withContext(Dispatchers.Default) {
+            applyDisplayFilters(filtered, plainTextMap, displayPreferences)
+        }
+        val displayPlainText = withContext(Dispatchers.Default) {
+            displayFiltered.asSequence()
+                .filterIsInstance<DetailContent.Text>()
+                .associate { text -> text.id to (plainTextMap[text.id] ?: toPlainText(text)) }
         }
 
-        recomputeSearchState(filtered)
+        withContext(Dispatchers.Main) {
+            _plainTextCache.value = displayPlainText
+            _displayContent.value = displayFiltered
+        }
+
+        eventStore.applyEvent(DetailEvent.NgFilterApplied(rules, hiddenIds))
+
+        recomputeSearchState(displayFiltered)
 
         currentUrl?.let { url ->
             val snapshot = filtered
@@ -1348,7 +1425,7 @@ class DetailViewModel @Inject constructor(
             publishSearchState()
             return
         }
-        val contentList = contentOverride ?: detailContent.value
+        val contentList = contentOverride ?: displayContent.value.ifEmpty { detailContent.value }
         viewModelScope.launch(Dispatchers.Default) {
             val hits = mutableListOf<Int>()
             contentList.forEachIndexed { index, content ->
@@ -1381,7 +1458,7 @@ class DetailViewModel @Inject constructor(
         return android.text.Html.fromHtml(t.htmlContent, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
     }
 
-    private suspend fun buildPlainTextCache(list: List<DetailContent>): Map<String, String> {
+    private suspend fun computePlainTextMap(list: List<DetailContent>): Map<String, String> {
         return withContext(Dispatchers.Default) {
             list.asSequence()
                 .filterIsInstance<DetailContent.Text>()
@@ -1433,6 +1510,212 @@ class DetailViewModel @Inject constructor(
         }
         return now
     }
+
+    private data class DisplayFilterConfig(
+        val hideDeletedRes: Boolean,
+        val hideDuplicateRes: Boolean,
+        val duplicateResThreshold: Int
+    )
+
+    private fun loadDisplayFilterConfig(): DisplayFilterConfig {
+        val hideDeleted = AppPreferences.getHideDeletedRes(appContext)
+        val hideDuplicate = AppPreferences.getHideDuplicateRes(appContext)
+        val threshold = AppPreferences.getDuplicateResThreshold(appContext)
+        return DisplayFilterConfig(hideDeleted, hideDuplicate, threshold)
+    }
+
+    private fun applyDisplayFilters(
+        items: List<DetailContent>,
+        plainTextCache: Map<String, String>,
+        config: DisplayFilterConfig
+    ): List<DetailContent> {
+        if (items.isEmpty()) return items
+        val fallbackPlainText = { text: DetailContent.Text -> plainTextCache[text.id] ?: toPlainText(text) }
+
+        val withoutDeleted = if (config.hideDeletedRes) {
+            items.filter { item ->
+                when (item) {
+                    is DetailContent.Text -> !isDeletedRes(item)
+                    else -> true
+                }
+            }
+        } else {
+            items
+        }
+
+        val withoutPhantom = filterPhantomQuoteResponses(withoutDeleted, plainTextCache, fallbackPlainText)
+
+        return if (config.hideDuplicateRes) {
+            filterDuplicateResponses(withoutPhantom, config.duplicateResThreshold, plainTextCache, fallbackPlainText)
+        } else {
+            withoutPhantom
+        }
+    }
+
+    private fun filterPhantomQuoteResponses(
+        items: List<DetailContent>,
+        plainTextCache: Map<String, String>,
+        plainTextOf: (DetailContent.Text) -> String
+    ): List<DetailContent> {
+        if (items.isEmpty()) return items
+        val seenBodyLines = mutableSetOf<String>()
+        val result = mutableListOf<DetailContent>()
+        var index = 0
+        var anyFiltered = false
+
+        while (index < items.size) {
+            val item = items[index]
+            if (item is DetailContent.Text) {
+                val plain = plainTextCache[item.id] ?: plainTextOf(item)
+                val lines = plain.lines()
+
+                var hide = false
+                lines@ for (line in lines) {
+                    val normalizedSource = line
+                        .replace("\u200B", "")
+                        .replace('　', ' ')
+                        .replace('＞', '>')
+                    val trimmedStart = normalizedSource.trimStart()
+                    if (!trimmedStart.startsWith(">")) continue
+                    val leadingGtCount = trimmedStart.takeWhile { it == '>' }.length
+                    if (leadingGtCount != 1) continue
+                    val quoteBody = trimmedStart.drop(leadingGtCount).trimStart()
+                    val normalizedQuote = normalizeBodyLineForQuoteDetection(quoteBody) ?: continue
+                    if (normalizedQuote.length < 2) continue
+                    if (normalizedQuote.all { it.isDigit() }) continue
+                    if (normalizedQuote !in seenBodyLines) {
+                        hide = true
+                        break@lines
+                    }
+                }
+
+                if (hide) {
+                    anyFiltered = true
+                    index++
+                    while (index < items.size) {
+                        val attachment = items[index]
+                        if (attachment is DetailContent.Image || attachment is DetailContent.Video) {
+                            anyFiltered = true
+                            index++
+                        } else {
+                            break
+                        }
+                    }
+                    continue
+                } else {
+                    result += item
+                    for (line in lines) {
+                        val normalized = normalizeBodyLineForQuoteDetection(line) ?: continue
+                        val trimmedStart = line
+                            .replace("\u200B", "")
+                            .replace('　', ' ')
+                            .replace('＞', '>')
+                            .trimStart()
+                        val leadingGt = trimmedStart.takeWhile { it == '>' }.length
+                        if (leadingGt == 0) {
+                            seenBodyLines += normalized
+                        }
+                    }
+                    index++
+                }
+            } else {
+                result += item
+                index++
+            }
+        }
+
+        return if (anyFiltered) result else items
+    }
+
+    private fun filterDuplicateResponses(
+        items: List<DetailContent>,
+        threshold: Int,
+        plainTextCache: Map<String, String>,
+        plainTextOf: (DetailContent.Text) -> String
+    ): List<DetailContent> {
+        if (items.isEmpty()) return items
+        val limit = threshold.coerceAtLeast(1)
+        val result = mutableListOf<DetailContent>()
+        val counters = mutableMapOf<String, Int>()
+        var index = 0
+        var anyFiltered = false
+
+        while (index < items.size) {
+            val item = items[index]
+            if (item is DetailContent.Text) {
+                val plain = plainTextCache[item.id] ?: plainTextOf(item)
+                val key = buildDuplicateContentKey(plain)
+                if (key != null) {
+                    val newCount = (counters[key] ?: 0) + 1
+                    counters[key] = newCount
+                    if (newCount <= limit) {
+                        result += item
+                        index++
+                    } else {
+                        anyFiltered = true
+                        index++
+                        while (index < items.size) {
+                            val attachment = items[index]
+                            if (attachment is DetailContent.Image || attachment is DetailContent.Video) {
+                                anyFiltered = true
+                                index++
+                            } else {
+                                break
+                            }
+                        }
+                    }
+                    continue
+                }
+            }
+            result += item
+            index++
+        }
+
+        return if (anyFiltered) result else items
+    }
+
+    private fun normalizeBodyLineForQuoteDetection(raw: String): String? {
+        var normalized = raw
+            .replace("\u200B", "")
+            .replace('　', ' ')
+            .replace('＞', '>')
+            .trim()
+        if (normalized.isEmpty()) return null
+        normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKC)
+        normalized = DUPLICATE_WHITESPACE_REGEX.replace(normalized, " ").trim()
+        if (normalized.isEmpty()) return null
+        if (normalized.startsWith("No.", ignoreCase = true)) return null
+        if (normalized.startsWith("ID:", ignoreCase = true)) return null
+        return normalized
+    }
+
+    private fun isDeletedRes(text: DetailContent.Text): Boolean {
+        return text.htmlContent.contains("スレッドを立てた人によって削除されました") ||
+            text.htmlContent.contains("書き込みをした人によって削除されました")
+    }
+
+    private fun buildDuplicateContentKey(plainText: String): String? {
+        val bodyLines = mutableListOf<String>()
+        for (line in plainText.lines()) {
+            var normalized = line.replace("\u200B", "")
+                .replace('　', ' ')
+                .replace('＞', '>')
+                .replace('≫', '>')
+                .trim()
+            if (normalized.isEmpty()) continue
+            if (normalized.startsWith(">")) continue
+            normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKC)
+            val collapsed = DUPLICATE_WHITESPACE_REGEX.replace(normalized, " ").trim()
+            if (collapsed.isEmpty()) continue
+            if (collapsed.startsWith("No.", ignoreCase = true)) continue
+            if (collapsed.startsWith("ID:", ignoreCase = true)) continue
+            bodyLines += collapsed
+        }
+
+        if (bodyLines.isEmpty()) return null
+        return bodyLines.joinToString("\n")
+    }
+
 
     // ===== 新アーキテクチャ対応のメタデータ更新処理 =====
 

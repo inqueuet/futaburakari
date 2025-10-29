@@ -18,6 +18,8 @@ object BookmarkManager {
     private const val KEY_BOOKMARKS = "bookmarks_list"
     /** Key for the currently selected bookmark URL. */
     private const val KEY_SELECTED_BOOKMARK_URL = "selected_bookmark_url"
+    /** Flag indicating whether the built-in defaults have been seeded already. */
+    private const val KEY_BOOKMARKS_SEEDED = "bookmarks_seeded"
 
     /** Returns the preferences instance scoped to this manager. */
     private fun getPreferences(context: Context): SharedPreferences {
@@ -31,6 +33,9 @@ object BookmarkManager {
         val gson = Gson()
         val json = gson.toJson(bookmarks)
         editor.putString(KEY_BOOKMARKS, json)
+        if (bookmarks.isNotEmpty() && !prefs.getBoolean(KEY_BOOKMARKS_SEEDED, false)) {
+            editor.putBoolean(KEY_BOOKMARKS_SEEDED, true)
+        }
         editor.apply()
     }
 
@@ -42,15 +47,16 @@ object BookmarkManager {
         val gson = Gson()
         val json = prefs.getString(KEY_BOOKMARKS, null)
         val type = object : TypeToken<MutableList<Bookmark>>() {}.type
-        var bookmarks: MutableList<Bookmark>? = gson.fromJson(json, type)
-        // If none exist, seed with two default bookmarks and persist them.
-        if (bookmarks == null || bookmarks.isEmpty()) {
-            bookmarks = mutableListOf(
-                Bookmark("どうぶつ", "https://dat.2chan.net/d/futaba.php"),
-                Bookmark("しょくぶつ", "https://zip.2chan.net/z/futaba.php"),
+        val bookmarks: MutableList<Bookmark>? = gson.fromJson(json, type)
+        val seeded = prefs.getBoolean(KEY_BOOKMARKS_SEEDED, false)
 
-            )
-            saveBookmarks(context, bookmarks) // Save defaults if none exist
+        if (bookmarks.isNullOrEmpty()) {
+            if (!seeded) {
+                val defaults = defaultBookmarks()
+                saveBookmarks(context, defaults)
+                return defaults
+            }
+            return mutableListOf()
         }
         return bookmarks
     }
@@ -104,5 +110,12 @@ object BookmarkManager {
         val existingBookmarks = getBookmarks(context)
         val defaultUrl = existingBookmarks.firstOrNull()?.url ?: "https://may.2chan.net/b/futaba.php"
         return prefs.getString(KEY_SELECTED_BOOKMARK_URL, null) ?: defaultUrl
+    }
+
+    private fun defaultBookmarks(): MutableList<Bookmark> {
+        return mutableListOf(
+            Bookmark("どうぶつ", "https://dat.2chan.net/d/futaba.php"),
+            Bookmark("しょくぶつ", "https://zip.2chan.net/z/futaba.php"),
+        )
     }
 }

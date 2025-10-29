@@ -283,7 +283,7 @@ class NetworkClient(
                 // Content-Lengthをチェックして無駄な取得を避ける
                 val contentLength = resp.header("Content-Length")?.toLongOrNull()
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
-                if (contentLength != null && contentLength > maxToRead) {
+                if (contentLength != null && contentLength > maxToRead && code != 200) {
                     return@use null
                 }
 
