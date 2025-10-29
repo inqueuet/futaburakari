@@ -439,8 +439,21 @@ fun DetailScreenScaffold(
                 val pullState = rememberPullToRefreshState()
                 var fastScrollActive by remember { mutableStateOf(false) }
                 var bottomPaddingVersion by remember { mutableIntStateOf(0) }
+                var lastContentIndex by remember { mutableIntStateOf(-1) }
                 LaunchedEffect(itemsVersion) {
                     imagesLoadedVersion = 0
+                }
+                LaunchedEffect(items) {
+                    lastContentIndex = withContext(Dispatchers.Default) {
+                        items.indexOfLast {
+                            when (it) {
+                                is com.valoser.futaburakari.DetailContent.Text,
+                                is com.valoser.futaburakari.DetailContent.Image,
+                                is com.valoser.futaburakari.DetailContent.Video -> true
+                                else -> false
+                            }
+                        }
+                    }
                 }
                 // 下部余白: 既存の Flow があればそれを優先。無ければ広告の実測高さから算出
                 val legacyPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value
@@ -460,22 +473,10 @@ fun DetailScreenScaffold(
                     val li = listState.layoutInfo
                     val lastVisible = li.visibleItemsInfo.lastOrNull()?.index ?: -1
                     if (lastVisible < 0) return@LaunchedEffect
-                    // 実質末尾（ThreadEndTime を除く）
-                    val lastContentIndex = run {
-                        var idx = -1
-                        for (i in items.indices.reversed()) {
-                            when (items[i]) {
-                                is com.valoser.futaburakari.DetailContent.Text,
-                                is com.valoser.futaburakari.DetailContent.Image,
-                                is com.valoser.futaburakari.DetailContent.Video -> { idx = i; break }
-                                else -> {}
-                            }
-                        }
-                        idx
-                    }
-                    if (lastContentIndex < 0) return@LaunchedEffect
+                    val lastContentIndexSnapshot = lastContentIndex
+                    if (lastContentIndexSnapshot < 0) return@LaunchedEffect
                     val threshold = 1
-                    if (items.size != lastTriggeredSize && lastVisible >= lastContentIndex - threshold) {
+                    if (items.size != lastTriggeredSize && lastVisible >= lastContentIndexSnapshot - threshold) {
                         lastTriggeredSize = items.size
                         onNearListEnd?.invoke()
                     }
@@ -784,12 +785,28 @@ fun DetailScreenScaffold(
                     title = { Text("IDをNGに追加") },
                     text = { Text("ID: $toAdd をNGにしますか？") },
                     confirmButton = {
-                        androidx.compose.material3.TextButton(onClick = {
+                            androidx.compose.material3.TextButton(onClick = {
                             val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
-                            ngStore.addRule(com.valoser.futaburakari.RuleType.ID, toAdd, com.valoser.futaburakari.MatchType.EXACT, sourceKey = source, ephemeral = true)
-                            onReapplyNgFilter?.invoke()
-                            android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
-                            pendingNgId = null
+                            scope.launch(Dispatchers.IO) {
+                                val result = runCatching {
+                                    ngStore.addRule(
+                                        com.valoser.futaburakari.RuleType.ID,
+                                        toAdd,
+                                        com.valoser.futaburakari.MatchType.EXACT,
+                                        sourceKey = source,
+                                        ephemeral = true
+                                    )
+                                }
+                                withContext(Dispatchers.Main) {
+                                    if (result.isSuccess) {
+                                        onReapplyNgFilter?.invoke()
+                                        android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        android.widget.Toast.makeText(ctx, "追加に失敗しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                    pendingNgId = null
+                                }
+                            }
                         }) { Text("追加") }
                     },
                     dismissButton = {
@@ -835,13 +852,31 @@ fun DetailScreenScaffold(
                     confirmButton = {
                         androidx.compose.material3.TextButton(onClick = {
                             val pat = text.trim()
-                            if (pat.isNotEmpty()) {
-                                val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
-                                ngStore.addRule(com.valoser.futaburakari.RuleType.BODY, pat, match, sourceKey = source, ephemeral = true)
-                                onReapplyNgFilter?.invoke()
-                                android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                            if (pat.isEmpty()) {
+                                pendingNgBody = null
+                                return@TextButton
                             }
-                            pendingNgBody = null
+                            val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
+                            scope.launch(Dispatchers.IO) {
+                                val result = runCatching {
+                                    ngStore.addRule(
+                                        com.valoser.futaburakari.RuleType.BODY,
+                                        pat,
+                                        match,
+                                        sourceKey = source,
+                                        ephemeral = true
+                                    )
+                                }
+                                withContext(Dispatchers.Main) {
+                                    if (result.isSuccess) {
+                                        onReapplyNgFilter?.invoke()
+                                        android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        android.widget.Toast.makeText(ctx, "追加に失敗しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                    pendingNgBody = null
+                                }
+                            }
                         }) { Text("追加") }
                     },
                     dismissButton = {
