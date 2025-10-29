@@ -129,7 +129,7 @@ class MainActivity : BaseActivity() {
     private var autoUpdateRunnable: Runnable? = null
     private val ngStore by lazy { NgStore(this) }
     // Compose UI state
-    private val spanCountState = mutableIntStateOf(4)
+    private val spanCountState = mutableIntStateOf(3)
     private val catalogDisplayModeState = mutableStateOf("grid")
     private val topBarPositionState = mutableStateOf(AppBarPosition.TOP)
     private val toolbarSubtitleState = mutableStateOf("")
@@ -438,8 +438,8 @@ class MainActivity : BaseActivity() {
     // 設定からグリッド列数を取得（1..8 の範囲に丸め込み）
     private fun getGridSpanCount(): Int {
         val value = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString("pref_key_grid_span", "4") ?: "4"
-        return value.toIntOrNull()?.coerceIn(1, 8) ?: 4
+            .getString("pref_key_grid_span", "3") ?: "3"
+        return value.toIntOrNull()?.coerceIn(1, 8) ?: 3
     }
 
     // 設定からカタログ表示モードを取得

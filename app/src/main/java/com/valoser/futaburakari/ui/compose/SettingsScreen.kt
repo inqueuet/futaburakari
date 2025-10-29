@@ -105,7 +105,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val prefs = remember { PreferenceManager.getDefaultSharedPreferences(ctx) }
 
     // 状態（現在の設定値を Preferences から読み込み）
-    var gridSpan by remember { mutableStateOf(prefs.getString("pref_key_grid_span", "4") ?: "4") }
+    var gridSpan by remember { mutableStateOf(prefs.getString("pref_key_grid_span", "3") ?: "3") }
     var fontScale by remember { mutableStateOf(prefs.getString("pref_key_font_scale", "1.0") ?: "1.0") }
     var themeMode by remember { mutableStateOf(prefs.getString("pref_key_theme_mode", "system") ?: "system") }
     var catalogDisplayMode by remember { mutableStateOf(prefs.getString("pref_key_catalog_display_mode", "grid") ?: "grid") }
