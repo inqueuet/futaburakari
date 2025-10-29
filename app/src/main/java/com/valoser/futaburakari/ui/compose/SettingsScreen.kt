@@ -109,6 +109,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var fontScale by remember { mutableStateOf(prefs.getString("pref_key_font_scale", "1.0") ?: "1.0") }
     var themeMode by remember { mutableStateOf(prefs.getString("pref_key_theme_mode", "system") ?: "system") }
     var catalogDisplayMode by remember { mutableStateOf(prefs.getString("pref_key_catalog_display_mode", "grid") ?: "grid") }
+    var topBarPosition by remember { mutableStateOf(prefs.getString("pref_key_top_bar_position", "top") ?: "top") }
     // カタログモード設定
     var catalogCx by remember { mutableStateOf(prefs.getString("pref_key_catalog_cx", "20") ?: "20") }
     var catalogCy by remember { mutableStateOf(prefs.getString("pref_key_catalog_cy", "10") ?: "10") }
@@ -164,6 +165,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     val themeValues = remember { ctx.resources.getStringArray(R.array.pref_theme_mode_values).toList() }
     val catalogDisplayEntries = remember { ctx.resources.getStringArray(R.array.pref_catalog_display_mode_entries).toList() }
     val catalogDisplayValues = remember { ctx.resources.getStringArray(R.array.pref_catalog_display_mode_values).toList() }
+    val topBarPositionEntries = remember { ctx.resources.getStringArray(R.array.pref_top_bar_position_entries).toList() }
+    val topBarPositionValues = remember { ctx.resources.getStringArray(R.array.pref_top_bar_position_values).toList() }
     val catalogCharLimitOptions = remember { (3..15).map { it.toString() } }
     // removed: color mode entries/values
     val cleanupEntries = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_entries).toList() }
@@ -199,6 +202,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     values = catalogDisplayValues,
                     value = catalogDisplayMode,
                     onValueChange = { v -> catalogDisplayMode = v; prefs.edit().putString("pref_key_catalog_display_mode", v).apply() }
+                )
+            }
+            item {
+                DropdownPreferenceRow(
+                    title = "トップバーの位置",
+                    entries = topBarPositionEntries,
+                    values = topBarPositionValues,
+                    value = topBarPosition,
+                    onValueChange = { v -> topBarPosition = v; prefs.edit().putString("pref_key_top_bar_position", v).apply() }
                 )
             }
             item {

@@ -9,9 +9,9 @@ import com.valoser.futaburakari.TtsManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -50,6 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Divider
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -92,6 +94,7 @@ import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
+import com.valoser.futaburakari.ui.common.AppBarPosition
 
 /**
  * スレ詳細の Compose スクリーン（Scaffold）。
@@ -142,6 +145,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 @Composable
 fun DetailScreenScaffold(
     title: String,
+    appBarPosition: AppBarPosition = AppBarPosition.TOP,
     onBack: () -> Unit,
     onReply: () -> Unit,
     onReload: () -> Unit,
@@ -257,20 +261,25 @@ fun DetailScreenScaffold(
             val selectedImages = remember { mutableStateListOf<String>() }
             var jumpToBottomRequest by remember { mutableIntStateOf(0) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    // タイトルクリックで「スレタイ（引用元）＋引用先」を表示
-                    Text(
-                        text = title,
-                        maxLines = 2,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.clickable { titleClickPending = true }
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
+    val toolbarWindowInsets = if (appBarPosition == AppBarPosition.TOP) {
+        TopAppBarDefaults.windowInsets
+    } else {
+        WindowInsets(0, 0, 0, 0)
+    }
+
+    val toolbar: @Composable () -> Unit = {
+        TopAppBar(
+            title = {
+                // タイトルクリックで「スレタイ（引用元）＋引用先」を表示
+                Text(
+                    text = title,
+                    maxLines = 2,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.clickable { titleClickPending = true }
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
             },
@@ -337,13 +346,29 @@ fun DetailScreenScaffold(
                     }
                 }
             },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                )
-            )
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+                navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+            windowInsets = toolbarWindowInsets
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            if (appBarPosition == AppBarPosition.TOP) {
+                toolbar()
+            }
+        },
+        bottomBar = {
+            if (appBarPosition == AppBarPosition.BOTTOM) {
+                Column {
+                    Divider()
+                    toolbar()
+                }
+            }
         }
     ) { contentPadding: PaddingValues ->
         Box(

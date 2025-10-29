@@ -44,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableIntStateOf
 import com.valoser.futaburakari.ui.compose.MainCatalogScreen
+import com.valoser.futaburakari.ui.common.AppBarPosition
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.EntryPointAccessors
@@ -93,6 +94,9 @@ class MainActivity : BaseActivity() {
             "pref_key_catalog_display_mode" -> {
                 catalogDisplayModeState.value = getCatalogDisplayMode()
             }
+            "pref_key_top_bar_position" -> {
+                topBarPositionState.value = getTopBarPosition()
+            }
             "pref_key_font_scale" -> {
                 // フォントスケールの反映には再生成が必要
                 recreate()
@@ -127,6 +131,7 @@ class MainActivity : BaseActivity() {
     // Compose UI state
     private val spanCountState = mutableIntStateOf(4)
     private val catalogDisplayModeState = mutableStateOf("grid")
+    private val topBarPositionState = mutableStateOf(AppBarPosition.TOP)
     private val toolbarSubtitleState = mutableStateOf("")
     private val isLoadingState = mutableStateOf(false)
     private val itemsState = mutableStateOf<List<ImageItem>>(emptyList())
@@ -171,6 +176,7 @@ class MainActivity : BaseActivity() {
         // Compose用初期化
         spanCountState.intValue = getGridSpanCount()
         catalogDisplayModeState.value = getCatalogDisplayMode()
+        topBarPositionState.value = getTopBarPosition()
         ngRulesState.value = ngStore.getRules()
         promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this)
 
@@ -197,6 +203,7 @@ class MainActivity : BaseActivity() {
                         isLoading = isLoadingState.value,
                         spanCount = spanCountState.intValue,
                         catalogDisplayMode = catalogDisplayModeState.value,
+                        topBarPosition = topBarPositionState.value,
                         query = queryState.value,
                         onQueryChange = { q -> queryState.value = q },
                         onReload = {
@@ -439,6 +446,12 @@ class MainActivity : BaseActivity() {
     private fun getCatalogDisplayMode(): String {
         return PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_catalog_display_mode", "grid") ?: "grid"
+    }
+
+    private fun getTopBarPosition(): AppBarPosition {
+        val pref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_top_bar_position", "top") ?: "top"
+        return if (pref == "bottom") AppBarPosition.BOTTOM else AppBarPosition.TOP
     }
 
     /**

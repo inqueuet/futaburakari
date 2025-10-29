@@ -37,6 +37,7 @@ import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
 import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
+import com.valoser.futaburakari.ui.common.AppBarPosition
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -98,6 +99,7 @@ class DetailActivity : BaseActivity() {
     private val adsEnabledFlow = adsEnabledFlowInternal.asStateFlow()
     private val promptFetchEnabledState = mutableStateOf(false)
     private val lowBandwidthModeState = mutableStateOf(false)
+    private val topBarPositionState = mutableStateOf(AppBarPosition.TOP)
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             // 広告設定の即時反映
@@ -110,6 +112,9 @@ class DetailActivity : BaseActivity() {
             "ng_rules_json" -> viewModel.reapplyNgFilter()
             PromptSettings.PREF_KEY_FETCH_ENABLED -> {
                 promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this@DetailActivity)
+            }
+            "pref_key_top_bar_position" -> {
+                topBarPositionState.value = getTopBarPosition()
             }
         }
     }
@@ -181,6 +186,7 @@ class DetailActivity : BaseActivity() {
         val adUnitId = getString(R.string.admob_banner_id)
         promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this)
         lowBandwidthModeState.value = AppPreferences.isLowBandwidthModeEnabled(this)
+        topBarPositionState.value = getTopBarPosition()
         setContent {
             FutaburakariTheme(expressive = true) {
                 val showAds by adsEnabledFlow.collectAsState()
@@ -191,6 +197,7 @@ class DetailActivity : BaseActivity() {
                 }
                 DetailScreenScaffold(
                     title = toolbarTitleText,
+                    appBarPosition = topBarPositionState.value,
                     onBack = {
                         onBackPressedDispatcher.onBackPressed()
                     },
@@ -347,6 +354,12 @@ class DetailActivity : BaseActivity() {
         // Compose側で表示を制御するため、状態のみ更新
         val enabled = prefs.getBoolean("pref_key_ads_enabled", true)
         adsEnabledFlowInternal.value = enabled
+    }
+
+    private fun getTopBarPosition(): AppBarPosition {
+        val pref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_top_bar_position", "top") ?: "top"
+        return if (pref == "bottom") AppBarPosition.BOTTOM else AppBarPosition.TOP
     }
 
     /**
