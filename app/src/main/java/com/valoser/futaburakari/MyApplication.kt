@@ -93,13 +93,13 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
                 val memCache = imageLoader.memoryCache
                 val diskCache = imageLoader.diskCache
 
-                val memInfo = if (memCache != null) {
+                val memInfo = if (memCache != null && memCache.maxSize > 0) {
                     "Memory: ${memCache.size}/${memCache.maxSize} (${(memCache.size.toFloat() / memCache.maxSize * 100).toInt()}%)"
                 } else {
                     "Memory: N/A"
                 }
 
-                val diskInfo = if (diskCache != null) {
+                val diskInfo = if (diskCache != null && diskCache.maxSize > 0) {
                     "Disk: ${diskCache.size / 1024 / 1024}MB/${diskCache.maxSize / 1024 / 1024}MB"
                 } else {
                     "Disk: N/A"
@@ -228,6 +228,10 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
      */
     override fun newImageLoader(context: Context): ImageLoader {
         val isDebug = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+        // 利用可能なディスク容量に基づいてキャッシュサイズを動的に計算
+        val diskCacheSize = calculateDiskCacheSize(context)
+
         return ImageLoader.Builder(context)
             .components {
                 // OkHttp を使用したネットワークフェッチャーを追加（Coil 3 では必須）
@@ -249,13 +253,49 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             .diskCache(
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
-                    .maxSizeBytes(8L * 1024L * 1024L * 1024L) // 8GB（5GBから増量）
+                    .maxSizeBytes(diskCacheSize)
                     .cleanupDispatcher(Dispatchers.IO) // ディスクI/Oの最適化
                     .build()
             )
             // デバッグビルド時のみ詳細ログを有効化
             .apply { if (isDebug) logger(DebugLogger()) }
             .build()
+    }
+
+    /**
+     * 利用可能なディスク容量に基づいて最適なキャッシュサイズを計算する。
+     * - 利用可能な容量の10%、ただし最小500MB、最大8GBとする。
+     * - 利用可能な容量が5GB未満の場合は、より控えめな設定を使用する。
+     */
+    private fun calculateDiskCacheSize(context: Context): Long {
+        return try {
+            val cacheDir = context.cacheDir
+            val usableSpace = cacheDir.usableSpace
+            val totalSpace = cacheDir.totalSpace
+
+            // 利用可能な容量の10%を基準とする
+            val tenPercent = usableSpace / 10
+
+            // 最小500MB、最大8GB
+            val minSize = 500L * 1024L * 1024L // 500MB
+            val maxSize = 8L * 1024L * 1024L * 1024L // 8GB
+
+            val calculatedSize = when {
+                // 利用可能な容量が5GB未満の場合は最大2GBに制限
+                usableSpace < 5L * 1024L * 1024L * 1024L -> {
+                    minOf(tenPercent, 2L * 1024L * 1024L * 1024L)
+                }
+                // 通常は10%、ただし最大8GB
+                else -> tenPercent.coerceIn(minSize, maxSize)
+            }
+
+            Log.i("MyApplication", "Disk cache size: ${calculatedSize / 1024 / 1024}MB (usable: ${usableSpace / 1024 / 1024}MB, total: ${totalSpace / 1024 / 1024}MB)")
+            calculatedSize
+        } catch (e: Exception) {
+            Log.w("MyApplication", "Failed to calculate disk cache size, using default 2GB", e)
+            // エラー時は控えめな2GBを返す
+            2L * 1024L * 1024L * 1024L
+        }
     }
 
     override fun onTerminate() {
@@ -273,15 +313,26 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
 
     override fun onLowMemory() {
         super.onLowMemory()
-        // メモリ不足時にキャッシュクリア
+        Log.w("MyApplication", "onLowMemory called - performing emergency memory cleanup")
+        // メモリ不足時は即座にメモリキャッシュのみクリア（軽量操作）
         clearCoilImageCache(this)
-        clearCoilDiskCache(this)
+        // ディスクキャッシュクリアは非同期で遅延実行（重い操作）
+        applicationScope.launch {
+            try {
+                clearCoilDiskCache(this@MyApplication)
+                detailCacheManager.cleanup()
+            } catch (e: Exception) {
+                Log.w("MyApplication", "Error during low memory cleanup", e)
+            }
+        }
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        Log.d("MyApplication", "onTrimMemory called with level=$level")
+
+        // UI非表示時はメタデータキャッシュをフラッシュ
         if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-            ThreadMonitorWorker.cancelAll(this)
             metadataCache.flush().invokeOnCompletion { error ->
                 if (error != null) {
                     Log.w("MyApplication", "Metadata cache flush failed on trim", error)
@@ -289,15 +340,26 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             }
         }
 
-        // メモリトリムレベルに応じてキャッシュクリア
+        // メモリトリムレベルに応じて段階的なキャッシュクリア
         when (level) {
+            // 最も深刻：メモリキャッシュクリア + 非同期でディスクキャッシュクリア
             ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL,
             ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                Log.w("MyApplication", "Critical memory pressure - clearing all caches")
                 clearCoilImageCache(this)
-                clearCoilDiskCache(this)
+                applicationScope.launch {
+                    try {
+                        clearCoilDiskCache(this@MyApplication)
+                        detailCacheManager.cleanup()
+                    } catch (e: Exception) {
+                        Log.w("MyApplication", "Error during critical memory cleanup", e)
+                    }
+                }
             }
+            // 中程度：メモリキャッシュのみクリア（軽量）
             ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW,
             ComponentCallbacks2.TRIM_MEMORY_MODERATE -> {
+                Log.i("MyApplication", "Moderate memory pressure - clearing memory cache only")
                 clearCoilImageCache(this)
             }
         }

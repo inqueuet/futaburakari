@@ -206,8 +206,8 @@ class DetailViewModel @Inject constructor(
         // 段階的メモリ管理（統合版）
         when {
             memoryUsageRatio > 0.90f -> {
-                // 極度の高負荷：即座にアグレッシブクリーンアップ + GC
-                Log.w("DetailViewModel", "Extreme memory usage ($memoryUsagePercent%), performing aggressive cleanup with GC")
+                // 極度の高負荷：即座にアグレッシブクリーンアップ
+                Log.w("DetailViewModel", "Extreme memory usage ($memoryUsagePercent%), performing aggressive cleanup")
                 consecutiveHighMemoryCount++
 
                 clearNgFilterCache()
@@ -215,10 +215,9 @@ class DetailViewModel @Inject constructor(
                 MyApplication.clearCoilImageCache(appContext)
                 memoryCheckIntervalMs = 5000L
 
-                // 連続して高メモリ状態が続く場合はGC強制実行
+                // カウントが際限なく増加しないよう上限でリセット
                 if (consecutiveHighMemoryCount >= 3) {
-                    Log.w("DetailViewModel", "Persistent extreme memory usage, forcing garbage collection")
-                    System.gc()
+                    Log.d("DetailViewModel", "Resetting high memory counter after aggressive cleanup")
                     consecutiveHighMemoryCount = 0
                 }
             }
@@ -1822,7 +1821,7 @@ class DetailViewModel @Inject constructor(
                                 val fileName = url.substringAfterLast('/')
                                 _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
 
-                                MediaSaver.saveImage(appContext, url, networkClient)
+                                MediaSaver.saveImage(appContext, url, networkClient, referer = currentUrl)
 
                                 synchronized(downloadProgressLock) {
                                     completed++
@@ -1976,12 +1975,12 @@ class DetailViewModel @Inject constructor(
                             val hasExisting = !pending.existingByUrl[url].isNullOrEmpty()
                             val success = when (resolution) {
                                 DownloadConflictResolution.SkipExisting ->
-                                    MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
+                                    MediaSaver.saveImageIfNotExists(appContext, url, networkClient, referer = currentUrl)
                                 DownloadConflictResolution.OverwriteExisting -> {
                                     pending.existingByUrl[url]?.let { entries ->
                                         MediaSaver.deleteMedia(appContext, entries)
                                     }
-                                    MediaSaver.saveImageIfNotExists(appContext, url, networkClient)
+                                    MediaSaver.saveImageIfNotExists(appContext, url, networkClient, referer = currentUrl)
                                 }
                             }
 

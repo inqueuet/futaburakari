@@ -185,11 +185,11 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
             Result.success()
         } catch (e: OutOfMemoryError) {
-            // メモリ不足エラー：リソースを可能な限りクリーンアップしてから失敗
+            // メモリ不足エラー：システムに任せて失敗を返す
             Log.e("ThreadMonitorWorker", "Out of memory error for $url", e)
+            // キャッシュマネージャーに任せてメモリを解放
             runCatching {
-                // キャッシュをクリアしてメモリを解放
-                System.gc()
+                cacheManager.cleanup()
             }
             Result.failure()
         } catch (e: StackOverflowError) {
@@ -243,12 +243,13 @@ class ThreadMonitorWorker @AssistedInject constructor(
         fun schedule(context: Context, url: String) {
             val data = workDataOf(KEY_URL to url)
             val repeatIntervalMinutes = 15L
-            val jitterMillis = kotlin.random.Random.nextLong(0L, TimeUnit.MINUTES.toMillis(3))
-            val initialDelayMillis = TimeUnit.MINUTES.toMillis(repeatIntervalMinutes) + jitterMillis
+            val repeatIntervalMillis = TimeUnit.MINUTES.toMillis(repeatIntervalMinutes)
+            // WorkManager の仕様上、初期遅延は繰り返し間隔より短くする必要がある。
+            val initialDelayMillis = kotlin.random.Random.nextLong(repeatIntervalMillis)
 
             val req = PeriodicWorkRequestBuilder<ThreadMonitorWorker>(
                 repeatIntervalMinutes, TimeUnit.MINUTES,
-                3, TimeUnit.MINUTES
+                5, TimeUnit.MINUTES  // WorkManager の最小 flex は 5 分
             )
                 .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
                 .setInputData(data)
@@ -430,7 +431,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             if (f.exists() && f.length() > 0) return f
             return try {
                 f.outputStream().buffered(64 * 1024).use { out ->
-                    val ok = networkClient.downloadTo(remoteUrl, out)
+                    val ok = networkClient.downloadTo(remoteUrl, out, referer = threadUrl)
                     if (!ok) {
                         // ダウンロード失敗時は部分ファイルを確実に削除
                         runCatching {
@@ -466,8 +467,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             if (thumbFile.exists() && thumbFile.length() > 0) return thumbFile
 
             val retriever = MediaMetadataRetriever()
-            var bitmap: Bitmap? = null
-            return try {
+            try {
                 retriever.setDataSource(videoFile.absolutePath)
                 val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
                 val frameTimeUs = when {
@@ -479,15 +479,20 @@ class ThreadMonitorWorker @AssistedInject constructor(
 
                 val (targetW, targetH) = scaleDimensions(videoWidth, videoHeight, 1280)
 
-                bitmap = when {
-                    targetW > 0 && targetH > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 ->
-                        retriever.getScaledFrameAtTime(
-                            frameTimeUs,
-                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                            targetW,
-                            targetH
-                        )
-                    else -> retriever.getFrameAtTime(frameTimeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                val bitmap = try {
+                    when {
+                        targetW > 0 && targetH > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 ->
+                            retriever.getScaledFrameAtTime(
+                                frameTimeUs,
+                                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                                targetW,
+                                targetH
+                            )
+                        else -> retriever.getFrameAtTime(frameTimeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    }
+                } catch (e: Exception) {
+                    Log.w("ThreadMonitorWorker", "Failed to extract frame from ${videoFile.name}: ${e.message}")
+                    null
                 }
 
                 if (bitmap == null) {
@@ -495,27 +500,31 @@ class ThreadMonitorWorker @AssistedInject constructor(
                     return null
                 }
 
-                thumbFile.outputStream().buffered().use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)) {
-                        runCatching { thumbFile.delete() }
-                        return null
+                try {
+                    thumbFile.outputStream().buffered().use { out ->
+                        if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)) {
+                            runCatching { thumbFile.delete() }
+                            return null
+                        }
                     }
-                }
 
-                // 圧縮成功後、ファイルサイズを確認
-                if (thumbFile.exists() && thumbFile.length() > 0) {
-                    thumbFile
-                } else {
-                    runCatching { thumbFile.delete() }
-                    null
+                    // 圧縮成功後、ファイルサイズを確認
+                    return if (thumbFile.exists() && thumbFile.length() > 0) {
+                        thumbFile
+                    } else {
+                        runCatching { thumbFile.delete() }
+                        null
+                    }
+                } finally {
+                    // ビットマップを確実に解放
+                    runCatching { bitmap.recycle() }
                 }
             } catch (e: Exception) {
                 Log.w("ThreadMonitorWorker", "Failed to create thumbnail for ${videoFile.name}: ${e.message}")
                 runCatching { thumbFile.delete() }
-                null
+                return null
             } finally {
-                // ビットマップとリトリーバーを確実に解放
-                runCatching { bitmap?.recycle() }
+                // リトリーバーを確実に解放
                 runCatching { retriever.release() }
             }
         }

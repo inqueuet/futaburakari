@@ -69,7 +69,7 @@ class ExportPipelineImpl @Inject constructor(
         session: EditorSession,
         outputUri: Uri
     ): Flow<ExportProgress> = flow {
-        val totalDurationUs = session.videoClips.sumOf { (it.duration / it.speed).toLong() } * 1000
+        val totalDurationUs = session.videoClips.sumOf { it.duration } * 1000L
         val exportSpec = detectExportSpec(session)
         val totalFrames = (totalDurationUs / 1_000_000f * exportSpec.frameRate).toInt()
         // ✅ エクスポート処理全体をIOディスパッチャで実行
@@ -434,7 +434,22 @@ private class VideoProcessor(
             extractor.seekTo(clip.startTime * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
             var loopIteration = 0
+            val maxLoopIterations = 100000 // 無限ループ防止：最大10万回（約30fps*3300秒 = 約1時間）
+            val loopStartTime = SystemClock.elapsedRealtime()
+            val maxLoopDurationMs = 3_600_000L // 1時間のタイムアウト
+
             while (!isOutputDone) {
+                // 無限ループ検出
+                if (loopIteration >= maxLoopIterations) {
+                    Log.e(TAG, "processClip: Loop iteration limit exceeded ($maxLoopIterations), aborting")
+                    throw RuntimeException("Video processing loop exceeded maximum iterations")
+                }
+                val elapsedMs = SystemClock.elapsedRealtime() - loopStartTime
+                if (elapsedMs > maxLoopDurationMs) {
+                    Log.e(TAG, "processClip: Loop timeout exceeded (${elapsedMs}ms), aborting")
+                    throw RuntimeException("Video processing loop timeout")
+                }
+
                 if (loopIteration % 30 == 0) { // ざっくり状態確認（約1秒おき @30fps想定）
                     Log.d(TAG, "processClip: loop iteration=$loopIteration, inputDone=$isInputDone, outputDone=$isOutputDone, pendingVideo=${pendingVideo.size}")
                 }
@@ -446,13 +461,19 @@ private class VideoProcessor(
                             decoder.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             isInputDone = true
                         } else {
-                            val sampleSize = extractor.readSampleData(decoder.getInputBuffer(inputBufferIndex)!!, 0)
-                            if (sampleSize < 0) {
+                            val inputBuffer = decoder.getInputBuffer(inputBufferIndex)
+                            if (inputBuffer == null) {
+                                Log.w(TAG, "processClip: getInputBuffer returned null for index $inputBufferIndex")
                                 isInputDone = true
                             } else {
-                                val presentationTimeUs = ((sampleTime - clip.startTime * 1000) / clip.speed).toLong()
-                                decoder.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, 0)
-                                extractor.advance()
+                                val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                                if (sampleSize < 0) {
+                                    isInputDone = true
+                                } else {
+                                    val presentationTimeUs = ((sampleTime - clip.startTime * 1000) / clip.speed).toLong()
+                                    decoder.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, 0)
+                                    extractor.advance()
+                                }
                             }
                         }
                     }
@@ -507,8 +528,9 @@ private class VideoProcessor(
                                 val sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
                                 if (sync != 0L) {
                                     val timeoutNs = 50_000_000L // 50ms
+                                    val maxWaitAttempts = 100 // 最大5秒間待機(50ms × 100回)
                                     var waitCount = 0
-                                    while (true) {
+                                    while (waitCount < maxWaitAttempts) {
                                         val waitResult = GLES30.glClientWaitSync(sync, 0, timeoutNs)
                                         waitCount++
                                         Log.v(TAG, "processClip: [GL] glClientWaitSync attempt $waitCount for frame $framesInClip, result=$waitResult")
@@ -532,6 +554,9 @@ private class VideoProcessor(
                                                 break
                                             }
                                         }
+                                    }
+                                    if (waitCount >= maxWaitAttempts) {
+                                        Log.e(TAG, "glClientWaitSync exceeded maximum wait attempts ($maxWaitAttempts) for frame $framesInClip")
                                     }
                                     GLES30.glDeleteSync(sync)
                                     Log.d(TAG, "processClip: [GL] fence sync deleted for frame $framesInClip")
@@ -610,7 +635,12 @@ private class VideoProcessor(
                         }
                     }
                     encoderStatus >= 0 -> {
-                        val encodedData = encoder.getOutputBuffer(encoderStatus)!!
+                        val encodedData = encoder.getOutputBuffer(encoderStatus)
+                        if (encodedData == null) {
+                            Log.w(TAG, "drainEncoderNonBlocking: getOutputBuffer returned null for index $encoderStatus")
+                            encoder.releaseOutputBuffer(encoderStatus, false)
+                            break
+                        }
                         if (reusableBufferInfo.size != 0 && (reusableBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                             synchronized(muxerLock) {
                                 if (muxerStarted.get() && trackIndex >= 0) {
@@ -718,7 +748,12 @@ private class VideoProcessor(
                     }
                 }
             } else if (encoderStatus >= 0) {
-                val encodedData = encoder.getOutputBuffer(encoderStatus)!!
+                val encodedData = encoder.getOutputBuffer(encoderStatus)
+                if (encodedData == null) {
+                    Log.w(TAG, "drainEncoder: getOutputBuffer returned null for index $encoderStatus")
+                    encoder.releaseOutputBuffer(encoderStatus, false)
+                    continue
+                }
                 if (reusableBufferInfo.size != 0 && (reusableBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                     synchronized(muxerLock) {
                         if (trackIndex >= 0 && muxerStarted.get()) {
@@ -765,7 +800,8 @@ private class VideoProcessor(
             Log.d("VideoProcessor", "createEncoder: Creating encoder with format=$format")
 
             // ★ デフォルトエンコーダーを使用(システムが最適なエンコーダーを選択)
-            val codec = MediaCodec.createEncoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+            val mimeType = format.getString(MediaFormat.KEY_MIME) ?: throw IllegalArgumentException("MIME type not found in format")
+            val codec = MediaCodec.createEncoderByType(mimeType)
 
             Log.d("VideoProcessor", "createEncoder: Encoder name=${codec.name}, codecInfo=${codec.codecInfo.name}")
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -776,7 +812,8 @@ private class VideoProcessor(
         fun createDecoder(extractor: MediaExtractor, surface: android.view.Surface): MediaCodec? {
             val trackIndex = extractor.findTrack("video/") ?: return null
             val format = extractor.getTrackFormat(trackIndex)
-            return MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply {
+            val mimeType = format.getString(MediaFormat.KEY_MIME) ?: return null
+            return MediaCodec.createDecoderByType(mimeType).apply {
                 configure(format, surface, null, 0)
             }
         }
@@ -882,7 +919,13 @@ private class AudioProcessor(
         }
 
         // レート変換(線形補間)
-        val outFrames = Math.max(1, (framesIn.toLong() * targetSampleRate / inSampleRate).toInt())
+        // オーバーフロー防止のためdoubleを使用
+        // メモリ制限：最大10秒分のサンプル数に制限（480,000サンプル @48kHz）
+        val maxSamples = targetSampleRate * 10
+        val outFrames = max(1, (framesIn * targetSampleRate.toDouble() / inSampleRate).toInt()).coerceAtMost(maxSamples)
+        if (outFrames >= maxSamples) {
+            Log.w(TAG, "resampleIfNeeded: Output frames limited to $maxSamples (requested: ${(framesIn * targetSampleRate.toDouble() / inSampleRate).toInt()})")
+        }
         val outMono = ShortArray(outFrames)
         if (framesIn == 0) {
             // 無音

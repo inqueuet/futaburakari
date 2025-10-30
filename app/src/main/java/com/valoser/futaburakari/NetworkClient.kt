@@ -335,9 +335,13 @@ class NetworkClient(
                 .getOrElse { emptyList() }
             val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
 
-            val cm = CookieManager.getInstance()
-            val webCookieRef = cm.getCookie(referer)
-            val webCookieOrg = cm.getCookie(origin)
+            // CookieManager は Looper が必要なのでメインスレッドで実行
+            val (webCookieRef, webCookieOrg) = withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val cm = CookieManager.getInstance()
+                val ref = cm.getCookie(referer)
+                val org = cm.getCookie(origin)
+                ref to org
+            }
             val mergedCookie = mergeCookies(jarCookie, webCookieOrg, webCookieRef)
 
             val req = Request.Builder()
@@ -487,9 +491,14 @@ class NetworkClient(
             val jarCookies: List<Cookie> = runCatching { httpClient.cookieJar.loadForRequest(endpoint.toHttpUrl()) }
                 .getOrElse { emptyList() }
             val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
-            val cm = CookieManager.getInstance()
-            val webCookieRef = cm.getCookie(threadUrl)
-            val webCookieOrg = cm.getCookie(origin)
+
+            // CookieManager は Looper が必要なのでメインスレッドで実行
+            val (webCookieRef, webCookieOrg) = withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val cm = CookieManager.getInstance()
+                val ref = cm.getCookie(threadUrl)
+                val org = cm.getCookie(origin)
+                ref to org
+            }
             val mergedCookie = mergeCookies(jarCookie, webCookieOrg, webCookieRef)
 
             val form = FormBody.Builder()

@@ -34,7 +34,12 @@ object MediaSaver {
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する。
      * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はキャッシュ優先でダウンロードして保存する。
      */
-    suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
+    suspend fun saveImage(
+        context: Context,
+        imageUrl: String,
+        networkClient: NetworkClient,
+        referer: String? = null
+    ) {
         saveMedia(
             context = context,
             url = imageUrl,
@@ -42,7 +47,8 @@ object MediaSaver {
             mimeType = getMimeTypeOrDefault(imageUrl, "image/jpeg"),
             mediaContentUri = imagesContentUri(),
             relativeBaseDir = Environment.DIRECTORY_PICTURES,
-            networkClient = networkClient
+            networkClient = networkClient,
+            referer = referer
         )
     }
 
@@ -50,7 +56,12 @@ object MediaSaver {
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する（重複チェック付き）。
      * 既に同名ファイルが存在する場合や保存に失敗した場合は false を返し、保存に成功した場合のみ true を返す。
      */
-    suspend fun saveImageIfNotExists(context: Context, imageUrl: String, networkClient: NetworkClient): Boolean {
+    suspend fun saveImageIfNotExists(
+        context: Context,
+        imageUrl: String,
+        networkClient: NetworkClient,
+        referer: String? = null
+    ): Boolean {
         return saveMediaIfNotExists(
             context = context,
             url = imageUrl,
@@ -58,7 +69,8 @@ object MediaSaver {
             mimeType = getMimeTypeOrDefault(imageUrl, "image/jpeg"),
             mediaContentUri = imagesContentUri(),
             relativeBaseDir = Environment.DIRECTORY_PICTURES,
-            networkClient = networkClient
+            networkClient = networkClient,
+            referer = referer
         )
     }
 
@@ -97,7 +109,12 @@ object MediaSaver {
      * 指定した動画URLを MediaStore（Movies/Futaburakari）へ保存する。
      * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はダウンロードして保存する。
      */
-    suspend fun saveVideo(context: Context, videoUrl: String, networkClient: NetworkClient) {
+    suspend fun saveVideo(
+        context: Context,
+        videoUrl: String,
+        networkClient: NetworkClient,
+        referer: String? = null
+    ) {
         saveMedia(
             context = context,
             url = videoUrl,
@@ -105,7 +122,8 @@ object MediaSaver {
             mimeType = getMimeTypeOrDefault(videoUrl, "video/mp4"),
             mediaContentUri = videosContentUri(),
             relativeBaseDir = Environment.DIRECTORY_MOVIES,
-            networkClient = networkClient
+            networkClient = networkClient,
+            referer = referer
         )
     }
 
@@ -153,7 +171,8 @@ object MediaSaver {
         mimeType: String?,
         mediaContentUri: android.net.Uri,
         relativeBaseDir: String,
-        networkClient: NetworkClient
+        networkClient: NetworkClient,
+        referer: String? = null
     ) {
         withContext(Dispatchers.IO) {
             try {
@@ -203,7 +222,7 @@ object MediaSaver {
                             }
                         } else {
                             // NetworkClientを使用（OkHttpキャッシュが効く）
-                            val ok = networkClient.downloadTo(url, outputStream)
+                            val ok = networkClient.downloadTo(url, outputStream, referer = referer)
                             if (!ok) {
                                 showToast(context, "ファイルのダウンロードに失敗しました。")
                                 return@withContext
@@ -255,7 +274,8 @@ object MediaSaver {
         mimeType: String?,
         mediaContentUri: android.net.Uri,
         relativeBaseDir: String,
-        networkClient: NetworkClient
+        networkClient: NetworkClient,
+        referer: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val fileName = resolveDisplayName(url, mimeType)
@@ -310,7 +330,7 @@ object MediaSaver {
                         }
                     } else {
                         // NetworkClientを使用（OkHttpキャッシュが効く）
-                        val ok = networkClient.downloadTo(url, outputStream)
+                        val ok = networkClient.downloadTo(url, outputStream, referer = referer)
                         if (!ok) {
                             showToast(context, "ファイルのダウンロードに失敗しました。")
                             return@withContext false

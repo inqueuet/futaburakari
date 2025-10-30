@@ -174,8 +174,11 @@ class ReplyRepository @Inject constructor(
             // -----------------------------
             // Cookie 結合（WebView + OkHttpJar）
             // -----------------------------
-            val cm = android.webkit.CookieManager.getInstance()
-            val webViewCookie = cm.getCookie(threadPageUrl) ?: cm.getCookie(origin)
+            // CookieManager は Looper が必要なのでメインスレッドで実行
+            val webViewCookie = withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.getCookie(threadPageUrl) ?: cm.getCookie(origin)
+            }
 
             val httpUrl = boardUrl.toHttpUrl()
             val jarCookies: List<Cookie> = runCatching {
