@@ -886,6 +886,9 @@ class EditorViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        // キャンセル処理を追加してリソースリークを防ぐ
+        prepareJob?.cancel()
+        prepareJob = null
         // PlayerEngine is a singleton; reset to keep the reusable player alive for subsequent sessions.
         playerEngine.reset()
     }

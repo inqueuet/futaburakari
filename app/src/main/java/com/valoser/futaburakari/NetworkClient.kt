@@ -176,7 +176,8 @@ class NetworkClient(
             if (!resp.isSuccessful) {
                 throw IOException("HTTPエラー: ${resp.code} ${resp.message}")
             }
-            val bytes = resp.body!!.bytes()
+            val body = resp.body ?: throw IOException("レスポンスボディが空です")
+            val bytes = body.bytes()
             val decoded = EncodingUtils.decode(bytes, resp.header("Content-Type"))
             Jsoup.parse(decoded, url)
         }

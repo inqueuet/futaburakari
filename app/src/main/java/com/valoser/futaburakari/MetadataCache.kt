@@ -121,6 +121,7 @@ class MetadataCache(context: Context) {
      * @param id URI/URL 等の識別子
      * @return 保存済みの値。存在しない場合は null
      */
+    @Synchronized
     fun get(id: String): String? {
         // まずメモリキャッシュを確認
         memoryCache[id]?.let { entry ->

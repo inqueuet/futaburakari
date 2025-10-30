@@ -269,8 +269,13 @@ class ImageEditActivity : BaseActivity() {
         // 画像読み込みと編集エンジンの構築をバックグラウンドで実行（UI スレッドをブロックしない）
         lifecycleScope.launch {
             try {
+                val uri = imageUri ?: run {
+                    Toast.makeText(this@ImageEditActivity, "画像URIが不正です", Toast.LENGTH_SHORT).show()
+                    finish()
+                    return@launch
+                }
                 val bmp = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(imageUri!!).use { inputStream ->
+                    contentResolver.openInputStream(uri).use { inputStream ->
                         val options = BitmapFactory.Options().apply {
                             // メモリ使用量削減のため、まずサイズを取得
                             inJustDecodeBounds = true
@@ -287,7 +292,7 @@ class ImageEditActivity : BaseActivity() {
                             sampleSize *= 2
                         }
 
-                        contentResolver.openInputStream(imageUri!!).use { inputStream2 ->
+                        contentResolver.openInputStream(uri).use { inputStream2 ->
                             options.apply {
                                 inJustDecodeBounds = false
                                 inSampleSize = sampleSize
@@ -402,14 +407,18 @@ class ImageEditActivity : BaseActivity() {
 
                     if (prompt != null) {
                         try {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && imageOutUriForExif != null) {
-                                contentResolver.openFileDescriptor(imageOutUriForExif!!, "rw")?.use { pfd ->
+                            // Smart cast用にローカル変数にコピー
+                            val outUri = imageOutUriForExif
+                            val pathForExif = imagePathForExif
+
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && outUri != null) {
+                                contentResolver.openFileDescriptor(outUri, "rw")?.use { pfd ->
                                     val exif = ExifInterface(pfd.fileDescriptor)
                                     exif.setAttribute(ExifInterface.TAG_USER_COMMENT, prompt)
                                     exif.saveAttributes()
                                 }
-                            } else if (imagePathForExif != null) {
-                                val exif = ExifInterface(imagePathForExif!!)
+                            } else if (pathForExif != null) {
+                                val exif = ExifInterface(pathForExif)
                                 exif.setAttribute(ExifInterface.TAG_USER_COMMENT, prompt)
                                 exif.saveAttributes()
                             }

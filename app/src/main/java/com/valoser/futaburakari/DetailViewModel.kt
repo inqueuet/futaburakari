@@ -143,6 +143,7 @@ class DetailViewModel @Inject constructor(
 
     private var currentUrl: String? = null
     // NG フィルタ適用前の生コンテンツを保持
+    @Volatile
     private var rawContent: List<DetailContent> = emptyList()
     private val ngStore by lazy { NgStore(appContext) }
 

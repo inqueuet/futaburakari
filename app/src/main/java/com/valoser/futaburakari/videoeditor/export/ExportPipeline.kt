@@ -51,6 +51,7 @@ private const val DEFAULT_AUDIO_CHANNELS = 2
 
 interface ExportPipeline {
     fun export(session: EditorSession, outputUri: Uri): Flow<ExportProgress>
+    fun cleanup()
 }
 
 class ExportPipelineImpl @Inject constructor(
@@ -291,6 +292,15 @@ class ExportPipelineImpl @Inject constructor(
         } // withContext(Dispatchers.IO)
         emit(ExportProgress(totalFrames, totalFrames, 100f, 0))
         Log.d(TAG, "Export finished.")
+    }
+
+    override fun cleanup() {
+        try {
+            glThread.quitSafely()
+            Log.d(TAG, "ExportPipeline cleanup completed - HandlerThread terminated")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during ExportPipeline cleanup", e)
+        }
     }
 
     private fun detectExportSpec(session: EditorSession): ExportSpec {
@@ -1037,8 +1047,10 @@ private class AudioProcessor(
                             )
                             isInputDone = true
                         } else {
+                            val inputBuffer = decoder.getInputBuffer(inputBufferIndex)
+                                ?: throw IllegalStateException("Failed to get decoder input buffer at index $inputBufferIndex")
                             val sampleSize = extractor.readSampleData(
-                                decoder.getInputBuffer(inputBufferIndex)!!,
+                                inputBuffer,
                                 0
                             )
                             if (sampleSize < 0) {
@@ -1067,7 +1079,8 @@ private class AudioProcessor(
                         if ((reusableBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) isOutputDone =
                             true
                         if (reusableBufferInfo.size > 0) {
-                            val decodedData = decoder.getOutputBuffer(outputBufferIndex)!!
+                            val decodedData = decoder.getOutputBuffer(outputBufferIndex)
+                                ?: throw IllegalStateException("Failed to get decoder output buffer at index $outputBufferIndex")
                             sortedVolumeKeyframes?.let { keyframes ->
                                 applyVolumeAutomation(
                                     decodedData,
@@ -1250,7 +1263,8 @@ private class AudioProcessor(
                 continue
             }
 
-            val inBuf = encoder.getInputBuffer(encoderInputIndex)!!
+            val inBuf = encoder.getInputBuffer(encoderInputIndex)
+                ?: throw IllegalStateException("Failed to get encoder input buffer at index $encoderInputIndex")
             inBuf.clear()
             val chunkSize = min(remaining, inBuf.capacity())
 
@@ -1339,7 +1353,8 @@ private class AudioProcessor(
                     }
 
                     encoderStatus >= 0 -> {
-                        val encodedData = encoder.getOutputBuffer(encoderStatus)!!
+                        val encodedData = encoder.getOutputBuffer(encoderStatus)
+                            ?: throw IllegalStateException("Failed to get encoder output buffer at index $encoderStatus")
                         if (!failed && reusableEncoderBufferInfo.size != 0 && (reusableEncoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                             synchronized(muxerLock) {
                                 if (muxerStarted.get() && trackIndex >= 0) {
@@ -1394,10 +1409,12 @@ private class AudioProcessor(
                 )
             }
             return try {
-                MediaCodec.createEncoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply {
+                val mimeType = format.getString(MediaFormat.KEY_MIME)
+                    ?: throw IllegalArgumentException("MediaFormat missing KEY_MIME")
+                MediaCodec.createEncoderByType(mimeType).apply {
                     configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 }
-            } catch (e: IOException) {
+            } catch (e: Exception) {
                 Log.e("AudioProcessor", "Failed to create audio encoder", e)
                 null
             }
@@ -1408,10 +1425,12 @@ private class AudioProcessor(
             if (trackIndex == null) return null
             val format = extractor.getTrackFormat(trackIndex)
             return try {
-                MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply {
+                val mimeType = format.getString(MediaFormat.KEY_MIME)
+                    ?: throw IllegalArgumentException("MediaFormat missing KEY_MIME")
+                MediaCodec.createDecoderByType(mimeType).apply {
                     configure(format, null, null, 0)
                 }
-            } catch (e: IOException) {
+            } catch (e: Exception) {
                 Log.e("AudioProcessor", "Failed to create audio decoder", e)
                 null
             }

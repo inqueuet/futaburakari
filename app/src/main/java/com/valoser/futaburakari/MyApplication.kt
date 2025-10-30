@@ -29,6 +29,8 @@ import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.cache.DetailCacheManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import com.valoser.futaburakari.HistoryManager
+import com.valoser.futaburakari.videoeditor.export.ExportPipeline
+import com.valoser.futaburakari.videoeditor.media.player.PlayerEngine
 import okio.Path.Companion.toPath
 import java.util.concurrent.TimeUnit
 
@@ -55,6 +57,12 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
 
     @Inject
     lateinit var metadataCache: MetadataCache
+
+    @Inject
+    lateinit var exportPipeline: ExportPipeline
+
+    @Inject
+    lateinit var playerEngine: PlayerEngine
 
     // プロセス全体で使い回すアプリケーションスコープ（初期化やバックグラウンド再スケジュールで利用）
     private val supervisorJob = SupervisorJob()
@@ -305,6 +313,8 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             ThreadMonitorWorker.cancelAll(this)
             detailCacheManager.cleanup()
             metadataCache.close()
+            exportPipeline.cleanup()
+            playerEngine.release()
             supervisorJob.cancel()
         } catch (e: Exception) {
             Log.w("MyApplication", "Error during resource cleanup", e)

@@ -43,10 +43,13 @@ object HistoryManager {
     }
 
     // 履歴リストを JSON で保存し、変更通知を送出する。
-    private fun save(context: Context, list: List<HistoryEntry>) {
-        synchronized(this) {
+    // Mutexで同期化してsynchronized(this)との混在を解消
+    private suspend fun save(context: Context, list: List<HistoryEntry>) {
+        historyMutex.withLock {
             try {
-                prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
+                withContext(Dispatchers.IO) {
+                    prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
+                }
                 // 変更通知（アプリ内向けの簡易ブロードキャスト）
                 context.sendBroadcast(Intent(ACTION_HISTORY_CHANGED))
             } catch (e: Exception) {
@@ -63,7 +66,7 @@ object HistoryManager {
      * - タイトル/最終閲覧時刻/サムネイルURL（指定時のみ上書き）を更新
      * - 並び順は getAll() 側のルールに委譲
      */
-    fun addOrUpdate(context: Context, url: String, title: String, thumbnailUrl: String? = null) {
+    suspend fun addOrUpdate(context: Context, url: String, title: String, thumbnailUrl: String? = null) {
         val key = UrlNormalizer.threadKey(url)
         val legacyKey = UrlNormalizer.legacyThreadKey(url)
         val list = load(context)
@@ -125,14 +128,14 @@ object HistoryManager {
     }
 
     /** 指定キーの履歴を削除し、変更を保存。 */
-    fun delete(context: Context, key: String) {
+    suspend fun delete(context: Context, key: String) {
         val list = load(context)
         val newList = list.filterNot { it.key == key }
         save(context, newList)
     }
 
     /** 全履歴をクリア。 */
-    fun clear(context: Context) {
+    suspend fun clear(context: Context) {
         save(context, emptyList())
     }
 
@@ -218,7 +221,7 @@ object HistoryManager {
 
     // ユーザ閲覧の反映（詳細画面を見たとき等）。
     // 閲覧時刻/最終閲覧レス番号/未読数を更新する。
-    fun markViewed(context: Context, url: String, lastViewedReplyNo: Int) {
+    suspend fun markViewed(context: Context, url: String, lastViewedReplyNo: Int) {
         val key = UrlNormalizer.threadKey(url)
         val list = load(context)
         val now = System.currentTimeMillis()
@@ -237,7 +240,7 @@ object HistoryManager {
 
     // dat落ち等を検知した際にアーカイブとしてマーク（エントリ自体は保持）。
     @Suppress("UNUSED_PARAMETER")
-    fun markArchived(context: Context, url: String, autoExpireIfStale: Boolean = false) {
+    suspend fun markArchived(context: Context, url: String, autoExpireIfStale: Boolean = false) {
         val key = UrlNormalizer.threadKey(url)
         val list = load(context)
         val idx = list.indexOfFirst { it.key == key }

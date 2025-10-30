@@ -202,13 +202,13 @@ class HistoryActivity : BaseActivity() {
                     onDeleteItem = { item ->
                         // 履歴アイテムの削除時: 履歴本体の削除、関連ワーカーの停止、
                         // 当該URLのキャッシュ/アーカイブを無効化・削除してから再計算。
-                        HistoryManager.delete(this@HistoryActivity, item.key)
                         com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelByKey(this@HistoryActivity, item.key)
                         detailCacheManager.apply {
                             invalidateCache(item.url)
                             clearArchiveForUrl(item.url)
                         }
                         this@HistoryActivity.lifecycleScope.launch {
+                            HistoryManager.delete(this@HistoryActivity, item.key)
                             computeAndSet()
                         }
                     }
@@ -223,10 +223,10 @@ class HistoryActivity : BaseActivity() {
                         confirmButton = {
                             androidx.compose.material3.TextButton(onClick = {
                                 showConfirm = false
-                                HistoryManager.clear(this@HistoryActivity)
                                 com.valoser.futaburakari.worker.ThreadMonitorWorker.cancelAll(this@HistoryActivity)
                                 detailCacheManager.clearAllCache()
                                 this@HistoryActivity.lifecycleScope.launch {
+                                    HistoryManager.clear(this@HistoryActivity)
                                     computeAndSet()
                                 }
                             }) { androidx.compose.material3.Text(text = getString(android.R.string.ok)) }

@@ -103,7 +103,7 @@ class AudioProcessor @Inject constructor() {
         val afterKeyframe = keyframes.firstOrNull { it.time > timeMs }
 
         return when {
-            beforeKeyframe == null -> keyframes.first().value
+            beforeKeyframe == null -> keyframes.firstOrNull()?.value ?: 1.0f
             afterKeyframe == null -> beforeKeyframe.value
             else -> {
                 // 線形補間

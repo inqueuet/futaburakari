@@ -190,7 +190,8 @@ class MediaEncoder @Inject constructor(
 
             val inputBufferId = encoder.dequeueInputBuffer(10000)
             if (inputBufferId >= 0) {
-                val inputBuffer = encoder.getInputBuffer(inputBufferId)!!
+                val inputBuffer = encoder.getInputBuffer(inputBufferId)
+                    ?: throw IllegalStateException("Failed to get encoder input buffer at index $inputBufferId")
                 val sampleSize = extractor.readSampleData(inputBuffer, 0)
 
                 if (sampleSize < 0) {
@@ -211,7 +212,8 @@ class MediaEncoder @Inject constructor(
             // 出力バッファの処理
             val outputBufferId = encoder.dequeueOutputBuffer(bufferInfo, 10000)
             if (outputBufferId >= 0) {
-                val outputBuffer = encoder.getOutputBuffer(outputBufferId)!!
+                val outputBuffer = encoder.getOutputBuffer(outputBufferId)
+                    ?: throw IllegalStateException("Failed to get encoder output buffer at index $outputBufferId")
 
                 if (bufferInfo.size > 0) {
                     muxer.writeSampleData(trackIndex, outputBuffer, bufferInfo)
@@ -246,7 +248,8 @@ class MediaEncoder @Inject constructor(
 
             val inputBufferId = encoder.dequeueInputBuffer(10000)
             if (inputBufferId >= 0) {
-                val inputBuffer = encoder.getInputBuffer(inputBufferId)!!
+                val inputBuffer = encoder.getInputBuffer(inputBufferId)
+                    ?: throw IllegalStateException("Failed to get encoder input buffer at index $inputBufferId")
                 val sampleSize = extractor.readSampleData(inputBuffer, 0)
 
                 if (sampleSize < 0) {
@@ -266,7 +269,8 @@ class MediaEncoder @Inject constructor(
 
             val outputBufferId = encoder.dequeueOutputBuffer(bufferInfo, 10000)
             if (outputBufferId >= 0) {
-                val outputBuffer = encoder.getOutputBuffer(outputBufferId)!!
+                val outputBuffer = encoder.getOutputBuffer(outputBufferId)
+                    ?: throw IllegalStateException("Failed to get encoder output buffer at index $outputBufferId")
 
                 if (bufferInfo.size > 0) {
                     muxer.writeSampleData(trackIndex, outputBuffer, bufferInfo)

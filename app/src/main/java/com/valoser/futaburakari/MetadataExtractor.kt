@@ -49,12 +49,16 @@ object MetadataExtractor {
     private var currentPermits: Int = 1
     @Volatile
     private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
+    private val semaphoreLock = Any()
     private fun permitsForLevel(level: Int): Int = minOf(level, 3) // 最大3並列
+    @Synchronized
     private fun ensureSemaphore(context: Context) {
         val level = AppPreferences.getConcurrencyLevel(context)
         val desired = permitsForLevel(level)
         if (desired != currentPermits) {
-            // 再生成して差し替え（進行中の待機には影響しない）
+            // 同期化してセマフォを安全に再作成
+            // 注意: 既存の待機中スレッドは古いセマフォで待ち続けるため、
+            // 実運用では設定変更後にアプリを再起動することを推奨
             currentPermits = desired
             connectionSemaphore = Semaphore(desired)
         }

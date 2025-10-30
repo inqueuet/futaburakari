@@ -730,15 +730,17 @@ class MainViewModel @Inject constructor(
             val historyKey = UrlNormalizer.threadKey(threadUrl)
 
             if (!historyKeys.contains(historyKey)) {
-                runCatching {
-                    HistoryManager.addOrUpdate(
-                        appContext,
-                        threadUrl,
-                        normalizedTitle,
-                        item.previewUrl.takeUnless { it.isBlank() }
-                    )
-                }.onFailure { e ->
-                    Log.w("MainViewModel", "Failed to add history for watched thread: $threadUrl", e)
+                viewModelScope.launch {
+                    runCatching {
+                        HistoryManager.addOrUpdate(
+                            appContext,
+                            threadUrl,
+                            normalizedTitle,
+                            item.previewUrl.takeUnless { it.isBlank() }
+                        )
+                    }.onFailure { e ->
+                        Log.w("MainViewModel", "Failed to add history for watched thread: $threadUrl", e)
+                    }
                 }
             }
 

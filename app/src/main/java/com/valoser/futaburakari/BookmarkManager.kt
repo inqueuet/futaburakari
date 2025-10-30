@@ -27,6 +27,7 @@ object BookmarkManager {
     }
 
     /** Serializes and saves the provided bookmark list. */
+    @Synchronized
     fun saveBookmarks(context: Context, bookmarks: List<Bookmark>) {
         val prefs = getPreferences(context)
         val editor = prefs.edit()
@@ -42,6 +43,7 @@ object BookmarkManager {
     /**
      * Loads bookmarks from storage; when empty, seeds with default entries and saves them.
      */
+    @Synchronized
     fun getBookmarks(context: Context): MutableList<Bookmark> {
         val prefs = getPreferences(context)
         val gson = Gson()
@@ -62,6 +64,7 @@ object BookmarkManager {
     }
 
     /** Adds a bookmark if another with the same URL does not already exist. */
+    @Synchronized
     fun addBookmark(context: Context, bookmark: Bookmark) {
         val bookmarks = getBookmarks(context)
         if (!bookmarks.any { it.url == bookmark.url }) {
@@ -71,6 +74,7 @@ object BookmarkManager {
     }
 
     /** Replaces the bookmark matching `oldBookmarkUrl` with `newBookmark` if found. */
+    @Synchronized
     fun updateBookmark(context: Context, oldBookmarkUrl: String, newBookmark: Bookmark) {
         val bookmarks = getBookmarks(context)
         val index = bookmarks.indexOfFirst { it.url == oldBookmarkUrl }
@@ -81,6 +85,7 @@ object BookmarkManager {
     }
 
     /** Deletes all bookmarks whose URL equals the provided bookmark's URL. */
+    @Synchronized
     fun deleteBookmark(context: Context, bookmark: Bookmark) {
         val bookmarks = getBookmarks(context)
         bookmarks.removeAll { it.url == bookmark.url }
@@ -88,6 +93,7 @@ object BookmarkManager {
     }
 
     /** Saves the currently selected bookmark URL; pass null to clear the selection. */
+    @Synchronized
     fun saveSelectedBookmarkUrl(context: Context, url: String?) {
         val prefs = getPreferences(context)
         val editor = prefs.edit()
@@ -104,6 +110,7 @@ object BookmarkManager {
      * Falls back to the first bookmark when available, otherwise uses the built-in default board URL.
      * Ensures defaults are created by invoking `getBookmarks` when none exist.
      */
+    @Synchronized
     fun getSelectedBookmarkUrl(context: Context): String {
         val prefs = getPreferences(context)
         // Get the list of bookmarks; this ensures defaults are created if the list is empty.
