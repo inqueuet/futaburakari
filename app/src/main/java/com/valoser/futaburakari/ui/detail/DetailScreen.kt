@@ -40,7 +40,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Reply
+import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.AssistChip
@@ -51,7 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -216,6 +216,9 @@ fun DetailScreenScaffold(
     onDownloadConflictSkip: ((Long) -> Unit)? = null,
     onDownloadConflictOverwrite: ((Long) -> Unit)? = null,
     onDownloadConflictCancel: ((Long) -> Unit)? = null,
+    // スレッド保存機能
+    onArchiveThread: (() -> Unit)? = null,
+    archiveProgressFlow: StateFlow<com.valoser.futaburakari.ThreadArchiveProgress?>? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
     promptLoadingIdsFlow: StateFlow<Set<String>>? = null,
@@ -229,6 +232,9 @@ fun DetailScreenScaffold(
 
     // ダウンロード進捗状態
     val downloadProgress by downloadProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
+
+    // スレッドアーカイブ進捗状態
+    val archiveProgress by archiveProgressFlow?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
 
     val promptLoadingIds: Set<String> = promptLoadingIdsFlow?.collectAsStateWithLifecycle(emptySet())?.value ?: emptySet()
 
@@ -338,6 +344,15 @@ fun DetailScreenScaffold(
                             }
                         )
                     }
+                    if (onArchiveThread != null) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("スレッド保存") },
+                            onClick = {
+                                moreExpanded = false
+                                onArchiveThread()
+                            }
+                        )
+                    }
                     if (onImageEdit != null) {
                         androidx.compose.material3.DropdownMenuItem(
                             text = { Text("画像編集") },
@@ -365,7 +380,7 @@ fun DetailScreenScaffold(
         bottomBar = {
             if (appBarPosition == AppBarPosition.BOTTOM) {
                 Column {
-                    Divider()
+                    HorizontalDivider()
                     toolbar()
                 }
             }
@@ -697,6 +712,46 @@ fun DetailScreenScaffold(
                                     text = fileName,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // スレッドアーカイブ進捗表示
+                archiveProgress?.let { progress ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(16.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "スレッド保存中...",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { progress.current.toFloat() / progress.total.toFloat() },
+                                modifier = Modifier.fillMaxWidth(0.8f)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "${progress.percentage}% (${progress.current}/${progress.total})",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            progress.currentFileName?.let { fileName ->
+                                Text(
+                                    text = fileName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                    maxLines = 1
                                 )
                             }
                         }
@@ -1294,44 +1349,50 @@ fun DetailScreenScaffold(
             // 検索バー（DockedSearchBar）: 虫眼鏡で表示/非表示をトグル
             if (searchActive) {
                 DockedSearchBar(
+                    inputField = {
+                        SearchBarDefaults.InputField(
+                            query = query,
+                            onQueryChange = { query = it },
+                            onSearch = {
+                                val q = query.trim()
+                                if (q.isNotEmpty()) onSubmitSearch(q) else onClearSearch()
+                                setSearchActive(false)
+                            },
+                            expanded = true,
+                            onExpandedChange = { active -> setSearchActive(active) },
+                            placeholder = { Text("検索キーワード") },
+                            leadingIcon = {
+                                Icon(imageVector = Icons.Rounded.Search, contentDescription = null)
+                            },
+                            trailingIcon = {
+                                if (query.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        query = ""
+                                        onClearSearch()
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Close,
+                                            contentDescription = "Clear"
+                                        )
+                                    }
+                                }
+                            },
+                            colors = SearchBarDefaults.inputFieldColors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                cursorColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                    },
+                    expanded = true,
+                    onExpandedChange = { active -> setSearchActive(active) },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(horizontal = LocalSpacing.current.s),
-                    query = query,
-                    onQueryChange = { query = it },
-                    onSearch = {
-                        val q = query.trim()
-                        if (q.isNotEmpty()) onSubmitSearch(q) else onClearSearch()
-                        setSearchActive(false)
-                    },
-                    active = true,
-                    onActiveChange = { active -> setSearchActive(active) },
-                    placeholder = { Text("検索キーワード") },
-                    leadingIcon = {
-                        Icon(imageVector = Icons.Rounded.Search, contentDescription = null)
-                    },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) {
-                            IconButton(onClick = {
-                                query = ""
-                                onClearSearch()
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = "Clear"
-                                )
-                            }
-                        }
-                    },
                     colors = SearchBarDefaults.colors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        inputFieldColors = SearchBarDefaults.inputFieldColors(
-                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            cursorColor = MaterialTheme.colorScheme.primary
-                        )
+                        containerColor = MaterialTheme.colorScheme.surface
                     )
                 ) {
                     // 候補表示: クイックフィルタ + 最近の検索
@@ -1624,7 +1685,7 @@ private fun TtsControlPanel(
             }
             IconButton(onClick = onPlayPause) {
                 Icon(
-                    imageVector = if (isPlaying) Icons.Rounded.Block else Icons.Rounded.Reply,
+                    imageVector = if (isPlaying) Icons.Rounded.Block else Icons.AutoMirrored.Rounded.Reply,
                     contentDescription = if (isPlaying) "Pause" else "Play"
                 )
             }
@@ -1685,7 +1746,7 @@ private fun Modifier.bottomPullRefresh(
                     reset()
                     return Offset.Zero
                 }
-                if (source != NestedScrollSource.Drag) return Offset.Zero
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
                 if (available.y >= 0f) {
                     reset()
                     return Offset.Zero
@@ -1707,7 +1768,7 @@ private fun Modifier.bottomPullRefresh(
                     reset()
                     return Offset.Zero
                 }
-                if (source == NestedScrollSource.Drag) {
+                if (source == NestedScrollSource.UserInput) {
                     val changedDirection = available.y > 0f || consumed.y > 0f
                     if (changedDirection || !listState.isScrolledToEnd()) {
                         reset()

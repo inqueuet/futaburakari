@@ -989,6 +989,7 @@ object MetadataExtractor {
     }
 
     private fun extractDataFromMap(dataMap: Map<String, Any>): String? {
+        @Suppress("UNCHECKED_CAST")
         val nodes = dataMap["nodes"] as? List<Map<String, Any>>
         if (nodes != null) {
             return pickFromNodes(nodes) ?: scanHeuristically(dataMap)
@@ -1075,6 +1076,7 @@ object MetadataExtractor {
 
         for (node in nodes) {
             val nodeType = node["type"] as? String ?: node["class_type"] as? String ?: ""
+            @Suppress("UNCHECKED_CAST")
             val title = node["title"] as? String ?: (node["_meta"] as? Map<String, String>)?.get("title") ?: ""
             if (nodeType.contains("CLIPTextEncode", ignoreCase = true) && title.contains("Positive", ignoreCase = true) && !title.contains("Negative", ignoreCase = true)) {
                 var s = bestStrFromInputs(node["inputs"])
@@ -1085,6 +1087,7 @@ object MetadataExtractor {
             }
         }
         for (node in nodes) {
+            @Suppress("UNCHECKED_CAST")
             val title = node["title"] as? String ?: (node["_meta"] as? Map<String, String>)?.get("title") ?: ""
             if (Regex("PointMosaic|Mosaic|Mask|TxtEmb|TextEmb", RegexOption.IGNORE_CASE).containsMatchIn(title)) continue
 
@@ -1107,9 +1110,11 @@ object MetadataExtractor {
         while (stack.isNotEmpty()) {
             val current = stack.removeAt(stack.size - 1)
             if (current !is Map<*, *>) continue
+            @Suppress("UNCHECKED_CAST")
             val currentMap = current as Map<String, Any>
 
             val classType = currentMap["class_type"] as? String ?: currentMap["type"] as? String ?: ""
+            @Suppress("UNCHECKED_CAST")
             val meta = currentMap["_meta"] as? Map<String, Any>
             val title = meta?.get("title") as? String ?: currentMap["title"] as? String ?: ""
 

@@ -126,6 +126,13 @@ class DetailViewModel @Inject constructor(
     private val _promptLoadingIds = MutableStateFlow<Set<String>>(emptySet())
     val promptLoadingIds: StateFlow<Set<String>> = _promptLoadingIds.asStateFlow()
 
+    /** スレッドアーカイブ進捗を表すフロー */
+    private val _archiveProgress = MutableStateFlow<ThreadArchiveProgress?>(null)
+    val archiveProgress: StateFlow<ThreadArchiveProgress?> = _archiveProgress.asStateFlow()
+
+    /** スレッドアーカイバー */
+    private val threadArchiver by lazy { ThreadArchiver(appContext, networkClient) }
+
     private val downloadRequestIdGenerator = AtomicLong(0)
     private val pendingDownloadMutex = Mutex()
     private val pendingDownloadRequests = mutableMapOf<Long, PendingDownloadRequest>()
@@ -2071,6 +2078,76 @@ class DetailViewModel @Inject constructor(
             failureCount > 0 -> "画像の保存に失敗しました"
             else -> "ダウンロード対象の画像がありません"
         }
+    }
+
+    // ========== スレッド保存機能 ==========
+
+    /**
+     * スレッド全体をアーカイブする
+     * 画像・動画・HTMLを一括でダウンロードし、同じディレクトリに保存する
+     * @param threadTitle スレッドのタイトル
+     * @return 成功メッセージまたはエラー
+     */
+    fun archiveThread(threadTitle: String): String? {
+        if (_archiveProgress.value?.isActive == true) {
+            return "既にスレッド保存が実行中です"
+        }
+
+        viewModelScope.launch {
+            try {
+                _archiveProgress.value = ThreadArchiveProgress(
+                    current = 0,
+                    total = 1,
+                    currentFileName = "準備中...",
+                    isActive = true
+                )
+
+                val threadUrl = currentUrl ?: ""
+                val contents = detailContent.value
+
+                val result = threadArchiver.archiveThread(
+                    threadTitle = threadTitle,
+                    threadUrl = threadUrl,
+                    contents = contents
+                ) { progress ->
+                    _archiveProgress.value = progress
+                }
+
+                // 完了メッセージを表示
+                result.onSuccess { message ->
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            appContext,
+                            message,
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }.onFailure { error ->
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            appContext,
+                            "スレッド保存に失敗しました: ${error.message}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
+                // 進捗表示をクリア
+                delay(500)
+                _archiveProgress.value = null
+            } catch (e: Exception) {
+                Log.e("DetailViewModel", "Archive failed", e)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        appContext,
+                        "スレッド保存に失敗しました: ${e.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                _archiveProgress.value = null
+            }
+        }
+        return null
     }
 
     // ========== TTS音声読み上げ制御 ==========

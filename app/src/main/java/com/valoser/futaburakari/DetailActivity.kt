@@ -294,6 +294,8 @@ class DetailActivity : BaseActivity() {
                     downloadProgressFlow = viewModel.downloadProgress,
                     downloadConflictFlow = viewModel.downloadConflictRequests,
                     onDownloadConflictSkip = { id -> viewModel.confirmDownloadSkip(id) },
+                    onArchiveThread = { viewModel.archiveThread(toolbarTitleText) },
+                    archiveProgressFlow = viewModel.archiveProgress,
                     // TTS音声読み上げ
                     ttsStateFlow = viewModel.ttsState,
                     ttsCurrentResNumFlow = viewModel.ttsCurrentResNum,
