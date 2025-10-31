@@ -520,19 +520,35 @@ class ThreadArchiver(
 """.trimIndent())
 
         // コンテンツを順番に出力
+        var postOpen = false
+
+        fun closePostIfOpen() {
+            if (postOpen) {
+                sb.append("        </div>\n")
+                postOpen = false
+            }
+        }
+
+        fun ensurePostOpen() {
+            if (!postOpen) {
+                sb.append("""
+        <div class="post">
+""")
+                postOpen = true
+            }
+        }
+
         contents.forEach { content ->
             when (content) {
                 is DetailContent.Text -> {
-                    sb.append("""
-        <div class="post">
-""")
+                    closePostIfOpen()
+                    ensurePostOpen()
                     if (!content.resNum.isNullOrBlank()) {
                         sb.append("""            <div class="post-number">No.${escapeHtml(content.resNum)}</div>
 """)
                     }
                     val processedHtmlContent = replaceLinksWithLocalPaths(content.htmlContent, downloadedFiles, archiveDir)
                     sb.append("""            <div class="post-content">$processedHtmlContent</div>
-        </div>
 """)
                 }
                 is DetailContent.Image -> {
@@ -555,27 +571,28 @@ class ThreadArchiver(
                     )
                     val displayPath = thumbPath ?: fullPath
                     if (displayPath != null) {
+                        ensurePostOpen()
                         val escapedFullPath = fullPath?.let { escapeHtml(it) }
                         val escapedDisplayPath = escapeHtml(displayPath)
                         sb.append("""
-        <div class="media-container">
+            <div class="media-container">
 """)
                         if (escapedFullPath != null) {
-                            sb.append("""            <a href="$escapedFullPath" target="_blank">
+                            sb.append("""                <a href="$escapedFullPath" target="_blank">
 """)
-                            sb.append("""                <img src="$escapedDisplayPath" alt="${escapeHtml(content.prompt ?: "画像")}">
+                            sb.append("""                    <img src="$escapedDisplayPath" alt="${escapeHtml(content.prompt ?: "画像")}">
 """)
-                            sb.append("""            </a>
+                            sb.append("""                </a>
 """)
                         } else {
-                            sb.append("""            <img src="$escapedDisplayPath" alt="${escapeHtml(content.prompt ?: "画像")}">
+                            sb.append("""                <img src="$escapedDisplayPath" alt="${escapeHtml(content.prompt ?: "画像")}">
 """)
                         }
                         if (!content.prompt.isNullOrBlank()) {
-                            sb.append("""            <div class="prompt">${escapeHtml(content.prompt)}</div>
+                            sb.append("""                <div class="prompt">${escapeHtml(content.prompt)}</div>
 """)
                         }
-                        sb.append("""        </div>
+                        sb.append("""            </div>
 """)
                     }
                 }
@@ -598,6 +615,7 @@ class ThreadArchiver(
                         defaultSubDirs = listOf(THUMBNAILS_SUBDIR, IMAGES_SUBDIR, "")
                     )
                     if (localFileName != null) {
+                        ensurePostOpen()
                         val posterAttr = posterPath?.let { """ poster="${escapeHtml(it)}"""" } ?: ""
                         val mimeType = when {
                             localFileName.endsWith(".webm", ignoreCase = true) -> "video/webm"
@@ -608,21 +626,22 @@ class ThreadArchiver(
                             else -> "video/mp4"
                         }
                         sb.append("""
-        <div class="media-container">
-            <video controls$posterAttr>
-                <source src="${escapeHtml(localFileName)}" type="$mimeType">
-                お使いのブラウザは動画タグをサポートしていません。
-            </video>
+            <div class="media-container">
+                <video controls$posterAttr>
+                    <source src="${escapeHtml(localFileName)}" type="$mimeType">
+                    お使いのブラウザは動画タグをサポートしていません。
+                </video>
 """)
                         if (!content.prompt.isNullOrBlank()) {
-                            sb.append("""            <div class="prompt">${escapeHtml(content.prompt)}</div>
+                            sb.append("""                <div class="prompt">${escapeHtml(content.prompt)}</div>
 """)
                         }
-                        sb.append("""        </div>
+                        sb.append("""            </div>
 """)
                     }
                 }
                 is DetailContent.ThreadEndTime -> {
+                    closePostIfOpen()
                     sb.append("""
         <div class="thread-end">
             ${escapeHtml(content.endTime)}
@@ -631,6 +650,8 @@ class ThreadArchiver(
                 }
             }
         }
+
+        closePostIfOpen()
 
         // HTMLフッター
         sb.append("""
