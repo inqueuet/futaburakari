@@ -143,6 +143,7 @@ class ThreadArchiver(
 
             // メディアファイルをダウンロード（4並列）
             val downloadedFiles = mutableMapOf<String, String>() // URL -> ローカル相対パス
+            val failedUrls = mutableListOf<String>()
             val semaphore = Semaphore(4)
 
             coroutineScope {
@@ -181,9 +182,15 @@ class ThreadArchiver(
                                     }
                                     Log.d(TAG, "Downloaded: $relativePath")
                                 } else {
+                                    synchronized(failedUrls) {
+                                        failedUrls.add(mediaItem.url)
+                                    }
                                     Log.w(TAG, "Failed to download: ${mediaItem.url}")
                                 }
                             } catch (e: Exception) {
+                                synchronized(failedUrls) {
+                                    failedUrls.add(mediaItem.url)
+                                }
                                 Log.e(TAG, "Error downloading ${mediaItem.url}", e)
                             }
                         }
@@ -220,12 +227,27 @@ class ThreadArchiver(
                 )
             )
 
-            val successMessage = """
-                アーカイブが完了しました
-                保存先: ${archiveDir.absolutePath}
-                ダウンロード: ${downloadedFiles.size}/${uniqueMediaItems.size}件
-            """.trimIndent()
+            val successMessage = buildString {
+                appendLine("アーカイブが完了しました")
+                appendLine("保存先: ${archiveDir.absolutePath}")
+                appendLine("成功: ${downloadedFiles.size}件")
+                if (failedUrls.isNotEmpty()) {
+                    appendLine("失敗: ${failedUrls.size}件")
+                    appendLine("※ 失敗したファイルはサーバーから削除された可能性があります")
+                }
+                appendLine("HTML: ${if (htmlSuccess) "作成済み" else "失敗"}")
+            }.trimEnd()
+
             Log.i(TAG, successMessage)
+            if (failedUrls.isNotEmpty()) {
+                Log.w(TAG, "Failed URLs (${failedUrls.size}):")
+                failedUrls.take(10).forEach { url ->
+                    Log.w(TAG, "  - $url")
+                }
+                if (failedUrls.size > 10) {
+                    Log.w(TAG, "  ... and ${failedUrls.size - 10} more")
+                }
+            }
 
             Result.success(successMessage)
         } catch (e: Exception) {
@@ -240,8 +262,33 @@ class ThreadArchiver(
      */
     private fun createArchiveDirectory(dirName: String): File? {
         return try {
-            // アプリ固有の外部ストレージディレクトリを使用（権限不要、ユーザーからアクセス可能）
-            // パス例: /storage/emulated/0/Android/data/com.valoser.futaburakari/files/ThreadArchives
+            // 1. Downloadディレクトリを最優先（ユーザーがアクセスしやすい）
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (downloadDir != null) {
+                val downloadArchive = File(downloadDir, "Futaburakari/ThreadArchives")
+                val archiveDir = File(downloadArchive, dirName)
+                if (ensureDirectoryCreated(archiveDir)) {
+                    Log.d(TAG, "Archive directory created in Download: ${archiveDir.absolutePath}")
+                    return archiveDir
+                }
+            }
+
+            // 2. 外部メディアディレクトリをフォールバック
+            val externalMediaDirs = context.externalMediaDirs
+            if (externalMediaDirs != null) {
+                for (mediaDir in externalMediaDirs) {
+                    if (mediaDir != null) {
+                        val mediaArchive = File(mediaDir, "Futaburakari/ThreadArchives")
+                        val archiveDir = File(mediaArchive, dirName)
+                        if (ensureDirectoryCreated(archiveDir)) {
+                            Log.d(TAG, "Archive directory created in external media: ${archiveDir.absolutePath}")
+                            return archiveDir
+                        }
+                    }
+                }
+            }
+
+            // 3. 最終フォールバック：アプリ固有の外部ストレージ
             val baseDir = context.getExternalFilesDir(null)
             if (baseDir == null) {
                 Log.e(TAG, "External files directory is not available")
@@ -251,30 +298,40 @@ class ThreadArchiver(
             val appDir = File(baseDir, "ThreadArchives")
             val archiveDir = File(appDir, dirName)
 
-            if (!archiveDir.exists()) {
-                val success = archiveDir.mkdirs()
-                if (!success) {
-                    Log.e(TAG, "Failed to create directory: ${archiveDir.absolutePath}")
-                    return null
-                }
+            if (ensureDirectoryCreated(archiveDir)) {
+                Log.d(TAG, "Archive directory created in app-specific storage: ${archiveDir.absolutePath}")
+                return archiveDir
             }
 
-            Log.d(TAG, "Archive directory created: ${archiveDir.absolutePath}")
-            archiveDir
+            Log.e(TAG, "Failed to create directory in all locations")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create archive directory", e)
             null
         }
     }
 
+    private fun ensureDirectoryCreated(dir: File): Boolean {
+        return try {
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            dir.exists() && dir.isDirectory && dir.canWrite()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create directory: ${dir.absolutePath}", e)
+            false
+        }
+    }
+
     /**
-     * メディアファイルをダウンロード
+     * メディアファイルをダウンロード（リトライ機能付き）
      */
     private suspend fun downloadMediaFile(
         url: String,
         fileName: String,
         targetDir: File,
-        referer: String? = null
+        referer: String? = null,
+        maxRetries: Int = 3
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             if (!targetDir.exists()) {
@@ -299,18 +356,36 @@ class ThreadArchiver(
                 return@withContext true
             }
 
-            // ネットワークからダウンロード
-            val success = targetFile.outputStream().use { output ->
-                networkClient.downloadTo(url, output, referer = referer)
+            // ネットワークからダウンロード（リトライ付き）
+            var lastException: Exception? = null
+            repeat(maxRetries) { attempt ->
+                try {
+                    val success = targetFile.outputStream().use { output ->
+                        networkClient.downloadTo(url, output, referer = referer)
+                    }
+
+                    if (success && targetFile.exists() && targetFile.length() > 0) {
+                        Log.d(TAG, "Network file downloaded successfully: $fileName (${targetFile.length()} bytes)")
+                        return@withContext true
+                    } else {
+                        Log.w(TAG, "Download attempt ${attempt + 1}/$maxRetries failed for: $url (file size: ${targetFile.length()})")
+                        // 空ファイルが作成された場合は削除
+                        if (targetFile.exists() && targetFile.length() == 0L) {
+                            targetFile.delete()
+                        }
+                    }
+                } catch (e: Exception) {
+                    lastException = e
+                    Log.w(TAG, "Download attempt ${attempt + 1}/$maxRetries error for: $url", e)
+                    // 次のリトライ前に少し待機
+                    if (attempt < maxRetries - 1) {
+                        kotlinx.coroutines.delay(1000L * (attempt + 1))
+                    }
+                }
             }
 
-            if (success) {
-                Log.d(TAG, "Network file downloaded successfully: $fileName (${targetFile.length()} bytes)")
-            } else {
-                Log.w(TAG, "Network download returned false for: $url")
-            }
-
-            success
+            Log.e(TAG, "Failed to download after $maxRetries attempts: $url", lastException)
+            false
         } catch (e: Exception) {
             Log.e(TAG, "Failed to download media file: $url", e)
             false
@@ -455,7 +530,8 @@ class ThreadArchiver(
                         sb.append("""            <div class="post-number">No.${escapeHtml(content.resNum)}</div>
 """)
                     }
-                    sb.append("""            <div class="post-content">${content.htmlContent}</div>
+                    val processedHtmlContent = replaceLinksWithLocalPaths(content.htmlContent, downloadedFiles, archiveDir)
+                    sb.append("""            <div class="post-content">$processedHtmlContent</div>
         </div>
 """)
                 }
@@ -698,6 +774,40 @@ class ThreadArchiver(
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
             .replace("'", "&#39;")
+    }
+
+    /**
+     * HTMLコンテンツ内のリモートリンクをローカルパスに置き換える
+     */
+    private fun replaceLinksWithLocalPaths(
+        htmlContent: String,
+        downloadedFiles: Map<String, String>,
+        archiveDir: File
+    ): String {
+        var result = htmlContent
+
+        // downloadedFilesのキー（元URL）から置き換えマップを作成
+        downloadedFiles.forEach { (originalUrl, localPath) ->
+            try {
+                val url = URL(originalUrl)
+                val path = url.path // 例: "/b/src/1761893219711.png"
+
+                // HTMLコンテンツ内でこのパスを参照している箇所を置き換え
+                // href="/b/src/1761893219711.png" -> href="images/1761893219711.png"
+                // src="/b/src/1761893219711.png" -> src="images/1761893219711.png"
+                result = result.replace("href=\"$path\"", "href=\"$localPath\"")
+                result = result.replace("src=\"$path\"", "src=\"$localPath\"")
+                result = result.replace("href='$path'", "href='$localPath'")
+                result = result.replace("src='$path'", "src='$localPath'")
+
+                Log.d(TAG, "Replaced link in HTML: $path -> $localPath")
+            } catch (e: Exception) {
+                // URLのパースに失敗した場合はスキップ
+                Log.w(TAG, "Failed to parse URL for link replacement: $originalUrl", e)
+            }
+        }
+
+        return result
     }
 
     /**
