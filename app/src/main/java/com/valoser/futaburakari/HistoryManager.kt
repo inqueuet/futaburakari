@@ -50,8 +50,12 @@ object HistoryManager {
                 withContext(Dispatchers.IO) {
                     prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
                 }
-                // 変更通知（アプリ内向けの簡易ブロードキャスト）
-                context.sendBroadcast(Intent(ACTION_HISTORY_CHANGED))
+                // 変更通知（自アプリ内限定ブロードキャスト）
+                val intent = Intent(ACTION_HISTORY_CHANGED).apply {
+                    setPackage(context.packageName)
+                    addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY)
+                }
+                context.sendBroadcast(intent)
             } catch (e: Exception) {
                 // 保存失敗時のログ出力（サイレント失敗を防ぐ）
                 android.util.Log.e("HistoryManager", "Failed to save history", e)
@@ -222,35 +226,39 @@ object HistoryManager {
     // ユーザ閲覧の反映（詳細画面を見たとき等）。
     // 閲覧時刻/最終閲覧レス番号/未読数を更新する。
     suspend fun markViewed(context: Context, url: String, lastViewedReplyNo: Int) {
-        val key = UrlNormalizer.threadKey(url)
-        val list = load(context)
-        val now = System.currentTimeMillis()
-        val idx = list.indexOfFirst { it.key == key }
-        if (idx >= 0) {
-            val e = list[idx]
-            val unread = (e.lastKnownReplyNo - lastViewedReplyNo).coerceAtLeast(0)
-            list[idx] = e.copy(
-                lastViewedAt = now,
-                lastViewedReplyNo = lastViewedReplyNo,
-                unreadCount = unread
-            )
-            save(context, list)
+        historyMutex.withLock {
+            val key = UrlNormalizer.threadKey(url)
+            val list = load(context)
+            val now = System.currentTimeMillis()
+            val idx = list.indexOfFirst { it.key == key }
+            if (idx >= 0) {
+                val e = list[idx]
+                val unread = (e.lastKnownReplyNo - lastViewedReplyNo).coerceAtLeast(0)
+                list[idx] = e.copy(
+                    lastViewedAt = now,
+                    lastViewedReplyNo = lastViewedReplyNo,
+                    unreadCount = unread
+                )
+                save(context, list)
+            }
         }
     }
 
     // dat落ち等を検知した際にアーカイブとしてマーク（エントリ自体は保持）。
     @Suppress("UNUSED_PARAMETER")
     suspend fun markArchived(context: Context, url: String, autoExpireIfStale: Boolean = false) {
-        val key = UrlNormalizer.threadKey(url)
-        val list = load(context)
-        val idx = list.indexOfFirst { it.key == key }
-        if (idx >= 0) {
-            val entry = list[idx]
-            // 以前は dat 落ち後に一定期間閲覧されていない履歴を自動削除していたが、
-            // ユーザー操作を優先し、アーカイブ状態でもエントリを保持するよう変更。
-            if (!entry.isArchived) {
-                list[idx] = entry.copy(isArchived = true, archivedAt = System.currentTimeMillis())
-                save(context, list)
+        historyMutex.withLock {
+            val key = UrlNormalizer.threadKey(url)
+            val list = load(context)
+            val idx = list.indexOfFirst { it.key == key }
+            if (idx >= 0) {
+                val entry = list[idx]
+                // 以前は dat 落ち後に一定期間閲覧されていない履歴を自動削除していたが、
+                // ユーザー操作を優先し、アーカイブ状態でもエントリを保持するよう変更。
+                if (!entry.isArchived) {
+                    list[idx] = entry.copy(isArchived = true, archivedAt = System.currentTimeMillis())
+                    save(context, list)
+                }
             }
         }
     }

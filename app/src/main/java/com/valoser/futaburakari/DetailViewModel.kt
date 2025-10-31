@@ -131,7 +131,7 @@ class DetailViewModel @Inject constructor(
     private val pendingDownloadRequests = mutableMapOf<Long, PendingDownloadRequest>()
 
     // ダウンロード進捗の更新専用ロック（ViewModelインスタンス全体のロックを避ける）
-    private val downloadProgressLock = Any()
+    private val downloadProgressMutex = Mutex()
 
     // そうだねの更新通知用（resNum -> サーバ応答カウント）。UI側ではこれを受け取り表示を楽観上書き。
     private val _sodaneUpdate = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 1)
@@ -143,8 +143,21 @@ class DetailViewModel @Inject constructor(
 
     private var currentUrl: String? = null
     // NG フィルタ適用前の生コンテンツを保持
-    @Volatile
     private var rawContent: List<DetailContent> = emptyList()
+    private val rawContentMutex = Mutex()
+    private suspend fun setRawContent(list: List<DetailContent>) {
+        rawContentMutex.withLock {
+            rawContent = list
+        }
+    }
+
+    private suspend inline fun updateRawContent(transform: (List<DetailContent>) -> List<DetailContent>): List<DetailContent> {
+        rawContentMutex.withLock {
+            val updated = transform(rawContent)
+            rawContent = updated
+            return updated
+        }
+    }
     private val ngStore by lazy { NgStore(appContext) }
 
     // NGフィルタ結果のキャッシュ（動的サイズ調整）
@@ -304,7 +317,7 @@ class DetailViewModel @Inject constructor(
 
     // そうだねの状態を保持するマップ (resNum -> そうだねが押されたかどうか)
     // メモリリーク防止のため、最大サイズを制限
-    private val sodaNeStatesLock = Any()
+    // synchronized ブロックでスレッドセーフを保証
     private val sodaNeStates = object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
             return size > 300 // 最大300件まで保持（メモリ使用量削減）
@@ -346,7 +359,7 @@ class DetailViewModel @Inject constructor(
                     Log.d("DetailViewModel", "Loading from cache with new architecture: ${cachedDetails.size} items")
                     val sanitized = setRawContentSanitized(cachedDetails)
                     val merged = mergeWithExistingPrompts(sanitized)
-                    rawContent = merged
+                    setRawContent(merged)
                     eventStore.loadFromOldContent(merged, url)
                     applyNgAndPostAsync()
                     updateMetadataWithEventStore(merged, url)
@@ -363,7 +376,7 @@ class DetailViewModel @Inject constructor(
                         Log.d("DetailViewModel", "Loading from archive snapshot with new architecture: ${snapshot.size} items")
                         val sanitized = setRawContentSanitized(snapshot)
                         val merged = mergeWithExistingPrompts(sanitized)
-                        rawContent = merged
+                        setRawContent(merged)
                         eventStore.loadFromOldContent(merged, url)
                         applyNgAndPostAsync()
                         updateMetadataWithEventStore(merged, url)
@@ -381,7 +394,7 @@ class DetailViewModel @Inject constructor(
             val parsedContent = parseContentFromDocument(document, url)
             val sanitized = setRawContentSanitized(parsedContent)
             val merged = mergeWithExistingPrompts(sanitized)
-            rawContent = merged
+            setRawContent(merged)
 
             eventStore.loadFromOldContent(merged, url)
 
@@ -397,14 +410,16 @@ class DetailViewModel @Inject constructor(
             val cached = withContext(Dispatchers.IO) { cacheManager.loadDetails(url) }
             if (cached != null) {
                 if (e is IOException && (e.message?.contains("404") == true)) {
-                    runCatching {
+                    try {
                         HistoryManager.markArchived(appContext, url, autoExpireIfStale = true)
                         ThreadMonitorWorker.cancelByUrl(appContext, url)
+                    } catch (markError: Exception) {
+                        Log.w("DetailViewModel", "Failed to mark archived for $url", markError)
                     }
                 }
                 val sanitized = setRawContentSanitized(cached)
                 val merged = mergeWithExistingPrompts(sanitized)
-                rawContent = merged
+                setRawContent(merged)
                 eventStore.loadFromOldContent(merged, url)
                 applyNgAndPostAsync()
                 updateMetadataWithEventStore(merged, url)
@@ -416,7 +431,7 @@ class DetailViewModel @Inject constructor(
                 if (!reconstructed.isNullOrEmpty()) {
                     val sanitized = setRawContentSanitized(reconstructed)
                     val merged = mergeWithExistingPrompts(sanitized)
-                    rawContent = merged
+                    setRawContent(merged)
                     eventStore.loadFromOldContent(merged, url)
                     applyNgAndPostAsync()
                     updateMetadataWithEventStore(merged, url)
@@ -470,8 +485,7 @@ class DetailViewModel @Inject constructor(
                 if (newItems.isNotEmpty()) {
                     // 生データを更新してキャッシュ保存、表示はNG適用後
                     val sanitizedNewItems = sanitizePrompts(newItems)
-                    val updatedRaw = rawContent + sanitizedNewItems
-                    rawContent = updatedRaw
+                    val updatedRaw = updateRawContent { it + sanitizedNewItems }
                     withContext(Dispatchers.IO) { cacheManager.saveDetails(url, updatedRaw) }
 
                     // 新しいアーキテクチャへ反映
@@ -860,7 +874,7 @@ class DetailViewModel @Inject constructor(
                 val count = networkClient.postSodaNe(resNum, url)
                 if (count != null) {
                     // 成功: 次回以降押下を抑止
-                    synchronized(sodaNeStatesLock) {
+                    synchronized(sodaNeStates) {
                         sodaNeStates[resNum] = true
                     }
                     _sodaneUpdate.tryEmit(resNum to count)
@@ -884,7 +898,7 @@ class DetailViewModel @Inject constructor(
      * 重複送信の抑止など、UI 側の制御に用いるフラグ。
      */
     fun getSodaNeState(resNum: String): Boolean {
-        return synchronized(sodaNeStatesLock) {
+        return synchronized(sodaNeStates) {
             sodaNeStates[resNum] ?: false
         }
     }
@@ -894,7 +908,7 @@ class DetailViewModel @Inject constructor(
      * ページ遷移や強制更新時に呼び出し、状態の持ち越しを防ぐ。
      */
     fun resetSodaNeStates() {
-        synchronized(sodaNeStatesLock) {
+        synchronized(sodaNeStates) {
             sodaNeStates.clear()
         }
     }
@@ -1346,7 +1360,7 @@ class DetailViewModel @Inject constructor(
 
     private suspend fun setRawContentSanitized(list: List<DetailContent>): List<DetailContent> {
         val sanitized = sanitizePrompts(list)
-        rawContent = sanitized
+        setRawContent(sanitized)
         return sanitized
     }
 
@@ -1759,8 +1773,24 @@ class DetailViewModel @Inject constructor(
                             eventStore.updateMetadataProgressively(content.id, normalized)
 
                             if (!normalized.isNullOrBlank()) {
+                                val listForPersistence = updateRawContent { current ->
+                                    var changed = false
+                                    val mapped = current.map { existing ->
+                                        when (existing) {
+                                            is DetailContent.Image ->
+                                                if (existing.id == content.id && existing.prompt != normalized) {
+                                                    changed = true
+                                                    existing.copy(prompt = normalized)
+                                                } else {
+                                                    existing
+                                                }
+                                            else -> existing
+                                        }
+                                    }
+                                    if (changed) mapped else current
+                                }
                                 runCatching { metadataCache.put(content.imageUrl, normalized) }
-                                runCatching { cacheManager.saveDetails(url, rawContent) }
+                                runCatching { cacheManager.saveDetails(url, listForPersistence) }
                             }
                         } catch (e: Exception) {
                             Log.e("DetailViewModel", "Metadata extraction error for ${content.imageUrl}", e)
@@ -1824,7 +1854,7 @@ class DetailViewModel @Inject constructor(
 
                                 MediaSaver.saveImage(appContext, url, networkClient, referer = currentUrl)
 
-                                synchronized(downloadProgressLock) {
+                                downloadProgressMutex.withLock {
                                     completed++
                                     _downloadProgress.value = DownloadProgress(completed, urls.size, fileName, true)
                                 }
@@ -1985,7 +2015,7 @@ class DetailViewModel @Inject constructor(
                                 }
                             }
 
-                            synchronized(downloadProgressLock) {
+                            downloadProgressMutex.withLock {
                                 if (success) {
                                     if (hasExisting && resolution == DownloadConflictResolution.OverwriteExisting) {
                                         overwriteSuccess++

@@ -6,8 +6,10 @@ import com.valoser.futaburakari.DetailContent
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
+import com.google.gson.stream.JsonReader
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.io.InputStreamReader
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -42,11 +44,11 @@ class DetailCacheManager @Inject constructor(
         .create()
     private val writeExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "DetailCacheManager-Writer").apply {
-            // デーモンスレッドとして設定
-            // 理由: 通常スレッドにしてもVMはアプリ終了時に強制終了するため、データロス防止にはならない
+            // 通常スレッドとして設定（isDaemon=falseがデフォルト）
             // データ整合性は cleanup() メソッドで writeExecutor.shutdown() と awaitTermination() を
             // 呼び出すことで保証する（書き込み完了を待機してから終了）
-            isDaemon = true
+            // また、Applicationクラスで確実にcleanup()を呼び出すことで、
+            // アプリ終了時のデータ損失を防止
             priority = Thread.NORM_PRIORITY - 1 // 優先度を下げてメインスレッドへの影響を最小化
         }
     }
@@ -224,16 +226,14 @@ class DetailCacheManager @Inject constructor(
         try {
             // 既存内容と差分がなければスキップ（チェックサムで高速比較）
             if (cacheFile.exists()) {
-                runCatching {
-                    val existing = gson.fromJson(cacheFile.readText(), object : TypeToken<CachedDetails>() {}.type) as CachedDetails
-                    if (existing.checksum == newChecksum) {
-                        Log.d("DetailCacheManager", "Cache unchanged for $url (checksum match); skipping write.")
-                        // レガシー名の掃除だけは行う
-                        runCatching { if (legacyFile.exists()) legacyFile.delete() }
-                        return
-                    }
-                }.onFailure {
-                    Log.w("DetailCacheManager", "Failed to read existing cache for checksum comparison, proceeding with write")
+                val existingChecksum = readExistingChecksum(cacheFile)
+                if (existingChecksum != null && existingChecksum == newChecksum) {
+                    Log.d("DetailCacheManager", "Cache unchanged for $url (checksum match); skipping write.")
+                    // レガシー名の掃除だけは行う
+                    runCatching { if (legacyFile.exists()) legacyFile.delete() }
+                    return
+                } else if (existingChecksum == null) {
+                    Log.w("DetailCacheManager", "Failed to read checksum for $url; proceeding with rewrite.")
                 }
             }
 
@@ -272,6 +272,40 @@ class DetailCacheManager @Inject constructor(
             Log.d("DetailCacheManager", "Successfully saved cache for $url")
         } catch (e: Exception) {
             Log.e("DetailCacheManager", "Error saving cache for $url", e)
+        }
+    }
+
+    /**
+     * 既存キャッシュファイルから checksum フィールドのみをストリーミングで取得する。
+     * 大量の details 配列を読み込まずに比較できるようにする。
+     */
+    private fun readExistingChecksum(file: File): String? {
+        return try {
+            file.inputStream().buffered().use { input ->
+                JsonReader(InputStreamReader(input)).use { reader ->
+                    reader.beginObject()
+                    var checksum: String? = null
+                    while (reader.hasNext()) {
+                        when (reader.nextName()) {
+                            "checksum" -> {
+                                checksum = if (reader.peek() == com.google.gson.stream.JsonToken.NULL) {
+                                    reader.nextNull()
+                                    null
+                                } else {
+                                    reader.nextString()
+                                }
+                            }
+                            "details" -> reader.skipValue()
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                    checksum
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("DetailCacheManager", "Failed to stream checksum from cache ${file.name}", e)
+            null
         }
     }
 
@@ -393,10 +427,17 @@ class DetailCacheManager @Inject constructor(
             val lower = name.lowercase()
             return lower.endsWith(".mp4") || lower.endsWith(".webm")
         }
+        fun isImageName(name: String): Boolean {
+            val lower = name.lowercase()
+            return lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                lower.endsWith(".png") || lower.endsWith(".gif") ||
+                lower.endsWith(".webp") || lower.endsWith(".avif")
+        }
         val list = mutableListOf<DetailContent>()
         for ((index, f) in files.withIndex()) {
             val uri = f.toURI().toString()
             val name = f.name
+            if (name.equals("snapshot.json", ignoreCase = true)) continue
             if (name.endsWith("_thumb.jpg", ignoreCase = true) || name.endsWith("_thumb.jpeg", ignoreCase = true)) {
                 continue
             }
@@ -410,8 +451,10 @@ class DetailCacheManager @Inject constructor(
                     fileName = name,
                     thumbnailUrl = thumbUri
                 )
-            } else {
+            } else if (isImageName(name)) {
                 list += DetailContent.Image(id = "image_${uri.hashCode().toUInt().toString(16)}", imageUrl = uri, prompt = null, fileName = name)
+            } else {
+                Log.d("DetailCacheManager", "Skipping non-media file in archive: $name")
             }
         }
         return list

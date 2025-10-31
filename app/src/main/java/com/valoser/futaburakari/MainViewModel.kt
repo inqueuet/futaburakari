@@ -57,6 +57,7 @@ import java.net.URL
 import javax.inject.Inject
 import android.util.LruCache
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 
@@ -311,16 +312,37 @@ class MainViewModel @Inject constructor(
     // 404修正の同時多発を抑制するためのガード
     // detailUrl 単位だとプレビュー404対応中にフル画像404の修正が潰れることがあるため、
     // 失敗URL単位（detailUrl|failedUrl）で抑制する。
-    private val fixing404 = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // メモリリーク防止のため、最大サイズ制限付きのSetを使用
+    private val fixing404 = Collections.newSetFromMap(
+        object : LinkedHashMap<String, Boolean>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
+                return size > 100 // 最大100件まで保持
+            }
+        }
+    )
     // 404回数制限（detailUrl + failedUrl 単位でカウント）
-    private val http404Counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    // メモリリーク防止のため、最大サイズ制限付きのMapを使用
+    private val http404Counts = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Int>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean {
+                return size > 200 // 最大200件まで保持
+            }
+        }
+    )
     private val MAX_404_RETRY = 3
     // 再確認ディレイ（ミリ秒）のジッター範囲（スパイク緩和用）
     // プレビューの瞬間未反映対策の再確認待ちを短縮（体感のキビキビ感を優先）
     private val RECHECK_DELAY_RANGE_MS: LongRange = 200L..500L
 
     // 直近でスニッフに失敗したスレを一定時間スキップするための簡易メモ（過剰な再スニッフ抑止）
-    private val sniffNegativeUntil = mutableMapOf<String, Long>()
+    // メモリリーク防止のため、最大サイズ制限付きのMapを使用
+    private val sniffNegativeUntil = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Long>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+                return size > 100 // 最大100件まで保持
+            }
+        }
+    )
     private val SNIFF_NEG_TTL_MS = 90_000L
 
     // UI のローカル404ガード解除用に、同一メッセージでも値変化を起こせる短いノンス付き注記を生成
@@ -731,14 +753,14 @@ class MainViewModel @Inject constructor(
 
             if (!historyKeys.contains(historyKey)) {
                 viewModelScope.launch {
-                    runCatching {
+                    try {
                         HistoryManager.addOrUpdate(
                             appContext,
                             threadUrl,
                             normalizedTitle,
                             item.previewUrl.takeUnless { it.isBlank() }
                         )
-                    }.onFailure { e ->
+                    } catch (e: Exception) {
                         Log.w("MainViewModel", "Failed to add history for watched thread: $threadUrl", e)
                     }
                 }

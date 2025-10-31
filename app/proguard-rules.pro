@@ -12,13 +12,11 @@
 #   public *;
 #}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Preserve line number information for debugging stack traces in production
+-keepattributes SourceFile,LineNumberTable
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Hide the original source file name for security
+-renamesourcefileattribute SourceFile
 
 -keep class com.valoser.futaburakari.PersistentCookieJar$SerializableCookie { *; }
 -keep class com.valoser.futaburakari.Bookmark { *; }

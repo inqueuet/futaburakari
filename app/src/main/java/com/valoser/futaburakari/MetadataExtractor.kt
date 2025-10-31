@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
+import coil3.request.ImageRequest
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
@@ -14,7 +15,6 @@ import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
- 
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
@@ -45,11 +45,11 @@ object MetadataExtractor {
     // ====== 同時接続数制限設定（ユーザー設定で可変） ======
     // AppPreferences の並列度(1..4)を最大3接続に丸めて適用し、
     // Range リクエスト等の同時実行を抑制する（端末/サーバ負荷のバランスを優先）。
+    // AtomicReferenceを使用して、既存の待機スレッドも新しいセマフォを参照できるようにする
     @Volatile
     private var currentPermits: Int = 1
-    @Volatile
-    private var connectionSemaphore: Semaphore = Semaphore(currentPermits)
-    private val semaphoreLock = Any()
+    private val connectionSemaphoreRef = java.util.concurrent.atomic.AtomicReference(Semaphore(currentPermits))
+    private val connectionSemaphore: Semaphore get() = connectionSemaphoreRef.get()
     private fun permitsForLevel(level: Int): Int = minOf(level, 3) // 最大3並列
     @Synchronized
     private fun ensureSemaphore(context: Context) {
@@ -57,10 +57,10 @@ object MetadataExtractor {
         val desired = permitsForLevel(level)
         if (desired != currentPermits) {
             // 同期化してセマフォを安全に再作成
-            // 注意: 既存の待機中スレッドは古いセマフォで待ち続けるため、
-            // 実運用では設定変更後にアプリを再起動することを推奨
+            // AtomicReferenceを使用することで、既存の待機中スレッドも
+            // 次のアクセス時には新しいセマフォを参照できる
             currentPermits = desired
-            connectionSemaphore = Semaphore(desired)
+            connectionSemaphoreRef.set(Semaphore(desired))
         }
     }
     private val activeConnectionCount = AtomicInteger(0)
@@ -147,33 +147,40 @@ object MetadataExtractor {
             // Coilのシングルトンインスタンスを取得
             val imageLoader = coil3.SingletonImageLoader.get(context)
             val diskCache = imageLoader.diskCache ?: return@withContext null
+            val request = ImageRequest.Builder(context)
+                .data(imageUrl)
+                .build()
 
-            // キャッシュエントリを開く（use で自動 close）
-            diskCache.openSnapshot(imageUrl)?.use { snapshot ->
-                val cachedFile = snapshot.data.toFile()
+            val candidateKeys = buildList {
+                add(imageUrl)
+                request.diskCacheKey?.let { add(it) }
+            }.distinct()
 
-                // ファイルが存在し、読み取り可能か確認
-                if (!cachedFile.exists() || !cachedFile.canRead()) {
-                    Log.d(TAG, "Coil cache file not accessible: $imageUrl")
-                    return@withContext null
-                }
+            for (key in candidateKeys) {
+                val snapshot = diskCache.openSnapshot(key) ?: continue
+                snapshot.use {
+                    val cachedFile = snapshot.data.toFile()
 
-                // ファイルサイズの上限チェック
-                val fileSize = cachedFile.length()
-                Log.d(TAG, "Coil cache hit (${fileSize / 1024}KB): $imageUrl")
+                    if (!cachedFile.exists() || !cachedFile.canRead()) {
+                        Log.d(TAG, "Coil cache file not accessible: $imageUrl (key=$key)")
+                        return@use null
+                    }
 
-                if (fileSize > GLOBAL_MAX_BYTES) {
-                    // 先頭部分のみ読み取り
-                    cachedFile.inputStream().use { input ->
-                        val bytes = input.readBytes(limit = GLOBAL_MAX_BYTES)
+                    val fileSize = cachedFile.length()
+                    Log.d(TAG, "Coil cache hit (${fileSize / 1024}KB): $imageUrl (key=$key)")
+
+                    return@withContext if (fileSize > GLOBAL_MAX_BYTES) {
+                        cachedFile.inputStream().use { input ->
+                            val bytes = input.readBytes(limit = GLOBAL_MAX_BYTES)
+                            extractBySniff(bytes, imageUrl)
+                        }
+                    } else {
+                        val bytes = cachedFile.readBytes()
                         extractBySniff(bytes, imageUrl)
                     }
-                } else {
-                    // 全体を読み取り
-                    val bytes = cachedFile.readBytes()
-                    extractBySniff(bytes, imageUrl)
                 }
             }
+            null
         } catch (e: Exception) {
             Log.w(TAG, "Failed to extract metadata from Coil cache: $imageUrl", e)
             null

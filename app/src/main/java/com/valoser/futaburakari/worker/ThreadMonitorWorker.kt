@@ -141,7 +141,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
             cm.saveArchiveSnapshot(url, archived)
 
             // 3.5) サムネイル（履歴）をローカルに更新（OPの画像のみを使用）
-            runCatching {
+            try {
                 val firstTextIndex = archived.indexOfFirst { it is com.valoser.futaburakari.DetailContent.Text }
                 val media = when {
                     firstTextIndex >= 0 -> {
@@ -177,6 +177,8 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 } else {
                     HistoryManager.clearThumbnail(applicationContext, url)
                 }
+            } catch (e: Exception) {
+                Log.w("ThreadMonitorWorker", "Failed to update thumbnail for $url", e)
             }
 
             // 4) 既知の最終レス番号（Textの件数）を履歴へ反映（未読数更新のため）
@@ -202,8 +204,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
             if (msg.contains("HTTPエラー: 404") || msg.contains("404")) {
                 // dat 落ち（404）とみなし停止
                 Log.i("ThreadMonitorWorker", "Thread archived (404): $url")
-                runCatching {
+                try {
                     HistoryManager.markArchived(applicationContext, url, autoExpireIfStale = true)
+                } catch (markError: Exception) {
+                    Log.w("ThreadMonitorWorker", "Failed to mark archive state for $url", markError)
                 }
                 cancelUnique(url)
                 Result.success()

@@ -272,8 +272,8 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
 
     /**
      * 利用可能なディスク容量に基づいて最適なキャッシュサイズを計算する。
-     * - 利用可能な容量の10%、ただし最小500MB、最大8GBとする。
-     * - 利用可能な容量が5GB未満の場合は、より控えめな設定を使用する。
+     * - 基本は利用可能な容量の10%を採用し、通常モードでは 500MB〜8GB の範囲に収める。
+     * - 利用可能な容量が 5GB 未満の場合は、上限 2GB・下限指定なしの控えめ設定を適用する。
      */
     private fun calculateDiskCacheSize(context: Context): Long {
         return try {
@@ -284,7 +284,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
             // 利用可能な容量の10%を基準とする
             val tenPercent = usableSpace / 10
 
-            // 最小500MB、最大8GB
+            // 通常モード時の下限500MB、上限8GB
             val minSize = 500L * 1024L * 1024L // 500MB
             val maxSize = 8L * 1024L * 1024L * 1024L // 8GB
 
