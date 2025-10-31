@@ -2,7 +2,6 @@ package com.valoser.futaburakari
 
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
 import android.provider.MediaStore
 import android.content.ContentValues
 import android.os.Build
@@ -15,7 +14,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.OutputStream
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -262,64 +260,16 @@ class ThreadArchiver(
      */
     private fun createArchiveDirectory(dirName: String): File? {
         return try {
-            // 1. Downloadディレクトリを最優先（ユーザーがアクセスしやすい）
-            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (downloadDir != null) {
-                val downloadArchive = File(downloadDir, "Futaburakari/ThreadArchives")
-                val archiveDir = File(downloadArchive, dirName)
-                if (ensureDirectoryCreated(archiveDir)) {
-                    Log.d(TAG, "Archive directory created in Download: ${archiveDir.absolutePath}")
-                    return archiveDir
-                }
+            val dir = ArchiveStorageResolver.ensureArchiveDirectory(context, dirName)
+            if (dir != null) {
+                Log.d(TAG, "Archive directory resolved: ${dir.absolutePath}")
+            } else {
+                Log.e(TAG, "Failed to resolve archive directory for $dirName")
             }
-
-            // 2. 外部メディアディレクトリをフォールバック
-            val externalMediaDirs = context.externalMediaDirs
-            if (externalMediaDirs != null) {
-                for (mediaDir in externalMediaDirs) {
-                    if (mediaDir != null) {
-                        val mediaArchive = File(mediaDir, "Futaburakari/ThreadArchives")
-                        val archiveDir = File(mediaArchive, dirName)
-                        if (ensureDirectoryCreated(archiveDir)) {
-                            Log.d(TAG, "Archive directory created in external media: ${archiveDir.absolutePath}")
-                            return archiveDir
-                        }
-                    }
-                }
-            }
-
-            // 3. 最終フォールバック：アプリ固有の外部ストレージ
-            val baseDir = context.getExternalFilesDir(null)
-            if (baseDir == null) {
-                Log.e(TAG, "External files directory is not available")
-                return null
-            }
-
-            val appDir = File(baseDir, "ThreadArchives")
-            val archiveDir = File(appDir, dirName)
-
-            if (ensureDirectoryCreated(archiveDir)) {
-                Log.d(TAG, "Archive directory created in app-specific storage: ${archiveDir.absolutePath}")
-                return archiveDir
-            }
-
-            Log.e(TAG, "Failed to create directory in all locations")
-            null
+            dir
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create archive directory", e)
             null
-        }
-    }
-
-    private fun ensureDirectoryCreated(dir: File): Boolean {
-        return try {
-            if (!dir.exists()) {
-                dir.mkdirs()
-            }
-            dir.exists() && dir.isDirectory && dir.canWrite()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to create directory: ${dir.absolutePath}", e)
-            false
         }
     }
 
@@ -466,6 +416,12 @@ class ThreadArchiver(
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        .post::after {
+            content: "";
+            display: block;
+            clear: both;
         }
         .post-number {
             color: #0066cc;
@@ -481,6 +437,30 @@ class ThreadArchiver(
         }
         .post-content p {
             margin: 0 0 0.8em 0;
+        }
+        .post-content dl {
+            margin: 0 0 0.8em 0 !important;
+            padding: 0 !important;
+            display: block;
+        }
+        .post-content dt {
+            margin: 0 0 0.4em 0 !important;
+            font-weight: 600;
+            display: block;
+        }
+        .post-content dd {
+            margin: 0 !important;
+            padding: 0 !important;
+            display: block;
+        }
+        .post-content *[style*="margin-left"] {
+            margin-left: 0 !important;
+        }
+        .post-content *[style*="padding-left"] {
+            padding-left: 0 !important;
+        }
+        .post-content *[style*="float"] {
+            float: none !important;
         }
         .post-content blockquote {
             margin: 0.6em 0;
@@ -707,7 +687,7 @@ class ThreadArchiver(
             pattern = "(?is)" +
                     "(" +
                     // 開閉タグを持つブロック
-                    "<(?:blockquote|details|figure|div|ul|ol|li|pre|table|thead|tbody|tr|td|th|h[1-6]|p)\\b[^>]*>.*?</\\s*(?:blockquote|details|figure|div|ul|ol|li|pre|table|thead|tbody|tr|td|th|h[1-6]|p)\\s*>" +
+                    "<(?:blockquote|details|figure|div|ul|ol|li|dl|dt|dd|pre|table|thead|tbody|tr|td|th|h[1-6]|p)\\b[^>]*>.*?</\\s*(?:blockquote|details|figure|div|ul|ol|li|dl|dt|dd|pre|table|thead|tbody|tr|td|th|h[1-6]|p)\\s*>" +
                     "|" +
                     // 単独タグ（hr等）
                     "<(?:hr)\\b[^>]*/?>" +
