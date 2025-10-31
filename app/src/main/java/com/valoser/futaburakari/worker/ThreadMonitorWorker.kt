@@ -135,10 +135,9 @@ class ThreadMonitorWorker @AssistedInject constructor(
             // 2) メディアを内部保存し、ローカル file: URI に差し替え（マージ後のリストを使用）
             val archived = archiveMedia(url, merged)
 
-            // 3) キャッシュへ保存（置き換え保存） + アーカイブスナップショット保存
+            // 3) キャッシュへ保存（置き換え保存）
             val cm = cacheMgr
             cm.saveDetails(url, archived)
-            cm.saveArchiveSnapshot(url, archived)
 
             // 3.5) サムネイル（履歴）をローカルに更新（OPの画像のみを使用）
             try {

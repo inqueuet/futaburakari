@@ -1073,10 +1073,8 @@ class DetailViewModel @Inject constructor(
         recomputeSearchState(displayFiltered)
 
         currentUrl?.let { url ->
-            val snapshot = filtered
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching { cacheManager.saveDetails(url, source) }
-                runCatching { cacheManager.saveArchiveSnapshot(url, snapshot) }
             }
         }
     }
