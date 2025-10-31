@@ -1,6 +1,7 @@
 package com.valoser.futaburakari.cache
 
 import android.content.Context
+import android.os.Environment
 import android.util.Log
 import com.valoser.futaburakari.DetailContent
 import com.google.gson.Gson
@@ -55,8 +56,87 @@ class DetailCacheManager @Inject constructor(
     private val cacheDir: File by lazy {
         File(context.cacheDir, "details_cache").apply { mkdirs() }
     }
-    private val archiveRoot: File by lazy {
-        File(context.filesDir, "archive_media").apply { mkdirs() }
+    private val legacyArchiveRoot: File by lazy {
+        File(context.filesDir, "archive_media")
+    }
+    private val archiveRoot: File by lazy { resolveArchiveRoot() }
+
+    private fun resolveArchiveRoot(): File {
+        // 1. Downloadディレクトリを最優先（ユーザーがアクセスしやすい）
+        val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (downloadDir != null) {
+            val downloadArchive = File(downloadDir, "Futaburakari/Threads")
+            if (ensureDirectory(downloadArchive)) {
+                migrateLegacyArchiveIfNeeded(downloadArchive)
+                Log.d("DetailCacheManager", "Using Download directory: ${downloadArchive.absolutePath}")
+                return downloadArchive
+            }
+        }
+
+        // 2. 外部メディアディレクトリをフォールバック
+        val externalArchive = context.externalMediaDirs
+            ?.asSequence()
+            ?.filterNotNull()
+            ?.map { base ->
+                File(base, "Futaburakari/Threads")
+            }
+            ?.firstOrNull { ensureDirectory(it) }
+
+        if (externalArchive != null) {
+            migrateLegacyArchiveIfNeeded(externalArchive)
+            Log.d("DetailCacheManager", "Using external media directory: ${externalArchive.absolutePath}")
+            return externalArchive
+        }
+
+        // 3. 最終フォールバック：内部ストレージ
+        Log.d("DetailCacheManager", "Falling back to internal storage: ${legacyArchiveRoot.absolutePath}")
+        return legacyArchiveRoot.apply { ensureDirectory(this) }
+    }
+
+    private fun ensureDirectory(dir: File): Boolean {
+        return runCatching {
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            dir.exists() && dir.isDirectory && dir.canWrite()
+        }.getOrDefault(false)
+    }
+
+    private fun migrateLegacyArchiveIfNeeded(target: File) {
+        val legacyDir = legacyArchiveRoot
+        if (!legacyDir.exists() || legacyDir.absolutePath == target.absolutePath) {
+            return
+        }
+
+        val sourceChildren = legacyDir.listFiles() ?: return
+        if (sourceChildren.isEmpty()) {
+            runCatching { legacyDir.deleteRecursively() }
+            return
+        }
+
+        Log.d("DetailCacheManager", "Migrating archived media to external storage: ${target.absolutePath}")
+
+        sourceChildren.forEach { child ->
+            val destination = File(target, child.name)
+            if (destination.exists()) return@forEach
+
+            runCatching {
+                if (child.isDirectory) {
+                    child.copyRecursively(destination, overwrite = false)
+                } else {
+                    child.copyTo(destination, overwrite = false)
+                }
+                // 旧ディレクトリはコピー成功後に削除して容量を解放
+                child.deleteRecursively()
+            }.onFailure { error ->
+                Log.w("DetailCacheManager", "Failed to migrate ${child.name}", error)
+            }
+        }
+
+        val remaining = legacyDir.listFiles()
+        if (remaining == null || remaining.isEmpty()) {
+            runCatching { legacyDir.deleteRecursively() }
+        }
     }
 
     /**
