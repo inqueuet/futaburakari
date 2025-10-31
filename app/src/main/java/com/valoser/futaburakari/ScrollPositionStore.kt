@@ -35,6 +35,7 @@ class ScrollPositionStore(context: Context) {
      * @param offset 先頭アイテムの上端から表示領域上端までのピクセル単位のオフセット
      * @param anchorId 先頭に表示されているアイテムの安定キー（DetailContent.id 等）
      */
+    @Synchronized
     fun saveScrollState(url: String, position: Int, offset: Int, anchorId: String?) {
         val editor = prefs.edit()
             .putInt(KEY_PREFIX_POSITION + url, position.coerceAtLeast(0))
@@ -54,6 +55,7 @@ class ScrollPositionStore(context: Context) {
      * 保存が存在しない場合はスキーム無しの旧キーへフォールバックし、
      * それでも見つからなければ position/offset を 0 とした状態を返します。
      */
+    @Synchronized
     fun getScrollState(url: String): SavedScrollState {
         var position = prefs.getInt(KEY_PREFIX_POSITION + url, Int.MIN_VALUE)
         var offset = prefs.getInt(KEY_PREFIX_OFFSET + url, Int.MIN_VALUE)

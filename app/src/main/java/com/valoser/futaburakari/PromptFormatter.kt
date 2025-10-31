@@ -4,8 +4,9 @@ import android.graphics.Typeface
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.StyleSpan
-import org.json.JSONObject
+import org.json.JSONArray
 import org.json.JSONException
+import org.json.JSONObject
 
 /**
  * プロンプト文字列（JSON/プレーンテキスト/ComfyUI 形式）を解析し、
@@ -110,8 +111,8 @@ object PromptFormatter {
             val samplerInputs = samplerNode.getJSONObject("inputs")
 
             // Positive/NegativeプロンプトのノードIDを取得
-            val positiveNodeId = samplerInputs.optJSONArray("positive")?.optString(0)
-            val negativeNodeId = samplerInputs.optJSONArray("negative")?.optString(0)
+            val positiveNodeId = samplerInputs.optConnectionNodeId("positive")
+            val negativeNodeId = samplerInputs.optConnectionNodeId("negative")
 
             if (positiveNodeId == null || negativeNodeId == null) return null
 
@@ -137,11 +138,11 @@ object PromptFormatter {
 
 
             // モデル名を探す
-            val modelNodeId = samplerInputs.optJSONArray("model")?.optString(0)
+            val modelNodeId = samplerInputs.optConnectionNodeId("model")
             if (modelNodeId != null) {
                 val modelNode = json.optJSONObject(modelNodeId)
                 // LoraTagLoader -> CheckpointLoaderSimple のように辿る
-                val checkpointNodeId = modelNode?.optJSONObject("inputs")?.optJSONArray("model")?.optString(0)
+                val checkpointNodeId = modelNode?.optJSONObject("inputs")?.optConnectionNodeId("model")
                 if (checkpointNodeId != null) {
                     json.optJSONObject(checkpointNodeId)
                         ?.optJSONObject("inputs")
@@ -152,7 +153,7 @@ object PromptFormatter {
 
 
             // 画像サイズを探す (EmptyLatentImage)
-            val latentNodeId = samplerInputs.optJSONArray("latent_image")?.optString(0)
+            val latentNodeId = samplerInputs.optConnectionNodeId("latent_image")
             if (latentNodeId != null) {
                 val latentInputs = json.optJSONObject(latentNodeId)?.optJSONObject("inputs")
                 if (latentInputs != null) {
@@ -166,6 +167,28 @@ object PromptFormatter {
 
         } catch (_: JSONException) {
             return null
+        }
+    }
+
+    private fun JSONObject.optConnectionNodeId(key: String): String? {
+        val value = opt(key) ?: return null
+        return when (value) {
+            is JSONArray -> value.firstConnectionNodeId()
+            is String -> value.takeUnless { it.isBlank() }
+            is Number -> value.toString()
+            else -> null
+        }
+    }
+
+    private fun JSONArray.firstConnectionNodeId(): String? {
+        if (length() == 0) return null
+        val first = opt(0)
+        return when (first) {
+            is JSONArray -> first.firstConnectionNodeId()
+            is JSONObject -> first.optString("id").takeUnless { it.isBlank() }
+            is String -> first.takeUnless { it.isBlank() }
+            is Number -> first.toString()
+            else -> null
         }
     }
 

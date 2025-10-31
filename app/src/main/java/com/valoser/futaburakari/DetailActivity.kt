@@ -26,6 +26,7 @@ import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +37,7 @@ import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.worker.ThreadMonitorWorker
 import dagger.hilt.android.AndroidEntryPoint
 import com.valoser.futaburakari.ui.detail.DetailScreenScaffold
+import com.valoser.futaburakari.ui.common.AppBarPosition
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,7 +79,8 @@ class DetailActivity : BaseActivity() {
     private var isRequestingMore = false   // 追加：多重呼び出し防止
     private var isInitialLoad = true // 初期ロード復元の制御に使用（再読み込み時にリセット）
 
-    private var markViewedJob: kotlinx.coroutines.Job? = null
+    private var markViewedJob: Job? = null
+    private var saveScrollJob: Job? = null
 
     // 本文検索のためのプレーンテキストキャッシュ（Text.id -> plainText）
     // ViewModel がプレーンテキストキャッシュを管理
@@ -96,6 +99,7 @@ class DetailActivity : BaseActivity() {
     private val adsEnabledFlow = adsEnabledFlowInternal.asStateFlow()
     private val promptFetchEnabledState = mutableStateOf(false)
     private val lowBandwidthModeState = mutableStateOf(false)
+    private val topBarPositionState = mutableStateOf(AppBarPosition.TOP)
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             // 広告設定の即時反映
@@ -108,6 +112,9 @@ class DetailActivity : BaseActivity() {
             "ng_rules_json" -> viewModel.reapplyNgFilter()
             PromptSettings.PREF_KEY_FETCH_ENABLED -> {
                 promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this@DetailActivity)
+            }
+            "pref_key_top_bar_position" -> {
+                topBarPositionState.value = getTopBarPosition()
             }
         }
     }
@@ -179,6 +186,7 @@ class DetailActivity : BaseActivity() {
         val adUnitId = getString(R.string.admob_banner_id)
         promptFetchEnabledState.value = PromptSettings.isPromptFetchEnabled(this)
         lowBandwidthModeState.value = AppPreferences.isLowBandwidthModeEnabled(this)
+        topBarPositionState.value = getTopBarPosition()
         setContent {
             FutaburakariTheme(expressive = true) {
                 val showAds by adsEnabledFlow.collectAsState()
@@ -189,6 +197,7 @@ class DetailActivity : BaseActivity() {
                 }
                 DetailScreenScaffold(
                     title = toolbarTitleText,
+                    appBarPosition = topBarPositionState.value,
                     onBack = {
                         onBackPressedDispatcher.onBackPressed()
                     },
@@ -215,7 +224,9 @@ class DetailActivity : BaseActivity() {
                         )
                     },
                     onSubmitSearch = { q ->
-                        recentSearchStore.add(q)
+                        lifecycleScope.launch(Dispatchers.Default) {
+                            recentSearchStore.add(q)
+                        }
                         viewModel.performSearch(q)
                     },
                     onDebouncedSearch = { q -> viewModel.performSearch(q) },
@@ -238,9 +249,12 @@ class DetailActivity : BaseActivity() {
                     onSaveScroll = { pos, off, anchorId ->
                         val url = currentUrl ?: return@DetailScreenScaffold
                         val key = UrlNormalizer.threadKey(url)
-                        scrollStore.saveScrollState(key, pos, off, anchorId)
+                        saveScrollJob?.cancel()
+                        saveScrollJob = lifecycleScope.launch(Dispatchers.IO) {
+                            scrollStore.saveScrollState(key, pos, off, anchorId)
+                        }
                     },
-                    itemsFlow = viewModel.detailContent,
+                    itemsFlow = viewModel.displayContent,
                     plainTextCacheFlow = viewModel.plainTextCache,
                     onEnsurePlainTextCache = { list -> viewModel.ensurePlainTextCachedFor(list) },
                     plainTextOf = { t -> viewModel.plainTextOf(t) },
@@ -304,7 +318,9 @@ class DetailActivity : BaseActivity() {
         // 履歴に記録（タイトルがない場合は URL 末尾などで代替）
         currentUrl?.let { url ->
             val title = toolbarTitleText.ifBlank { url }
-            HistoryManager.addOrUpdate(this, url, title)
+            lifecycleScope.launch(Dispatchers.IO) {
+                HistoryManager.addOrUpdate(this@DetailActivity, url, title)
+            }
             // すぐ閉じた場合でも本文を含めてローカルに残せるよう、単発のスナップショット取得を即時キュー
             ThreadMonitorWorker.snapshotNow(this, url)
             // 以降の更新を自動監視（常時有効）
@@ -338,6 +354,12 @@ class DetailActivity : BaseActivity() {
         // Compose側で表示を制御するため、状態のみ更新
         val enabled = prefs.getBoolean("pref_key_ads_enabled", true)
         adsEnabledFlowInternal.value = enabled
+    }
+
+    private fun getTopBarPosition(): AppBarPosition {
+        val pref = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString("pref_key_top_bar_position", "top") ?: "top"
+        return if (pref == "bottom") AppBarPosition.BOTTOM else AppBarPosition.TOP
     }
 
     /**
@@ -398,71 +420,67 @@ class DetailActivity : BaseActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.detailContent.collect { list ->
 
-            // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
-            try {
-                val latestReplyNo = list.count { it is DetailContent.Text }
-                val threadUrl = currentUrl
-                if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
-                    HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
-                }
-            } catch (_: Exception) {
-                // 例外は無視して UI 更新継続
-            }
+                    withContext(Dispatchers.Default) {
+                        // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
+                        try {
+                            val latestReplyNo = list.count { it is DetailContent.Text }
+                            val threadUrl = currentUrl
+                            if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
+                                HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
+                            }
+                        } catch (_: Exception) {
+                            // 例外は無視して UI 更新継続
+                        }
 
-            // 履歴のサムネイル更新（OPの画像のみを採用）
-            try {
-                val firstTextIndex = list.indexOfFirst { it is DetailContent.Text }
-                val media = when {
-                    firstTextIndex >= 0 -> {
-                        // OPレス直後の画像/動画を探す（次の Text に達するまで）
-                        list.drop(firstTextIndex + 1)
-                            .takeWhile { it !is DetailContent.Text }
-                            .firstOrNull {
-                                when (it) {
-                                    is DetailContent.Image -> it.imageUrl.isNotBlank()
-                                    is DetailContent.Video -> it.videoUrl.isNotBlank()
-                                    else -> false
+                        // 履歴のサムネイル更新（OPの画像のみを採用）
+                        try {
+                            val firstTextIndex = list.indexOfFirst { it is DetailContent.Text }
+                            val media = when {
+                                firstTextIndex >= 0 -> {
+                                    // OPレス直後の画像/動画を探す（次の Text に達するまで）
+                                    list.drop(firstTextIndex + 1)
+                                        .takeWhile { it !is DetailContent.Text }
+                                        .firstOrNull {
+                                            when (it) {
+                                                is DetailContent.Image -> it.imageUrl.isNotBlank()
+                                                is DetailContent.Video -> it.videoUrl.isNotBlank()
+                                                else -> false
+                                            }
+                                        }
+                                }
+                                else -> {
+                                    // OP本文が存在しない（画像のみ等）場合は、リスト先頭から最初のメディアを採用
+                                    list.firstOrNull {
+                                        when (it) {
+                                            is DetailContent.Image -> it.imageUrl.isNotBlank()
+                                            is DetailContent.Video -> it.videoUrl.isNotBlank()
+                                            else -> false
+                                        }
+                                    }
                                 }
                             }
-                    }
-                    else -> {
-                        // OP本文が存在しない（画像のみ等）場合は、リスト先頭から最初のメディアを採用
-                        list.firstOrNull {
-                            when (it) {
-                                is DetailContent.Image -> it.imageUrl.isNotBlank()
-                                is DetailContent.Video -> it.videoUrl.isNotBlank()
-                                else -> false
+                            val url = when (media) {
+                                is DetailContent.Image -> media.imageUrl
+                                is DetailContent.Video -> media.thumbnailUrl ?: media.videoUrl
+                                else -> null
                             }
+                            val threadUrl = currentUrl
+                            if (!threadUrl.isNullOrBlank()) {
+                                if (!url.isNullOrBlank()) {
+                                    HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
+                                } else {
+                                    HistoryManager.clearThumbnail(this@DetailActivity, threadUrl)
+                                }
+                            }
+                        } catch (_: Exception) {
+                            // 例外は無視して UI 更新継続
                         }
                     }
-                }
-                val url = when (media) {
-                    is DetailContent.Image -> media.imageUrl
-                    is DetailContent.Video -> media.thumbnailUrl ?: media.videoUrl
-                    else -> null
-                }
-                val threadUrl = currentUrl
-                if (!threadUrl.isNullOrBlank()) {
-                    if (!url.isNullOrBlank()) {
-                        HistoryManager.updateThumbnail(this@DetailActivity, threadUrl, url)
-                    } else {
-                        HistoryManager.clearThumbnail(this@DetailActivity, threadUrl)
+
+                    // suppressNextRestoreフラグのリセットのみ残す
+                    if (suppressNextRestore) {
+                        suppressNextRestore = false
                     }
-                }
-            } catch (_: Exception) {
-                // 例外は無視して UI 更新継続
-            }
-
-            // Compose側は LiveData を直接購読しているため、ここでのAdapter更新は不要
-
-            // プレーンテキストキャッシュは ViewModel 内で構築
-
-            // 検索ナビの表示は ViewModel.searchState に統一
-
-            // suppressNextRestoreフラグのリセットのみ残す
-            if (suppressNextRestore) {
-                suppressNextRestore = false
-            }
                 }
             }
         }
@@ -567,6 +585,8 @@ class DetailActivity : BaseActivity() {
     override fun onDestroy() {
         markViewedJob?.cancel()
         markViewedJob = null
+        saveScrollJob?.cancel()
+        saveScrollJob = null
         super.onDestroy()
     }
 

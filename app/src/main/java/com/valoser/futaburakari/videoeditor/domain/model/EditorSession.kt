@@ -62,7 +62,15 @@ data class VideoClip(
      * クリップの長さ（速度を考慮）
      */
     val duration: Long
-        get() = ((endTime - startTime) / speed).toLong()
+        get() {
+            val safeSpeed = when {
+                speed.isFinite() && speed > 0f -> speed.coerceIn(0.1f, 10.0f)
+                else -> 1f
+            }
+            val rawDuration = (endTime - startTime) / safeSpeed
+            // オーバーフロー防止：最大10時間（36,000,000ミリ秒）に制限
+            return rawDuration.toLong().coerceIn(0L, 36_000_000L)
+        }
 
     /**
      * ソース動画の開始時間

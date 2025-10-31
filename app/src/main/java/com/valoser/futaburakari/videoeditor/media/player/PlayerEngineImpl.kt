@@ -143,6 +143,7 @@ class PlayerEngineImpl @Inject constructor(
         }.let { idx ->
             when {
                 idx >= 0 -> idx
+                clips.isEmpty() -> 0
                 timeMs < clips.first().position -> 0
                 else -> clips.lastIndex
             }

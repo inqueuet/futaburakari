@@ -128,9 +128,29 @@ class EditClipUseCaseImpl @Inject constructor(
                         )
                         newAudioClipsForTrack.add(rightClip)
                     }
-                    // Case 5 & 6: Partial overlaps
+                    // Case 5: Deleted range overlaps the start of the clip (trim start)
+                    clipAbsoluteStart < absoluteDeleteStart && clipAbsoluteEnd > absoluteDeleteStart && clipAbsoluteEnd <= absoluteDeleteEnd -> {
+                        val trimmedClip = clip.copy(
+                            endTime = clip.startTime + (absoluteDeleteStart - clipAbsoluteStart),
+                            volumeKeyframes = clip.volumeKeyframes.filter { it.time < (absoluteDeleteStart - clipAbsoluteStart) }
+                        )
+                        newAudioClipsForTrack.add(trimmedClip)
+                    }
+                    // Case 6: Deleted range overlaps the end of the clip (trim end)
+                    clipAbsoluteStart >= absoluteDeleteStart && clipAbsoluteStart < absoluteDeleteEnd && clipAbsoluteEnd > absoluteDeleteEnd -> {
+                        val trimmedClip = clip.copy(
+                            startTime = clip.startTime + (absoluteDeleteEnd - clipAbsoluteStart),
+                            position = clip.position + (absoluteDeleteEnd - clipAbsoluteStart) - deleteLength,
+                            volumeKeyframes = clip.volumeKeyframes
+                                .filter { it.time >= (absoluteDeleteEnd - clipAbsoluteStart) }
+                                .map { it.copy(time = it.time - (absoluteDeleteEnd - clipAbsoluteStart)) }
+                        )
+                        newAudioClipsForTrack.add(trimmedClip)
+                    }
+                    // Unexpected case - log warning and keep original clip
                     else -> {
-                        // Trim処理
+                        Log.w("EditClipUseCase", "Unexpected audio clip overlap case: clipStart=$clipAbsoluteStart, clipEnd=$clipAbsoluteEnd, deleteStart=$absoluteDeleteStart, deleteEnd=$absoluteDeleteEnd")
+                        newAudioClipsForTrack.add(clip)
                     }
                 }
             }
@@ -312,12 +332,16 @@ class EditClipUseCaseImpl @Inject constructor(
         speed: Float
     ): Result<EditorSession> {
         return try {
+            val validatedSpeed = when {
+                speed.isFinite() && speed > 0f -> speed
+                else -> 1f
+            }
             val session = sessionManager.getCurrentSession()
                 ?: return Result.failure(Exception("No active session"))
 
             val updatedClips = session.videoClips.map { clip ->
                 if (clip.id == clipId) {
-                    clip.copy(speed = speed)
+                    clip.copy(speed = validatedSpeed)
                 } else {
                     clip
                 }

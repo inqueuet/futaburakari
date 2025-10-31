@@ -5,6 +5,7 @@ import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Cookie
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -176,7 +177,8 @@ class NetworkClient(
             if (!resp.isSuccessful) {
                 throw IOException("HTTPエラー: ${resp.code} ${resp.message}")
             }
-            val bytes = resp.body!!.bytes()
+            val body = resp.body ?: throw IOException("レスポンスボディが空です")
+            val bytes = body.bytes()
             val decoded = EncodingUtils.decode(bytes, resp.header("Content-Type"))
             Jsoup.parse(decoded, url)
         }
@@ -283,7 +285,7 @@ class NetworkClient(
                 // Content-Lengthをチェックして無駄な取得を避ける
                 val contentLength = resp.header("Content-Length")?.toLongOrNull()
                 val maxToRead = if (length > 0) length.coerceAtMost(2L * 1024 * 1024L) else 2L * 1024 * 1024L
-                if (contentLength != null && contentLength > maxToRead) {
+                if (contentLength != null && contentLength > maxToRead && code != 200) {
                     return@use null
                 }
 
@@ -335,9 +337,20 @@ class NetworkClient(
                 .getOrElse { emptyList() }
             val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
 
-            val cm = CookieManager.getInstance()
-            val webCookieRef = cm.getCookie(referer)
-            val webCookieOrg = cm.getCookie(origin)
+            // CookieManager は Looper が必要なのでメインスレッドで実行（タイムアウト付き）
+            val (webCookieRef, webCookieOrg) = withTimeoutOrNull(1000L) {
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    try {
+                        val cm = CookieManager.getInstance()
+                        val ref = cm.getCookie(referer)
+                        val org = cm.getCookie(origin)
+                        ref to org
+                    } catch (e: Exception) {
+                        Log.w("NetworkClient", "Failed to get WebView cookies", e)
+                        null to null
+                    }
+                }
+            } ?: (null to null)
             val mergedCookie = mergeCookies(jarCookie, webCookieOrg, webCookieRef)
 
             val req = Request.Builder()
@@ -487,9 +500,21 @@ class NetworkClient(
             val jarCookies: List<Cookie> = runCatching { httpClient.cookieJar.loadForRequest(endpoint.toHttpUrl()) }
                 .getOrElse { emptyList() }
             val jarCookie = jarCookies.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
-            val cm = CookieManager.getInstance()
-            val webCookieRef = cm.getCookie(threadUrl)
-            val webCookieOrg = cm.getCookie(origin)
+
+            // CookieManager は Looper が必要なのでメインスレッドで実行（タイムアウト付き）
+            val (webCookieRef, webCookieOrg) = withTimeoutOrNull(1000L) {
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    try {
+                        val cm = CookieManager.getInstance()
+                        val ref = cm.getCookie(threadUrl)
+                        val org = cm.getCookie(origin)
+                        ref to org
+                    } catch (e: Exception) {
+                        Log.w("NetworkClient", "Failed to get WebView cookies", e)
+                        null to null
+                    }
+                }
+            } ?: (null to null)
             val mergedCookie = mergeCookies(jarCookie, webCookieOrg, webCookieRef)
 
             val form = FormBody.Builder()

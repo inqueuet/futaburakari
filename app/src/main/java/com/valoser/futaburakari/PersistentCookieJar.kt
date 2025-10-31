@@ -94,19 +94,23 @@ object PersistentCookieJar : CookieJar {
         }
         saveCookiesToPrefs()
 
-        // WebView への Cookie 同期（UI スレッドで実行）
+        // WebView への Cookie 同期（UI スレッドで実行、エラー発生時は無視）
         try {
-            val cm = android.webkit.CookieManager.getInstance()
             val cookieStrings = cookies.map { it.toString() }
             Handler(Looper.getMainLooper()).post {
                 try {
+                    val cm = android.webkit.CookieManager.getInstance()
                     cookieStrings.forEach { cs -> cm.setCookie(url.toString(), cs) }
                     cm.flush()
                 } catch (e: Exception) {
-                    Log.e("PersistentCookieJar", "Error synchronizing cookies to WebView", e)
+                    // WebView が初期化されていない、またはバックグラウンド状態での例外を無視
+                    Log.w("PersistentCookieJar", "Error synchronizing cookies to WebView: ${e.message}")
                 }
             }
-        } catch (_: Exception) { /* ignore */ }
+        } catch (e: Exception) {
+            // Handler の post 自体が失敗した場合（通常は発生しない）
+            Log.w("PersistentCookieJar", "Failed to post cookie sync task: ${e.message}")
+        }
     }
 
     /**

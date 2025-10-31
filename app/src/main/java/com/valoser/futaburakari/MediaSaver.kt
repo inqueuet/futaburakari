@@ -34,7 +34,12 @@ object MediaSaver {
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する。
      * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はキャッシュ優先でダウンロードして保存する。
      */
-    suspend fun saveImage(context: Context, imageUrl: String, networkClient: NetworkClient) {
+    suspend fun saveImage(
+        context: Context,
+        imageUrl: String,
+        networkClient: NetworkClient,
+        referer: String? = null
+    ) {
         saveMedia(
             context = context,
             url = imageUrl,
@@ -42,7 +47,8 @@ object MediaSaver {
             mimeType = getMimeTypeOrDefault(imageUrl, "image/jpeg"),
             mediaContentUri = imagesContentUri(),
             relativeBaseDir = Environment.DIRECTORY_PICTURES,
-            networkClient = networkClient
+            networkClient = networkClient,
+            referer = referer
         )
     }
 
@@ -50,7 +56,12 @@ object MediaSaver {
      * 指定した画像URLを MediaStore（Pictures/Futaburakari）へ保存する（重複チェック付き）。
      * 既に同名ファイルが存在する場合や保存に失敗した場合は false を返し、保存に成功した場合のみ true を返す。
      */
-    suspend fun saveImageIfNotExists(context: Context, imageUrl: String, networkClient: NetworkClient): Boolean {
+    suspend fun saveImageIfNotExists(
+        context: Context,
+        imageUrl: String,
+        networkClient: NetworkClient,
+        referer: String? = null
+    ): Boolean {
         return saveMediaIfNotExists(
             context = context,
             url = imageUrl,
@@ -58,7 +69,8 @@ object MediaSaver {
             mimeType = getMimeTypeOrDefault(imageUrl, "image/jpeg"),
             mediaContentUri = imagesContentUri(),
             relativeBaseDir = Environment.DIRECTORY_PICTURES,
-            networkClient = networkClient
+            networkClient = networkClient,
+            referer = referer
         )
     }
 
@@ -70,7 +82,8 @@ object MediaSaver {
             context = context,
             urls = imageUrls,
             mediaContentUri = imagesContentUri(),
-            relativeBaseDir = Environment.DIRECTORY_PICTURES
+            relativeBaseDir = Environment.DIRECTORY_PICTURES,
+            defaultMime = "image/jpeg"
         )
     }
 
@@ -96,7 +109,12 @@ object MediaSaver {
      * 指定した動画URLを MediaStore（Movies/Futaburakari）へ保存する。
      * URL が `content://`/`file://` の場合はローカルコピー、`http(s)://` はダウンロードして保存する。
      */
-    suspend fun saveVideo(context: Context, videoUrl: String, networkClient: NetworkClient) {
+    suspend fun saveVideo(
+        context: Context,
+        videoUrl: String,
+        networkClient: NetworkClient,
+        referer: String? = null
+    ) {
         saveMedia(
             context = context,
             url = videoUrl,
@@ -104,7 +122,8 @@ object MediaSaver {
             mimeType = getMimeTypeOrDefault(videoUrl, "video/mp4"),
             mediaContentUri = videosContentUri(),
             relativeBaseDir = Environment.DIRECTORY_MOVIES,
-            networkClient = networkClient
+            networkClient = networkClient,
+            referer = referer
         )
     }
 
@@ -130,7 +149,7 @@ object MediaSaver {
                 "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.DATA} LIKE ?"
             }
             val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                arrayOf(fileName, "$relativeBaseDir/Futaburakari/")
+                arrayOf(fileName, brandRelativePath(relativeBaseDir))
             } else {
                 arrayOf(fileName, "%/Futaburakari/%")
             }
@@ -152,17 +171,18 @@ object MediaSaver {
         mimeType: String?,
         mediaContentUri: android.net.Uri,
         relativeBaseDir: String,
-        networkClient: NetworkClient
+        networkClient: NetworkClient,
+        referer: String? = null
     ) {
         withContext(Dispatchers.IO) {
             try {
-                val fileName = url.substring(url.lastIndexOf('/') + 1)
+                val fileName = resolveDisplayName(url, mimeType)
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         // ImageEditActivity と同じブランドフォルダ配下に保存（RELATIVE_PATH）
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, brandRelativePath(relativeBaseDir))
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     } else {
                         // Pre-Q: DATA で保存先パスを直接指定。必要ならブランドフォルダを作成。
@@ -202,7 +222,7 @@ object MediaSaver {
                             }
                         } else {
                             // NetworkClientを使用（OkHttpキャッシュが効く）
-                            val ok = networkClient.downloadTo(url, outputStream)
+                            val ok = networkClient.downloadTo(url, outputStream, referer = referer)
                             if (!ok) {
                                 showToast(context, "ファイルのダウンロードに失敗しました。")
                                 return@withContext
@@ -254,10 +274,11 @@ object MediaSaver {
         mimeType: String?,
         mediaContentUri: android.net.Uri,
         relativeBaseDir: String,
-        networkClient: NetworkClient
+        networkClient: NetworkClient,
+        referer: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val fileName = url.substring(url.lastIndexOf('/') + 1)
+            val fileName = resolveDisplayName(url, mimeType)
 
             // 既存ファイルをチェック
             if (isFileExists(context, fileName, mediaContentUri, relativeBaseDir)) {
@@ -270,7 +291,7 @@ object MediaSaver {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                 mimeType?.let { put(MediaStore.MediaColumns.MIME_TYPE, it) }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, "$relativeBaseDir/Futaburakari")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, brandRelativePath(relativeBaseDir))
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 } else {
                     @Suppress("DEPRECATION")
@@ -309,7 +330,7 @@ object MediaSaver {
                         }
                     } else {
                         // NetworkClientを使用（OkHttpキャッシュが効く）
-                        val ok = networkClient.downloadTo(url, outputStream)
+                        val ok = networkClient.downloadTo(url, outputStream, referer = referer)
                         if (!ok) {
                             showToast(context, "ファイルのダウンロードに失敗しました。")
                             return@withContext false
@@ -355,7 +376,8 @@ object MediaSaver {
         context: Context,
         urls: List<String>,
         mediaContentUri: Uri,
-        relativeBaseDir: String
+        relativeBaseDir: String,
+        defaultMime: String
     ): Map<String, List<ExistingMedia>> = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val result = mutableMapOf<String, MutableList<ExistingMedia>>()
@@ -372,7 +394,8 @@ object MediaSaver {
         )
 
         urls.forEach { url ->
-            val fileName = url.substringAfterLast('/')
+            val mimeType = getMimeTypeOrDefault(url, defaultMime)
+            val fileName = resolveDisplayName(url, mimeType)
             val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) projectionQ else projectionLegacy
             try {
                 resolver.query(
@@ -386,8 +409,8 @@ object MediaSaver {
                         val pathMatches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             val relIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
                             val relPath = cursor.getString(relIndex)
-                            val expectedRelative = "$relativeBaseDir/Futaburakari"
-                            relPath?.contains("Futaburakari") == true || relPath?.contains(expectedRelative) == true
+                            relPath?.equals(brandRelativePath(relativeBaseDir), ignoreCase = true) == true ||
+                                relPath?.contains("Futaburakari", ignoreCase = true) == true
                         } else {
                             val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
                             val dataPath = cursor.getString(dataIndex)
@@ -417,9 +440,40 @@ object MediaSaver {
 
     // 拡張子からMIME Typeを推測し、取得できなければ既定値を返す
     private fun getMimeTypeOrDefault(url: String, defaultMime: String): String {
-        val extension = MimeTypeMap.getFileExtensionFromUrl(url)
+        val sanitized = url.substringBefore('?').substringBefore('#')
+        val extension = MimeTypeMap.getFileExtensionFromUrl(sanitized)
         val guessed = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
         return guessed ?: defaultMime
+    }
+
+    private fun resolveDisplayName(url: String, mimeType: String?): String {
+        val parsed = runCatching { Uri.parse(url) }.getOrNull()
+        val rawName = buildList {
+            parsed?.lastPathSegment?.takeIf { it.isNotBlank() }?.let { add(it) }
+            val pathCandidate = parsed?.path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            if (pathCandidate != null) add(pathCandidate)
+            add(url.substringAfterLast('/', ""))
+        }.firstOrNull { it.isNotBlank() }.orEmpty()
+
+        var name = Uri.decode(rawName)
+            .substringBefore('?')
+            .substringBefore('#')
+            .ifBlank { "download" }
+
+        name = name.replace(Regex("""[\\/:*?"<>|]"""), "_")
+
+        if (!name.contains('.') && !mimeType.isNullOrBlank()) {
+            val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+            if (!ext.isNullOrBlank()) {
+                name = "$name.$ext"
+            }
+        }
+
+        return name.ifBlank { "download_${System.currentTimeMillis()}" }
+    }
+
+    private fun brandRelativePath(relativeBaseDir: String): String {
+        return "$relativeBaseDir/Futaburakari/"
     }
 
     // 画像用の MediaStore コンテンツURI（Q以降はプライマリ外部ストレージのボリュームを指定）

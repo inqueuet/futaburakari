@@ -69,6 +69,7 @@ import com.valoser.futaburakari.NgRule
 import com.valoser.futaburakari.RuleType
 import com.valoser.futaburakari.ui.theme.LocalSpacing
 import com.valoser.futaburakari.CatalogPrefetchHint
+import com.valoser.futaburakari.ui.common.AppBarPosition
 
 /**
  * 画像カタログの一覧画面（メイン画面）。
@@ -118,6 +119,7 @@ fun MainCatalogScreen(
     isLoading: Boolean,
     spanCount: Int,
     catalogDisplayMode: String = "grid",
+    topBarPosition: AppBarPosition = AppBarPosition.TOP,
     query: String,
     onQueryChange: (String) -> Unit,
     onReload: () -> Unit,
@@ -303,71 +305,94 @@ fun MainCatalogScreen(
 
     // 再読み込み直後の能動的なフル化は行わない（経路を404修正に一本化）
 
+    val toolbarColors = TopAppBarDefaults.topAppBarColors(
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+        actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+        scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+    )
+
+    val toolbarWindowInsets = if (topBarPosition == AppBarPosition.TOP) {
+        TopAppBarDefaults.windowInsets
+    } else {
+        WindowInsets(0, 0, 0, 0)
+    }
+
+    val toolbar: @Composable () -> Unit = {
+        TopAppBar(
+            title = {
+                if (searching) {
+                    TextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = query,
+                        onValueChange = onQueryChange,
+                        singleLine = true,
+                        placeholder = { Text(text = "検索") },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        )
+                    )
+                } else {
+                    // サブタイトルのみを大きく表示（タイトルは非表示）
+                    val sub = subtitle.orEmpty()
+                    if (sub.isNotBlank()) {
+                        Text(
+                            text = sub,
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            actions = {
+                IconButton(onClick = { if (!isLoading) onReload() }) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
+                }
+                IconButton(onClick = onSelectBookmark) {
+                    Icon(Icons.Rounded.BookmarkBorder, contentDescription = "ブックマーク選択")
+                }
+                IconButton(onClick = onSelectSortMode) {
+                    Icon(Icons.Rounded.Sort, contentDescription = "カタログ並び順")
+                }
+                IconButton(onClick = onOpenHistory) {
+                    Icon(Icons.Rounded.History, contentDescription = "履歴")
+                }
+                IconButton(onClick = { searching = !searching }) {
+                    Icon(Icons.Rounded.Search, contentDescription = "検索")
+                }
+                MoreMenu(
+                    onManageBookmarks = onManageBookmarks,
+                    onImageEdit = onImageEdit,
+                    onVideoEdit = onVideoEdit,
+                    onBrowseLocalImages = onBrowseLocalImages,
+                    onSettings = onOpenSettings,
+                    promptFeaturesEnabled = promptFeaturesEnabled,
+                )
+            },
+            colors = toolbarColors,
+            windowInsets = toolbarWindowInsets
+        )
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    if (searching) {
-                        TextField(
-                            modifier = Modifier.fillMaxWidth(),
-                            value = query,
-                            onValueChange = onQueryChange,
-                            singleLine = true,
-                            placeholder = { Text(text = "検索") },
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            )
-                        )
-                    } else {
-                        // サブタイトルのみを大きく表示（タイトルは非表示）
-                        val sub = subtitle.orEmpty()
-                        if (sub.isNotBlank()) {
-                            Text(
-                                text = sub,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { if (!isLoading) onReload() }) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
-                    }
-                    IconButton(onClick = onSelectBookmark) {
-                        Icon(Icons.Rounded.BookmarkBorder, contentDescription = "ブックマーク選択")
-                    }
-                    IconButton(onClick = onSelectSortMode) {
-                        Icon(Icons.Rounded.Sort, contentDescription = "カタログ並び順")
-                    }
-                    IconButton(onClick = onOpenHistory) {
-                        Icon(Icons.Rounded.History, contentDescription = "履歴")
-                    }
-                    IconButton(onClick = { searching = !searching }) {
-                        Icon(Icons.Rounded.Search, contentDescription = "検索")
-                    }
-                    MoreMenu(
-                        onManageBookmarks = onManageBookmarks,
-                        onImageEdit = onImageEdit,
-                        onVideoEdit = onVideoEdit,
-                        onBrowseLocalImages = onBrowseLocalImages,
-                        onSettings = onOpenSettings,
-                        promptFeaturesEnabled = promptFeaturesEnabled,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
-                )
-            )
+            if (topBarPosition == AppBarPosition.TOP) {
+                toolbar()
+            }
+        },
+        bottomBar = {
+            if (topBarPosition == AppBarPosition.BOTTOM) {
+                Column {
+                    Divider()
+                    toolbar()
+                }
+            }
         }
     ) { padding ->
         PullToRefreshBox(

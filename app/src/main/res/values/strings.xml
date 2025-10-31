@@ -45,8 +45,8 @@
 
     <!-- AdMob テスト用 ID（OSS では Google 公式テスト ID を既定値とする） -->
     <!-- 公開利用時は buildConfig やリソース差し替えで本番 ID を設定すること -->
-    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
-    <string name="admob_banner_id">ca-app-pub-3940256099942544/6300978111</string>
+    <string name="admob_app_id">ca-app-pub-6403856201304924~8100902512</string>
+    <string name="admob_banner_id">ca-app-pub-6403856201304924/2864069462</string>
 
     <string name="history">履歴</string>
     <string name="history_title">閲覧履歴</string>
@@ -89,6 +89,16 @@
         <item>1.15</item>
         <item>1.30</item>
         <item>1.50</item>
+    </string-array>
+
+    <!-- 設定: トップバー位置 -->
+    <string-array name="pref_top_bar_position_entries">
+        <item>上部</item>
+        <item>下部</item>
+    </string-array>
+    <string-array name="pref_top_bar_position_values">
+        <item>top</item>
+        <item>bottom</item>
     </string-array>
 
     <!-- 設定: テーマモード -->

@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.max
 
 /**
  * メディアリポジトリ
@@ -28,8 +29,8 @@ class MediaRepository @Inject constructor(
      */
     suspend fun getMediaInfo(uri: Uri): Result<MediaInfo> {
         return withContext(Dispatchers.IO) {
+            val extractor = MediaExtractor()
             try {
-                val extractor = MediaExtractor()
                 extractor.setDataSource(context, uri, null)
 
                 var duration = 0L
@@ -45,9 +46,18 @@ class MediaRepository @Inject constructor(
 
                     when {
                         mime.startsWith("video/") -> {
-                            duration = format.getLong(MediaFormat.KEY_DURATION) / 1000 // マイクロ秒からミリ秒へ
-                            width = format.getInteger(MediaFormat.KEY_WIDTH)
-                            height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                            if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                                val trackDuration = format.getLong(MediaFormat.KEY_DURATION) / 1000 // マイクロ秒からミリ秒へ
+                                if (trackDuration > 0) {
+                                    duration = max(duration, trackDuration)
+                                }
+                            }
+                            if (format.containsKey(MediaFormat.KEY_WIDTH)) {
+                                width = format.getInteger(MediaFormat.KEY_WIDTH)
+                            }
+                            if (format.containsKey(MediaFormat.KEY_HEIGHT)) {
+                                height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                            }
                             if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                                 frameRate = format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat()
                             }
@@ -64,8 +74,6 @@ class MediaRepository @Inject constructor(
                     }
                 }
 
-                extractor.release()
-
                 Result.success(
                     MediaInfo(
                         duration = duration,
@@ -78,6 +86,13 @@ class MediaRepository @Inject constructor(
                 )
             } catch (e: Exception) {
                 Result.failure(e)
+            } finally {
+                // 確実にリソースを解放
+                try {
+                    extractor.release()
+                } catch (e: Exception) {
+                    // release時の例外は無視（既に解放されている可能性）
+                }
             }
         }
     }

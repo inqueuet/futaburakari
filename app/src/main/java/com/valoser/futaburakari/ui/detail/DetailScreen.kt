@@ -9,9 +9,9 @@ import com.valoser.futaburakari.TtsManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -50,6 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Divider
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -92,6 +94,7 @@ import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.detail.buildIdPostsItems
 import com.valoser.futaburakari.ui.detail.buildResReferencesItems
 import com.valoser.futaburakari.ui.theme.LocalSpacing
+import com.valoser.futaburakari.ui.common.AppBarPosition
 
 /**
  * スレ詳細の Compose スクリーン（Scaffold）。
@@ -142,6 +145,7 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 @Composable
 fun DetailScreenScaffold(
     title: String,
+    appBarPosition: AppBarPosition = AppBarPosition.TOP,
     onBack: () -> Unit,
     onReply: () -> Unit,
     onReload: () -> Unit,
@@ -257,20 +261,25 @@ fun DetailScreenScaffold(
             val selectedImages = remember { mutableStateListOf<String>() }
             var jumpToBottomRequest by remember { mutableIntStateOf(0) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    // タイトルクリックで「スレタイ（引用元）＋引用先」を表示
-                    Text(
-                        text = title,
-                        maxLines = 2,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.clickable { titleClickPending = true }
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
+    val toolbarWindowInsets = if (appBarPosition == AppBarPosition.TOP) {
+        TopAppBarDefaults.windowInsets
+    } else {
+        WindowInsets(0, 0, 0, 0)
+    }
+
+    val toolbar: @Composable () -> Unit = {
+        TopAppBar(
+            title = {
+                // タイトルクリックで「スレタイ（引用元）＋引用先」を表示
+                Text(
+                    text = title,
+                    maxLines = 2,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.clickable { titleClickPending = true }
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
             },
@@ -337,13 +346,29 @@ fun DetailScreenScaffold(
                     }
                 }
             },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                )
-            )
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+                navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+            windowInsets = toolbarWindowInsets
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            if (appBarPosition == AppBarPosition.TOP) {
+                toolbar()
+            }
+        },
+        bottomBar = {
+            if (appBarPosition == AppBarPosition.BOTTOM) {
+                Column {
+                    Divider()
+                    toolbar()
+                }
+            }
         }
     ) { contentPadding: PaddingValues ->
         Box(
@@ -439,8 +464,21 @@ fun DetailScreenScaffold(
                 val pullState = rememberPullToRefreshState()
                 var fastScrollActive by remember { mutableStateOf(false) }
                 var bottomPaddingVersion by remember { mutableIntStateOf(0) }
+                var lastContentIndex by remember { mutableIntStateOf(-1) }
                 LaunchedEffect(itemsVersion) {
                     imagesLoadedVersion = 0
+                }
+                LaunchedEffect(items) {
+                    lastContentIndex = withContext(Dispatchers.Default) {
+                        items.indexOfLast {
+                            when (it) {
+                                is com.valoser.futaburakari.DetailContent.Text,
+                                is com.valoser.futaburakari.DetailContent.Image,
+                                is com.valoser.futaburakari.DetailContent.Video -> true
+                                else -> false
+                            }
+                        }
+                    }
                 }
                 // 下部余白: 既存の Flow があればそれを優先。無ければ広告の実測高さから算出
                 val legacyPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value
@@ -460,22 +498,10 @@ fun DetailScreenScaffold(
                     val li = listState.layoutInfo
                     val lastVisible = li.visibleItemsInfo.lastOrNull()?.index ?: -1
                     if (lastVisible < 0) return@LaunchedEffect
-                    // 実質末尾（ThreadEndTime を除く）
-                    val lastContentIndex = run {
-                        var idx = -1
-                        for (i in items.indices.reversed()) {
-                            when (items[i]) {
-                                is com.valoser.futaburakari.DetailContent.Text,
-                                is com.valoser.futaburakari.DetailContent.Image,
-                                is com.valoser.futaburakari.DetailContent.Video -> { idx = i; break }
-                                else -> {}
-                            }
-                        }
-                        idx
-                    }
-                    if (lastContentIndex < 0) return@LaunchedEffect
+                    val lastContentIndexSnapshot = lastContentIndex
+                    if (lastContentIndexSnapshot < 0) return@LaunchedEffect
                     val threshold = 1
-                    if (items.size != lastTriggeredSize && lastVisible >= lastContentIndex - threshold) {
+                    if (items.size != lastTriggeredSize && lastVisible >= lastContentIndexSnapshot - threshold) {
                         lastTriggeredSize = items.size
                         onNearListEnd?.invoke()
                     }
@@ -784,12 +810,28 @@ fun DetailScreenScaffold(
                     title = { Text("IDをNGに追加") },
                     text = { Text("ID: $toAdd をNGにしますか？") },
                     confirmButton = {
-                        androidx.compose.material3.TextButton(onClick = {
+                            androidx.compose.material3.TextButton(onClick = {
                             val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
-                            ngStore.addRule(com.valoser.futaburakari.RuleType.ID, toAdd, com.valoser.futaburakari.MatchType.EXACT, sourceKey = source, ephemeral = true)
-                            onReapplyNgFilter?.invoke()
-                            android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
-                            pendingNgId = null
+                            scope.launch(Dispatchers.IO) {
+                                val result = runCatching {
+                                    ngStore.addRule(
+                                        com.valoser.futaburakari.RuleType.ID,
+                                        toAdd,
+                                        com.valoser.futaburakari.MatchType.EXACT,
+                                        sourceKey = source,
+                                        ephemeral = true
+                                    )
+                                }
+                                withContext(Dispatchers.Main) {
+                                    if (result.isSuccess) {
+                                        onReapplyNgFilter?.invoke()
+                                        android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        android.widget.Toast.makeText(ctx, "追加に失敗しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                    pendingNgId = null
+                                }
+                            }
                         }) { Text("追加") }
                     },
                     dismissButton = {
@@ -835,13 +877,31 @@ fun DetailScreenScaffold(
                     confirmButton = {
                         androidx.compose.material3.TextButton(onClick = {
                             val pat = text.trim()
-                            if (pat.isNotEmpty()) {
-                                val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
-                                ngStore.addRule(com.valoser.futaburakari.RuleType.BODY, pat, match, sourceKey = source, ephemeral = true)
-                                onReapplyNgFilter?.invoke()
-                                android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                            if (pat.isEmpty()) {
+                                pendingNgBody = null
+                                return@TextButton
                             }
-                            pendingNgBody = null
+                            val source = threadUrl?.let { com.valoser.futaburakari.UrlNormalizer.threadKey(it) }
+                            scope.launch(Dispatchers.IO) {
+                                val result = runCatching {
+                                    ngStore.addRule(
+                                        com.valoser.futaburakari.RuleType.BODY,
+                                        pat,
+                                        match,
+                                        sourceKey = source,
+                                        ephemeral = true
+                                    )
+                                }
+                                withContext(Dispatchers.Main) {
+                                    if (result.isSuccess) {
+                                        onReapplyNgFilter?.invoke()
+                                        android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        android.widget.Toast.makeText(ctx, "追加に失敗しました", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                    pendingNgBody = null
+                                }
+                            }
                         }) { Text("追加") }
                     },
                     dismissButton = {
@@ -1009,10 +1069,12 @@ fun DetailScreenScaffold(
                             }
                             out
                         }
+                        val gridColumns = if (lowBandwidthMode) 2 else 3
+                        val cellHeightDp = if (lowBandwidthMode) 160.dp else 110.dp
                     
                     // グリッドの可視範囲を監視し、オフスクリーンを先読み
                     // - 前方12件・後方6件を目安にサムネイルを事前デコード
-                    // - セルサイズに近い解像度（幅=画面幅/3, 高さ=110dp, Precision.INEXACT）でキャッシュを温める
+                    // - セルサイズに近い解像度（幅=画面幅/列数, 高さ=cellHeightDp, Precision.INEXACT）でキャッシュを温める
                     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
                     run {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -1023,8 +1085,8 @@ fun DetailScreenScaffold(
                         val screenWidthPx = remember(config.screenWidthDp, density) {
                             with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
                         }
-                        val cellWidthPx = remember(screenWidthPx) { (screenWidthPx / 3).coerceAtLeast(1) }
-                        val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+                        val cellWidthPx = remember(screenWidthPx, gridColumns) { (screenWidthPx / gridColumns).coerceAtLeast(1) }
+                        val cellHeightPx = with(density) { cellHeightDp.toPx().toInt().coerceAtLeast(1) }
                         val prefetchAhead = 12
                         val prefetchBack = 6
 
@@ -1112,7 +1174,7 @@ fun DetailScreenScaffold(
                         }
                     }
                     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
                         state = gridState,
                         contentPadding = PaddingValues(LocalSpacing.current.s)
                     ) {
@@ -1123,8 +1185,8 @@ fun DetailScreenScaffold(
                             val config = androidx.compose.ui.platform.LocalConfiguration.current
                             val density = androidx.compose.ui.platform.LocalDensity.current
                             val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx().toInt().coerceAtLeast(1) }
-                            val cellWidthPx = (screenWidthPx / 3).coerceAtLeast(1)
-                            val cellHeightPx = with(density) { 110.dp.toPx().toInt().coerceAtLeast(1) }
+                            val cellWidthPx = (screenWidthPx / gridColumns).coerceAtLeast(1)
+                            val cellHeightPx = with(density) { cellHeightDp.toPx().toInt().coerceAtLeast(1) }
 
                             val request = coil3.request.ImageRequest.Builder(ctx)
                                 .data(e.previewUrl)
@@ -1180,13 +1242,13 @@ fun DetailScreenScaffold(
                                     contentDescription = null,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(110.dp),
+                                        .height(cellHeightDp),
                                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                     loading = {
                                         androidx.compose.foundation.layout.Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(110.dp)
+                                                .height(cellHeightDp)
                                         ) {
                                             androidx.compose.material3.CircularProgressIndicator(
                                                 modifier = Modifier

@@ -1,5 +1,7 @@
 package com.valoser.futaburakari
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -40,12 +42,21 @@ object AppCookieJar : CookieJar {
         Log.d("AppCookieJar", "Saved cookies for $host: ${cookieStore[host]?.map { it.name + "=" + it.value }}")
 
         val webViewCookieManager = android.webkit.CookieManager.getInstance()
-        cookies.forEach { cookie ->
-            val cookieString = cookie.toString()
-            webViewCookieManager.setCookie(url.toString(), cookieString)
-            Log.d("AppCookieJar", "Set to WebView CookieManager: $cookieString for url $url")
-        }
-        webViewCookieManager.flush()
+        // タイムアウト付きでWebViewのCookieManager同期を試行
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                cookies.forEach { cookie ->
+                    val cookieString = cookie.toString()
+                    webViewCookieManager.setCookie(url.toString(), cookieString)
+                    Log.d("AppCookieJar", "Set to WebView CookieManager: $cookieString for url $url")
+                }
+                webViewCookieManager.flush()
+            } catch (e: Exception) {
+                // WebViewへのCookie設定失敗時のエラーログ
+                // WebViewが初期化されていない、またはメモリ不足などの可能性がある
+                Log.w("AppCookieJar", "Failed to sync cookies to WebView for $url: ${e.message}", e)
+            }
+        }, 0)
     }
 
     /**

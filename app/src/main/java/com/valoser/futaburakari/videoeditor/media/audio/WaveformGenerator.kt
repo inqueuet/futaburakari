@@ -63,7 +63,8 @@ class WaveformGenerator @Inject constructor(
                     // 入力バッファにデータをキュー
                     val inputBufferId = decoder.dequeueInputBuffer(10000)
                     if (inputBufferId >= 0) {
-                        val inputBuffer = decoder.getInputBuffer(inputBufferId)!!
+                        val inputBuffer = decoder.getInputBuffer(inputBufferId)
+                            ?: throw IllegalStateException("Failed to get decoder input buffer at index $inputBufferId")
                         val sampleSize = extractor.readSampleData(inputBuffer, 0)
 
                         if (sampleSize < 0) {
@@ -85,7 +86,8 @@ class WaveformGenerator @Inject constructor(
                     // 出力バッファからデコード済みデータを取得
                     val outputBufferId = decoder.dequeueOutputBuffer(bufferInfo, 10000)
                     if (outputBufferId >= 0) {
-                        val outputBuffer = decoder.getOutputBuffer(outputBufferId)!!
+                        val outputBuffer = decoder.getOutputBuffer(outputBufferId)
+                            ?: throw IllegalStateException("Failed to get decoder output buffer at index $outputBufferId")
 
                         // PCMデータを処理
                         for (i in 0 until bufferInfo.size / 2) {

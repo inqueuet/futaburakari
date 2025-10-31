@@ -1,6 +1,7 @@
 package com.valoser.futaburakari
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.*
@@ -21,9 +22,11 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
     private val pending = AtomicReference<((Result<Map<String, String>>) -> Unit)?>(null)
     private var allowedPattern: Regex? = null
     private var injectRunnable: Runnable? = null
+    private var pendingUserAgent: String? = null
     private fun isAllowedHost(host: String?): Boolean {
         val h = host ?: return false
-        return allowedPattern?.containsMatchIn(h) == true
+        val pattern = allowedPattern ?: return true
+        return pattern.containsMatchIn(h)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -41,7 +44,8 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
             settings.loadsImagesAutomatically = false
             settings.cacheMode = WebSettings.LOAD_DEFAULT
             // ★ 共通UAを適用
-            settings.userAgentString = Ua.STRING
+            val initialUa = pendingUserAgent ?: Ua.STRING
+            settings.userAgentString = initialUa
 
             // Hardening: block file/content access and mixed content
             settings.allowFileAccess = false
@@ -110,8 +114,11 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
     }
 
     override fun prepare(userAgent: String?) {
-        if (!userAgent.isNullOrBlank() && ::webView.isInitialized) {
-            webView.post { webView.settings.userAgentString = userAgent }
+        val ua = userAgent?.takeUnless { it.isBlank() }
+        pendingUserAgent = ua
+        if (::webView.isInitialized) {
+            val applied = ua ?: Ua.STRING
+            webView.post { webView.settings.userAgentString = applied }
         }
     }
 
@@ -124,17 +131,7 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
             injectRunnable?.let { webView.removeCallbacks(it) }
             injectRunnable = null
             // restrict navigation to http(s) hosts whose base domain（末尾2ラベル） matches the post page
-            runCatching {
-                val host = android.net.Uri.parse(postPageUrl).host
-                // base domain = 最後の2ラベル（例: may.2chan.net → 2chan.net）
-                val base = host?.split('.')?.takeLast(2)?.joinToString(".")
-                if (!base.isNullOrBlank()) {
-                    // 任意のサブドメイン（多段も可）+ base ドメインを許可
-                    allowedPattern = Regex("""^(?:[A-Za-z0-9-]+\.)*${Regex.escape(base)}$""", RegexOption.IGNORE_CASE)
-                } else {
-                    allowedPattern = null
-                }
-            }
+            allowedPattern = runCatching { buildAllowedPattern(postPageUrl) }.getOrNull()
             webView.loadUrl(postPageUrl)
         }
 
@@ -200,5 +197,30 @@ class ReplyTokenWorkerFragment : Fragment(), TokenProvider {
         webView.stopLoading()
         webView.destroy()
         super.onDestroyView()
+    }
+
+    private fun buildAllowedPattern(postPageUrl: String): Regex? {
+        val host = runCatching { Uri.parse(postPageUrl).host }.getOrNull()?.takeUnless { it.isNullOrBlank() }
+            ?: return null
+        // For IPv4/IPv6 literals just match exactly.
+        if (host.any { it == ':' } || host.all { it.isDigit() || it == '.' }) {
+            return Regex("^${Regex.escape(host)}$", RegexOption.IGNORE_CASE)
+        }
+        val base = effectiveBaseDomain(host)
+        val patternSource = """^(?:[A-Za-z0-9-]+\.)*${Regex.escape(base)}$"""
+        return Regex(patternSource, RegexOption.IGNORE_CASE)
+    }
+
+    private fun effectiveBaseDomain(host: String): String {
+        val parts = host.split('.').filter { it.isNotBlank() }
+        if (parts.size < 2) return host
+        val last = parts.last()
+        val secondLast = parts[parts.lastIndex - 1]
+        val commonSecondLevel = setOf(
+            "ac", "ad", "co", "com", "ed", "edu", "go", "gov", "gr", "ge", "lg", "mil", "ne", "net", "or", "org"
+        )
+        val useThreeSegments = last.length == 2 && secondLast.length <= 3 && secondLast in commonSecondLevel && parts.size >= 3
+        val segmentCount = if (useThreeSegments) 3 else 2
+        return parts.takeLast(segmentCount).joinToString(".")
     }
 }

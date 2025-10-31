@@ -24,6 +24,7 @@ class MediaViewActivity : BaseActivity() {
     private var currentType: String? = null
     private var currentUrl: String? = null
     private var currentText: String? = null // テキスト用（画像メタ/明示テキスト）
+    private var referer: String? = null
 
     // ネットワークアクセス（表示/保存時の取得等）に利用するクライアントを EntryPoint から取得
     private val networkClient: NetworkClient by lazy {
@@ -53,7 +54,7 @@ class MediaViewActivity : BaseActivity() {
         currentType = intent.getStringExtra(EXTRA_TYPE)
         currentUrl = intent.getStringExtra(EXTRA_URL)
         currentText = intent.getStringExtra(EXTRA_TEXT)
-        val referer = intent.getStringExtra(EXTRA_REFERER)
+        referer = intent.getStringExtra(EXTRA_REFERER)
 
         // テーマ適用済みのコンテンツを構築（表現的なカラースキーム）
 
@@ -105,7 +106,7 @@ class MediaViewActivity : BaseActivity() {
         // URL/URI が存在する場合のみ MediaSaver で保存
         currentUrl?.let { url ->
             lifecycleScope.launch {
-                MediaSaver.saveImage(this@MediaViewActivity, url, networkClient)
+                MediaSaver.saveImage(this@MediaViewActivity, url, networkClient, referer = referer)
             }
         }
     }
@@ -134,7 +135,7 @@ class MediaViewActivity : BaseActivity() {
         // URL/URI が存在する場合のみ MediaSaver で保存
         currentUrl?.let { url ->
             lifecycleScope.launch {
-                MediaSaver.saveVideo(this@MediaViewActivity, url, networkClient)
+                MediaSaver.saveVideo(this@MediaViewActivity, url, networkClient, referer = referer)
             }
         }
     }
