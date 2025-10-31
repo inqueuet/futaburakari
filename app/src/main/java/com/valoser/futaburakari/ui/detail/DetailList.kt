@@ -56,7 +56,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Divider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.unit.dp
@@ -82,11 +81,11 @@ import androidx.compose.ui.platform.LocalDensity
  
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -108,7 +107,6 @@ import coil3.request.transitionFactory
 import coil3.transition.CrossfadeTransition
 import com.valoser.futaburakari.image.ImageKeys
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.foundation.clickable
 import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
@@ -561,6 +559,7 @@ fun DetailListCompose(
                     }
                     // クリック可能領域（No./引用/ID/URL/ファイル名/そうだね/検索ハイライト）を付与
                     val annotated = remember(displayText, searchQuery, threadTitle, myPostNumbers) { buildAnnotatedFromText(displayText, searchQuery, threadTitle, myPostNumbers) }
+                    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -576,55 +575,74 @@ fun DetailListCompose(
                                 )
                             }
                     ) {
-                        ClickableText(
+                        androidx.compose.material3.Text(
                             text = annotated,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pointerInput(annotated, textLayoutResult) {
+                                    detectTapGestures { position ->
+                                        val layout = textLayoutResult ?: return@detectTapGestures
+                                        val offset = layout.getOffsetForPosition(position)
+                                        val tags = annotated.getStringAnnotations(start = offset, end = offset)
+                                        val res = tags.firstOrNull { it.tag == "res" }?.item
+                                        val filename = tags.firstOrNull { it.tag == "filename" }?.item
+                                        val quote = tags.firstOrNull { it.tag == "quote" }?.item
+                                        val id = tags.firstOrNull { it.tag == "id" }?.item
+                                        val url = tags.firstOrNull { it.tag == "url" }?.item
+                                        val sodane = tags.firstOrNull { it.tag == "sodane" }?.item
+                                        when {
+                                            // No. タップ: メニュー（返信 / 確認）
+                                            res != null -> {
+                                                resNumForDialog = res
+                                            }
+                                            // ファイル名タップ: メニュー（返信 / 確認）
+                                            filename != null -> {
+                                                fileNameForDialog = filename
+                                            }
+                                            // 引用(>)タップ: メニュー（返信 / 確認）
+                                            quote != null -> {
+                                                quoteForDialog = quote
+                                            }
+                                            id != null -> onIdClick?.invoke(id)
+                                            url != null -> try {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                            } catch (_: Exception) {
+                                            }
+                                            sodane != null -> {
+                                                // 推定対象 No. を同一行から取得（なければ投稿自身の No. をフォールバック）
+                                                val adjustedOffset = offset.coerceAtMost(displayText.length)
+                                                val lineStart = displayText.lastIndexOf('\n', startIndex = adjustedOffset, ignoreCase = false)
+                                                    .let { if (it < 0) 0 else it + 1 }
+                                                val lineEnd = displayText.indexOf('\n', startIndex = lineStart)
+                                                    .let { if (it < 0) displayText.length else it }
+                                                val lineText = displayText.substring(lineStart, lineEnd)
+                                                val m = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(lineText)
+                                                val rn = m?.groupValues?.getOrNull(2)
+                                                val target = rn ?: selfResNum
+                                                if (!target.isNullOrBlank()) {
+                                                    // 既に押していれば無視
+                                                    val disabled = getSodaneState?.invoke(target) ?: false
+                                                    if (!disabled) {
+                                                        // 楽観的に +1 表示（親に委譲）
+                                                        val next = (sodaneCounts[target] ?: 0) + 1
+                                                        onSetSodaneCount?.invoke(target, next)
+                                                        // コールバック（サーバ送信）
+                                                        onSodaneClick?.invoke(target)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // 本文（どのタグにも該当しない領域）タップ: メニュー（返信 / 確認 / NG）
+                                        if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
+                                            bodyForDialog = item
+                                        }
+                                    }
+                                },
                             // 明示的にテーマの文字色を適用して、ダークモードでの黒固定を回避
                             style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
                             ),
-                            onClick = { offset ->
-                            val tags = annotated.getStringAnnotations(start = offset, end = offset)
-                            val res = tags.firstOrNull { it.tag == "res" }?.item
-                            val filename = tags.firstOrNull { it.tag == "filename" }?.item
-                            val quote = tags.firstOrNull { it.tag == "quote" }?.item
-                            val id = tags.firstOrNull { it.tag == "id" }?.item
-                            val url = tags.firstOrNull { it.tag == "url" }?.item
-                            val sodane = tags.firstOrNull { it.tag == "sodane" }?.item
-                            when {
-                                // No. タップ: メニュー（返信 / 確認）
-                                res != null -> { resNumForDialog = res }
-                                // ファイル名タップ: メニュー（返信 / 確認）
-                                filename != null -> { fileNameForDialog = filename }
-                                // 引用(>)タップ: メニュー（返信 / 確認）
-                                quote != null -> { quoteForDialog = quote }
-                                id != null -> onIdClick?.invoke(id)
-                                url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
-                                sodane != null -> {
-                                    // 推定対象 No. を同一行から取得（なければ投稿自身の No. をフォールバック）
-                                    val lineStart = displayText.lastIndexOf('\n', startIndex = offset.coerceAtMost(displayText.length), ignoreCase = false).let { if (it < 0) 0 else it + 1 }
-                                    val lineEnd = displayText.indexOf('\n', startIndex = lineStart).let { if (it < 0) displayText.length else it }
-                                    val lineText = displayText.substring(lineStart, lineEnd)
-                                    val m = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(lineText)
-                                    val rn = m?.groupValues?.getOrNull(2)
-                                    val target = rn ?: selfResNum
-                                    if (!target.isNullOrBlank()) {
-                                        // 既に押していれば無視
-                                        val disabled = getSodaneState?.invoke(target) ?: false
-                                        if (!disabled) {
-                                            // 楽観的に +1 表示（親に委譲）
-                                            val next = (sodaneCounts[target] ?: 0) + 1
-                                            onSetSodaneCount?.invoke(target, next)
-                                            // コールバック（サーバ送信）
-                                            onSodaneClick?.invoke(target)
-                                        }
-                                    }
-                                }
-                            }
-                            // 本文（どのタグにも該当しない領域）タップ: メニュー（返信 / 確認 / NG）
-                            if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
-                                bodyForDialog = item
-                            }
-                            }
+                            onTextLayout = { textLayoutResult = it }
                         )
                     }
                 }
@@ -843,7 +861,7 @@ fun DetailListCompose(
             if (isEndOfBlock(filteredItems, index)) {
                 // 視認性のための余白を上下に付与し、コンテンツと線が密着しないようにする
                 // ダークモードでも見やすいよう太くalpha値を高めに設定
-                androidx.compose.material3.Divider(
+                androidx.compose.material3.HorizontalDivider(
                     modifier = Modifier.padding(vertical = LocalSpacing.current.s),
                     thickness = 2.dp,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.outline

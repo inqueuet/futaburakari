@@ -46,7 +46,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,6 +76,11 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 import coil3.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
+import com.valoser.futaburakari.PrivacyScreenColor
+import com.valoser.futaburakari.PrivacyScreenPattern
+import com.valoser.futaburakari.PrivacyScreenSettings
+import com.valoser.futaburakari.PrivacyScreenStyle
+import com.valoser.futaburakari.PrivacyScreenIntensity
 import com.valoser.futaburakari.PromptSettings
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.RuleType
@@ -123,6 +128,11 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
     // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
+    var privacyScreenEnabled by remember { mutableStateOf(PrivacyScreenSettings.isPrivacyScreenEnabled(ctx)) }
+    val initialPrivacyStyle = remember { PrivacyScreenSettings.getPrivacyScreenStyle(ctx) }
+    var privacyScreenColor by remember { mutableStateOf(initialPrivacyStyle.color.storageValue) }
+    var privacyScreenPattern by remember { mutableStateOf(initialPrivacyStyle.pattern.storageValue) }
+    var privacyScreenIntensity by remember { mutableStateOf(initialPrivacyStyle.intensity.storageValue) }
     // 旧「カラーモード」設定は廃止
 
     // 自動クリーンアップ設定の初期化（レガシー値からの移行処理を含む）
@@ -171,6 +181,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     // removed: color mode entries/values
     val cleanupEntries = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_entries).toList() }
     val cleanupValues = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_values).toList() }
+    val privacyScreenColorEntries = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_color_entries).toList() }
+    val privacyScreenColorValues = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_color_values).toList() }
+    val privacyScreenPatternEntries = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_pattern_entries).toList() }
+    val privacyScreenPatternValues = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_pattern_values).toList() }
+    val privacyScreenIntensityEntries = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_intensity_entries).toList() }
+    val privacyScreenIntensityValues = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_intensity_values).toList() }
 
     Scaffold(
         topBar = {
@@ -263,6 +279,65 @@ fun SettingsScreen(onBack: () -> Unit) {
                     expressiveDynamicColor = on
                     prefs.edit().putBoolean("pref_key_expressive_use_dynamic_color", on).apply()
                     (ctx as? Activity)?.recreate()
+                }
+            }
+            item {
+                // 覗き見防止の有効/無効を切り替える
+                SwitchRow(
+                    title = "覗き見防止",
+                    checked = privacyScreenEnabled,
+                    summary = "画面上にフィルタを被せて周囲から見えにくくします（色・模様・濃さを選べます）"
+                ) { enabled ->
+                    privacyScreenEnabled = enabled
+                    prefs.edit().putBoolean(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN, enabled).apply()
+                }
+            }
+            item {
+                DropdownPreferenceRow(
+                    title = "覗き見フィルタの色",
+                    entries = privacyScreenColorEntries,
+                    values = privacyScreenColorValues,
+                    value = privacyScreenColor,
+                    summary = when (PrivacyScreenColor.fromPreferenceValue(privacyScreenColor)) {
+                        PrivacyScreenColor.Dark -> "黒ベースで明るさを抑えます"
+                        PrivacyScreenColor.Light -> "白ベースで眩しさを和らげます"
+                    }
+                ) { value ->
+                    privacyScreenColor = value
+                    prefs.edit().putString(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_COLOR, value).apply()
+                }
+            }
+            item {
+                val patternSummary = when (PrivacyScreenPattern.fromPreferenceValue(privacyScreenPattern)) {
+                    PrivacyScreenPattern.Plain -> "無地でシンプルに覆います"
+                    PrivacyScreenPattern.Pattern -> "格子模様で視線を分散させます"
+                }
+                DropdownPreferenceRow(
+                    title = "覗き見フィルタの模様",
+                    entries = privacyScreenPatternEntries,
+                    values = privacyScreenPatternValues,
+                    value = privacyScreenPattern,
+                    summary = patternSummary
+                ) { value ->
+                    privacyScreenPattern = value
+                    prefs.edit().putString(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_PATTERN, value).apply()
+                }
+            }
+            item {
+                val intensitySummary = when (PrivacyScreenIntensity.fromPreferenceValue(privacyScreenIntensity)) {
+                    PrivacyScreenIntensity.Light -> "薄め（周囲の視認性を保ちつつ軽くぼかします）"
+                    PrivacyScreenIntensity.Medium -> "標準（従来の濃さと同程度です）"
+                    PrivacyScreenIntensity.Strong -> "濃いめ（極力暗く/明るくして視線を遮ります）"
+                }
+                DropdownPreferenceRow(
+                    title = "覗き見フィルタの濃さ",
+                    entries = privacyScreenIntensityEntries,
+                    values = privacyScreenIntensityValues,
+                    value = privacyScreenIntensity,
+                    summary = intensitySummary
+                ) { value ->
+                    privacyScreenIntensity = value
+                    prefs.edit().putString(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_INTENSITY, value).apply()
                 }
             }
             item {
@@ -418,14 +493,14 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             // フル画像アップグレード同時数の個別設定は廃止（同時接続数に統合）
 
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "投稿設定") }
             item {
                 // 投稿時に使う削除キー（パスワード）を保存
                 ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
             }
 
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "キャッシュ管理") }
 
             // メモリ使用量情報の表示
@@ -563,7 +638,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "広告表示") }
             item {
                 // Detail画面にバナー広告を固定表示するか
@@ -576,7 +651,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             // removed: background monitoring toggle (always enabled)
 
             // その他セクション（必要な1本だけ区切り線を表示）
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "その他") }
             item {
                 // リソースで指定したプライバシーポリシー URL を外部ブラウザで表示

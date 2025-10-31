@@ -49,6 +49,7 @@ import com.valoser.futaburakari.ui.theme.FutaburakariTheme
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.EntryPointAccessors
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -562,10 +563,11 @@ class MainActivity : BaseActivity() {
         catsetAppliedTimestamps.clear()
         if (!json.isNullOrBlank()) {
             runCatching {
-                val map: Map<String, Double> = Gson().fromJson(json, Map::class.java) as Map<String, Double>
+                val type = object : TypeToken<Map<String, Long>>() {}.type
+                val map: Map<String, Long> = Gson().fromJson(json, type)
                 val now = System.currentTimeMillis()
                 map.forEach { (k, v) ->
-                    val ts = v.toLong()
+                    val ts = v
                     if (now - ts < CATSET_TTL_MS) {
                         catsetAppliedBoards.add(k)
                         catsetAppliedTimestamps[k] = ts

@@ -6,8 +6,11 @@ package com.valoser.futaburakari
  */
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -32,6 +35,22 @@ open class BaseActivity : AppCompatActivity() {
     private var lastAppliedScale: Float? = null
     /** 復帰時の変更検知に使用する、最後に適用したテーマモード。 */
     private var lastAppliedThemeMode: String? = null
+    /** 設定の監視に利用する共有プリファレンス。 */
+    private val sharedPrefs: SharedPreferences by lazy {
+        PreferenceManager.getDefaultSharedPreferences(this)
+    }
+    /** 覗き見防止設定の変化を検知してウィンドウへ即時反映する。 */
+    private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN ||
+            key == PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_STYLE ||
+            key == PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_COLOR ||
+            key == PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_PATTERN
+        ) {
+            updatePrivacyScreen()
+        }
+    }
+    /** 覗き見防止時に被せる半透明オーバーレイ。 */
+    private var privacyOverlay: View? = null
     // メモ: カラーモードの個別追跡は不要（現状はテーマに準拠）
     /**
      * 共有設定のフォント倍率を反映した `Configuration` でベースコンテキストをラップする。
@@ -59,7 +78,18 @@ open class BaseActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // Enable edge-to-edge with backward-compatible behavior
         enableEdgeToEdge()
+        updatePrivacyScreen()
         updateSystemBarsAppearance()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        sharedPrefs.registerOnSharedPreferenceChangeListener(preferenceListener)
+    }
+
+    override fun onStop() {
+        sharedPrefs.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        super.onStop()
     }
 
     /**
@@ -96,6 +126,7 @@ open class BaseActivity : AppCompatActivity() {
         if (current != targetScale || themeChanged) {
             recreate()
         }
+        updatePrivacyScreen()
         updateSystemBarsAppearance()
     }
 
@@ -123,5 +154,61 @@ open class BaseActivity : AppCompatActivity() {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.isAppearanceLightStatusBars = !isNight
         controller.isAppearanceLightNavigationBars = !isNight
+    }
+
+    /** 覗き見防止設定をウィンドウへ適用する。 */
+    private fun updatePrivacyScreen() {
+        val enabled = PrivacyScreenSettings.isPrivacyScreenEnabled(this)
+        if (!enabled) {
+            removePrivacyOverlay()
+            return
+        }
+
+        val style = PrivacyScreenSettings.getPrivacyScreenStyle(this)
+        val overlay = privacyOverlay ?: attachPrivacyOverlay()
+        overlay?.let {
+            applyPrivacyOverlayStyle(it, style)
+            it.bringToFront()
+        }
+    }
+
+    /** 覗き見防止用のオーバーレイを最前面に追加する。 */
+    private fun attachPrivacyOverlay(): View? {
+        val decorView = window.decorView as? ViewGroup ?: return null
+        decorView.findViewWithTag<View>(PRIVACY_OVERLAY_TAG)?.let { existing ->
+            privacyOverlay = existing
+            existing.bringToFront()
+            return existing
+        }
+        val overlay = View(this).apply {
+            tag = PRIVACY_OVERLAY_TAG
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        decorView.addView(
+            overlay,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        overlay.bringToFront()
+        privacyOverlay = overlay
+        return overlay
+    }
+
+    /** オーバーレイのスタイルを選択した設定に合わせて適用する。 */
+    private fun applyPrivacyOverlayStyle(overlay: View, style: PrivacyScreenStyle) {
+        overlay.background = PrivacyOverlayDrawable(style, resources.displayMetrics.density)
+    }
+
+    /** 覗き見防止用のオーバーレイを取り除く。 */
+    private fun removePrivacyOverlay() {
+        privacyOverlay?.let { overlay ->
+            (overlay.parent as? ViewGroup)?.removeView(overlay)
+        }
+        privacyOverlay = null
+    }
+
+    companion object {
+        private const val PRIVACY_OVERLAY_TAG = "privacy_screen_overlay"
     }
 }

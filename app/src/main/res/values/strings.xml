@@ -113,6 +113,36 @@
         <item>dark</item>
     </string-array>
 
+    <!-- 設定: 覗き見防止フィルタの色 -->
+    <string-array name="pref_privacy_screen_color_entries">
+        <item>黒（暗色）</item>
+        <item>白（明色）</item>
+    </string-array>
+    <string-array name="pref_privacy_screen_color_values">
+        <item>dark</item>
+        <item>light</item>
+    </string-array>
+
+    <!-- 設定: 覗き見防止フィルタの模様 -->
+    <string-array name="pref_privacy_screen_pattern_entries">
+        <item>無地</item>
+        <item>格子模様</item>
+    </string-array>
+    <string-array name="pref_privacy_screen_pattern_values">
+        <item>plain</item>
+        <item>pattern</item>
+    </string-array>
+    <string-array name="pref_privacy_screen_intensity_entries">
+        <item>薄め</item>
+        <item>標準</item>
+        <item>濃いめ</item>
+    </string-array>
+    <string-array name="pref_privacy_screen_intensity_values">
+        <item>light</item>
+        <item>medium</item>
+        <item>strong</item>
+    </string-array>
+
     <!-- 備考: 旧カラー系モード配列（green/purple/blue/orange）は整理済み -->
 
     <!-- 設定: 自動クリーンアップ上限（利用可能容量に対する割合） -->
