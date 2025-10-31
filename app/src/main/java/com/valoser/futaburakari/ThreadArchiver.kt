@@ -474,8 +474,35 @@ class ThreadArchiver(
         }
         .post-content {
             color: #333;
-            word-wrap: break-word;
+            /* テキストは <p>/<br> に整形してから流し込むため normal */
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
         }
+        .post-content p {
+            margin: 0 0 0.8em 0;
+        }
+        .post-content blockquote {
+            margin: 0.6em 0;
+            padding: 0.6em 0.8em;
+            border-left: 4px solid #d0d7de;
+            background: #fafbfc;
+            color: #333;
+        }
+        .post-content details.long-quote {
+            margin: 0.6em 0;
+            background: #fafbfc;
+            border-left: 4px solid #d0d7de;
+            padding: 0.2em 0.8em 0.6em 0.8em;
+        }
+        .post-content details.long-quote > summary {
+            cursor: pointer;
+            list-style: none;
+            font-weight: 600;
+            padding: 0.4em 0;
+        }
+        .post-content details.long-quote > summary::-webkit-details-marker { display: none; }
+        .post-content details.long-quote[open] > summary { opacity: 0.8; }
         .media-container {
             margin: 10px 0;
         }
@@ -548,7 +575,9 @@ class ThreadArchiver(
 """)
                     }
                     val processedHtmlContent = replaceLinksWithLocalPaths(content.htmlContent, downloadedFiles, archiveDir)
-                    sb.append("""            <div class="post-content">$processedHtmlContent</div>
+                    // 改行・<br> の段落化、および長大 blockquote の折りたたみ整形を適用
+                    val normalizedHtml = formatParagraphsAndQuotes(processedHtmlContent)
+                    sb.append("""            <div class="post-content">$normalizedHtml</div>
 """)
                 }
                 is DetailContent.Image -> {
@@ -661,6 +690,85 @@ class ThreadArchiver(
 """.trimIndent())
 
         return sb.toString()
+    }
+
+    /**
+     * 本文HTMLの整形:
+     *  - テキストノードのみ段落分割（空行 / 連続 <br> を段落境界に）
+     *  - 各段落内の単独改行のみ <br> 化（段落間に <br> は挿入しない）
+     *  - 既存のブロック要素はそのまま保持（<p> 内に入れない）
+     *  - 長大な <blockquote> は <details class="long-quote"> で折りたたみ
+     */
+    private fun formatParagraphsAndQuotes(rawHtml: String): String {
+        if (rawHtml.isBlank()) return rawHtml
+
+        // ブロック要素として扱うタグ
+        val blockPattern = Regex(
+            pattern = "(?is)" +
+                    "(" +
+                    // 開閉タグを持つブロック
+                    "<(?:blockquote|details|figure|div|ul|ol|li|pre|table|thead|tbody|tr|td|th|h[1-6]|p)\\b[^>]*>.*?</\\s*(?:blockquote|details|figure|div|ul|ol|li|pre|table|thead|tbody|tr|td|th|h[1-6]|p)\\s*>" +
+                    "|" +
+                    // 単独タグ（hr等）
+                    "<(?:hr)\\b[^>]*/?>" +
+                    ")"
+        )
+
+        // テキストとブロック要素に分割
+        val parts = mutableListOf<Pair<Boolean, String>>() // (isBlock, content)
+        var idx = 0
+        blockPattern.findAll(rawHtml).forEach { m ->
+            if (m.range.first > idx) {
+                parts += false to rawHtml.substring(idx, m.range.first) // テキスト
+            }
+            parts += true to m.value // ブロック
+            idx = m.range.last + 1
+        }
+        if (idx < rawHtml.length) {
+            parts += false to rawHtml.substring(idx)
+        }
+
+        fun isLongQuote(html: String): Boolean {
+            val text = html.replace(Regex("(?is)<.*?>"), "")
+            val brCount = Regex("(?i)<br\\s*/?>").findAll(html).count()
+            return text.length >= 400 || brCount >= 6
+        }
+        fun wrapLongQuoteIfNeeded(html: String): String {
+            return if (Regex("(?is)^\\s*<blockquote\\b").containsMatchIn(html) && isLongQuote(html)) {
+                """<details class="long-quote"><summary>長文の引用を開く</summary>$html</details>"""
+            } else html
+        }
+
+        // テキスト → 段落整形
+        fun textToParagraphs(t: String): String {
+            if (t.isBlank()) return ""
+            var s = t.replace("\r\n", "\n")
+
+            // 連続 <br> を段落デリミタへ正規化（後で split する）
+            s = s.replace(Regex("(?i)(?:\\s*<br\\s*/?>\\s*){2,}"), "\n\n")
+
+            // 空行（\n\n+）で段落分割
+            val chunks = s.trim().split(Regex("\\n{2,}"))
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+
+            // 各段落内の単独改行のみ <br> に置換して <p> で包む
+            return chunks.joinToString(separator = "") { para ->
+                val inner = para.replace(Regex("\\n"), "<br>")
+                "<p>$inner</p>"
+            }
+        }
+
+        // 再構築
+        val out = StringBuilder()
+        for ((isBlock, content) in parts) {
+            if (isBlock) {
+                out.append(wrapLongQuoteIfNeeded(content))
+            } else {
+                out.append(textToParagraphs(content))
+            }
+        }
+        return out.toString()
     }
 
     /**
