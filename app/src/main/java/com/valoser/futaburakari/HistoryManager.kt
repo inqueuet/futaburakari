@@ -42,24 +42,21 @@ object HistoryManager {
         }
     }
 
-    // 履歴リストを JSON で保存し、変更通知を送出する。
-    // Mutexで同期化してsynchronized(this)との混在を解消
-    private suspend fun save(context: Context, list: List<HistoryEntry>) {
-        historyMutex.withLock {
-            try {
-                withContext(Dispatchers.IO) {
-                    prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
-                }
-                // 変更通知（自アプリ内限定ブロードキャスト）
-                val intent = Intent(ACTION_HISTORY_CHANGED).apply {
-                    setPackage(context.packageName)
-                    addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY)
-                }
-                context.sendBroadcast(intent)
-            } catch (e: Exception) {
-                // 保存失敗時のログ出力（サイレント失敗を防ぐ）
-                android.util.Log.e("HistoryManager", "Failed to save history", e)
+    // すでにロック済みの状態で呼び出す内部用保存処理。
+    private suspend fun saveLocked(context: Context, list: List<HistoryEntry>) {
+        try {
+            withContext(Dispatchers.IO) {
+                prefs(context).edit().putString(KEY_HISTORY, Gson().toJson(list)).apply()
             }
+            // 変更通知（自アプリ内限定ブロードキャスト）
+            val intent = Intent(ACTION_HISTORY_CHANGED).apply {
+                setPackage(context.packageName)
+                addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY)
+            }
+            context.sendBroadcast(intent)
+        } catch (e: Exception) {
+            // 保存失敗時のログ出力（サイレント失敗を防ぐ）
+            android.util.Log.e("HistoryManager", "Failed to save history", e)
         }
     }
 
@@ -71,48 +68,50 @@ object HistoryManager {
      * - 並び順は getAll() 側のルールに委譲
      */
     suspend fun addOrUpdate(context: Context, url: String, title: String, thumbnailUrl: String? = null) {
-        val key = UrlNormalizer.threadKey(url)
-        val legacyKey = UrlNormalizer.legacyThreadKey(url)
-        val list = load(context)
-        val now = System.currentTimeMillis()
-        var idx = list.indexOfFirst { it.key == key }
-        if (idx < 0 && legacyKey != key) {
-            // 旧キーでの既存項目をマイグレーション（キー差し替え）
-            idx = list.indexOfFirst { it.key == legacyKey }
+        historyMutex.withLock {
+            val key = UrlNormalizer.threadKey(url)
+            val legacyKey = UrlNormalizer.legacyThreadKey(url)
+            val list = load(context)
+            val now = System.currentTimeMillis()
+            var idx = list.indexOfFirst { it.key == key }
+            if (idx < 0 && legacyKey != key) {
+                // 旧キーでの既存項目をマイグレーション（キー差し替え）
+                idx = list.indexOfFirst { it.key == legacyKey }
+                if (idx >= 0) {
+                    val e = list[idx]
+                    list[idx] = e.copy(
+                        key = key,
+                        url = url,
+                        title = title,
+                        lastViewedAt = now,
+                        thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl,
+                        threadUrl = e.threadUrl ?: url
+                    )
+                }
+            }
             if (idx >= 0) {
                 val e = list[idx]
                 list[idx] = e.copy(
-                    key = key,
-                    url = url,
                     title = title,
                     lastViewedAt = now,
                     thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl,
                     threadUrl = e.threadUrl ?: url
                 )
-            }
-        }
-        if (idx >= 0) {
-            val e = list[idx]
-            list[idx] = e.copy(
-                title = title,
-                lastViewedAt = now,
-                thumbnailUrl = thumbnailUrl ?: e.thumbnailUrl,
-                threadUrl = e.threadUrl ?: url
-            )
-        } else {
-            list.add(
-                HistoryEntry(
-                    key = key,
-                    url = url,
-                    title = title,
-                    lastViewedAt = now,
-                    thumbnailUrl = thumbnailUrl,
-                    threadUrl = url
+            } else {
+                list.add(
+                    HistoryEntry(
+                        key = key,
+                        url = url,
+                        title = title,
+                        lastViewedAt = now,
+                        thumbnailUrl = thumbnailUrl,
+                        threadUrl = url
+                    )
                 )
-            )
+            }
+            // 並び順は getAll() 側のルールに委ねる
+            saveLocked(context, list)
         }
-        // 並び順は getAll() 側のルールに委ねる
-        save(context, list)
     }
 
     /**
@@ -133,14 +132,18 @@ object HistoryManager {
 
     /** 指定キーの履歴を削除し、変更を保存。 */
     suspend fun delete(context: Context, key: String) {
-        val list = load(context)
-        val newList = list.filterNot { it.key == key }
-        save(context, newList)
+        historyMutex.withLock {
+            val list = load(context)
+            val newList = list.filterNot { it.key == key }
+            saveLocked(context, newList)
+        }
     }
 
     /** 全履歴をクリア。 */
     suspend fun clear(context: Context) {
-        save(context, emptyList())
+        historyMutex.withLock {
+            saveLocked(context, emptyList())
+        }
     }
 
     /**
@@ -168,7 +171,7 @@ object HistoryManager {
                     val e = list[idx]
                     if (e.thumbnailUrl != thumbnailUrl) {
                         list[idx] = e.copy(thumbnailUrl = thumbnailUrl)
-                        save(context, list)
+                        saveLocked(context, list)
                     }
                 }
             }
@@ -186,7 +189,7 @@ object HistoryManager {
                     val e = list[idx]
                     if (e.thumbnailUrl != null) {
                         list[idx] = e.copy(thumbnailUrl = null)
-                        save(context, list)
+                        saveLocked(context, list)
                     }
                 }
             }
@@ -212,11 +215,11 @@ object HistoryManager {
                             lastKnownReplyNo = latestReplyNo,
                             unreadCount = unread
                         )
-                        save(context, list)
+                        saveLocked(context, list)
                     } else if (latestReplyNo > 0 && latestReplyNo != e.lastKnownReplyNo) {
                         // 変化はないが最新番号を追従（未読は据え置き）
                         list[idx] = e.copy(lastKnownReplyNo = latestReplyNo)
-                        save(context, list)
+                        saveLocked(context, list)
                     }
                 }
             }
@@ -239,7 +242,7 @@ object HistoryManager {
                     lastViewedReplyNo = lastViewedReplyNo,
                     unreadCount = unread
                 )
-                save(context, list)
+                saveLocked(context, list)
             }
         }
     }
@@ -257,7 +260,7 @@ object HistoryManager {
                 // ユーザー操作を優先し、アーカイブ状態でもエントリを保持するよう変更。
                 if (!entry.isArchived) {
                     list[idx] = entry.copy(isArchived = true, archivedAt = System.currentTimeMillis())
-                    save(context, list)
+                    saveLocked(context, list)
                 }
             }
         }
