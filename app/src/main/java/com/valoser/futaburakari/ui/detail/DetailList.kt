@@ -42,6 +42,7 @@ package com.valoser.futaburakari.ui.detail
  *     内容が少ないときは内容高さ、内容が多いときは上限までに抑える。
  */
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -659,13 +660,11 @@ fun DetailListCompose(
                             onTextLayout = { textLayoutResult = it }
                         )
                     }
-                    // レス間の視覚的区切り（コントラスト向上）
-                    androidx.compose.material3.HorizontalDivider(
+                    // 薄い仕切り線の代わりに最小限の余白のみ追加
+                    Spacer(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = LocalSpacing.current.xs),
-                        thickness = 1.dp,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                            .height(LocalSpacing.current.xs)
                     )
                 }
 
