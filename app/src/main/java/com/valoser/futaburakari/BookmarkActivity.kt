@@ -44,29 +44,23 @@ class BookmarkActivity : BaseActivity() {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
                 val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
+                val selectedBookmarkUrl by viewModel.selectedBookmarkUrl.collectAsStateWithLifecycle()
 
                 Box {
                     BookmarkScreen(
                         title = getString(R.string.bookmark_management_title),
                         bookmarks = bookmarks,
+                        selectedBookmarkUrl = selectedBookmarkUrl,
                         onBack = { onBackPressedDispatcher.onBackPressed() },
                         onAddBookmark = { name, url ->
-                            // 入力が空でないかを検証し、永続化を ViewModel に依頼してから成功メッセージを表示
-                            if (name.isBlank() || url.isBlank()) {
-                                scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
-                            } else {
-                                viewModel.addBookmark(Bookmark(name, url))
-                                scope.launch { snackbarHostState.showSnackbar("ブックマークを追加しました") }
-                            }
+                            // 永続化を ViewModel に依頼してから成功メッセージを表示（入力検証はダイアログ側で実施済み）
+                            viewModel.addBookmark(Bookmark(name, url))
+                            scope.launch { snackbarHostState.showSnackbar("ブックマークを追加しました") }
                         },
                         onUpdateBookmark = { oldUrl, name, url ->
-                            // 入力を再検証し、更新と選択状態の調整を ViewModel へ委譲した後で成功メッセージを表示
-                            if (name.isBlank() || url.isBlank()) {
-                                scope.launch { snackbarHostState.showSnackbar("名前とURLを入力してください") }
-                            } else {
-                                viewModel.updateBookmark(oldUrl, Bookmark(name, url))
-                                scope.launch { snackbarHostState.showSnackbar("ブックマークを更新しました") }
-                            }
+                            // 更新と選択状態の調整を ViewModel へ委譲した後で成功メッセージを表示（入力検証はダイアログ側で実施済み）
+                            viewModel.updateBookmark(oldUrl, Bookmark(name, url))
+                            scope.launch { snackbarHostState.showSnackbar("ブックマークを更新しました") }
                         },
                         onDeleteBookmark = { bookmark ->
                             // ViewModel に削除と必要な選択解除を任せ、結果をメッセージで通知
@@ -74,10 +68,9 @@ class BookmarkActivity : BaseActivity() {
                             scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を削除しました") }
                         },
                         onSelectBookmark = { bookmark ->
-                            // 選択URLを保存し、フィードバック表示を依頼してからこの画面を終了
+                            // 選択URLを保存し、フィードバック表示を依頼（画面は閉じずにユーザーが戻るボタンで戻れるようにする）
                             viewModel.saveSelectedBookmarkUrl(bookmark.url)
                             scope.launch { snackbarHostState.showSnackbar("「${bookmark.name}」を選択しました") }
-                            finish()
                         }
                     )
                     // 画面下部に固定したスナックバー表示領域（Compose の SnackbarHost）

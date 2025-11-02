@@ -16,7 +16,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class CacheManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     companion object {
         // 大型サムネイル用に増量

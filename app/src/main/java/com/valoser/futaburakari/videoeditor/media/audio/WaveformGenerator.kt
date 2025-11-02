@@ -17,7 +17,7 @@ import kotlin.math.sqrt
  */
 @Singleton
 class WaveformGenerator @Inject constructor(
-    @ApplicationContext private val context: android.content.Context
+    @param:ApplicationContext private val context: android.content.Context
 ) {
     companion object {
         // 大型波形表示用の高密度サンプリング

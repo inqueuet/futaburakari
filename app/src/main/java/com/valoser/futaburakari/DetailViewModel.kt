@@ -126,6 +126,17 @@ class DetailViewModel @Inject constructor(
     private val _promptLoadingIds = MutableStateFlow<Set<String>>(emptySet())
     val promptLoadingIds: StateFlow<Set<String>> = _promptLoadingIds.asStateFlow()
 
+    /** スレッドアーカイブ進捗を表すフロー */
+    private val _archiveProgress = MutableStateFlow<ThreadArchiveProgress?>(null)
+    val archiveProgress: StateFlow<ThreadArchiveProgress?> = _archiveProgress.asStateFlow()
+
+    /** スレッドアーカイバー */
+    private val threadArchiver by lazy { ThreadArchiver(appContext, networkClient) }
+
+    /** ダウンロード/アーカイブのキャンセル用Job */
+    private var downloadJob: kotlinx.coroutines.Job? = null
+    private var archiveJob: kotlinx.coroutines.Job? = null
+
     private val downloadRequestIdGenerator = AtomicLong(0)
     private val pendingDownloadMutex = Mutex()
     private val pendingDownloadRequests = mutableMapOf<Long, PendingDownloadRequest>()
@@ -1066,10 +1077,8 @@ class DetailViewModel @Inject constructor(
         recomputeSearchState(displayFiltered)
 
         currentUrl?.let { url ->
-            val snapshot = filtered
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching { cacheManager.saveDetails(url, source) }
-                runCatching { cacheManager.saveArchiveSnapshot(url, snapshot) }
             }
         }
     }
@@ -1839,7 +1848,8 @@ class DetailViewModel @Inject constructor(
     fun downloadImages(urls: List<String>) {
         if (urls.isEmpty()) return
 
-        viewModelScope.launch {
+        downloadJob?.cancel()
+        downloadJob = viewModelScope.launch {
             _downloadProgress.value = DownloadProgress(0, urls.size, isActive = true)
             var completed = 0
 
@@ -1863,11 +1873,21 @@ class DetailViewModel @Inject constructor(
                     }
                     jobs.awaitAll()
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // キャンセルされた場合
+                throw e
             } finally {
                 delay(500) // 完了表示を少し見せる
                 _downloadProgress.value = null
+                downloadJob = null
             }
         }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        _downloadProgress.value = null
     }
 
     fun downloadImagesSkipExisting(urls: List<String>) {
@@ -2071,6 +2091,90 @@ class DetailViewModel @Inject constructor(
             failureCount > 0 -> "画像の保存に失敗しました"
             else -> "ダウンロード対象の画像がありません"
         }
+    }
+
+    // ========== スレッド保存機能 ==========
+
+    /**
+     * スレッド全体をアーカイブする
+     * 画像・動画・HTMLを一括でダウンロードし、同じディレクトリに保存する
+     * @param threadTitle スレッドのタイトル
+     * @return 成功メッセージまたはエラー
+     */
+    fun archiveThread(threadTitle: String): String? {
+        if (_archiveProgress.value?.isActive == true) {
+            return "既にスレッド保存が実行中です"
+        }
+
+        archiveJob?.cancel()
+        archiveJob = viewModelScope.launch {
+            try {
+                _archiveProgress.value = ThreadArchiveProgress(
+                    current = 0,
+                    total = 1,
+                    currentFileName = "準備中...",
+                    isActive = true
+                )
+
+                val threadUrl = currentUrl ?: ""
+                val contents = detailContent.value
+
+                val result = threadArchiver.archiveThread(
+                    threadTitle = threadTitle,
+                    threadUrl = threadUrl,
+                    contents = contents
+                ) { progress ->
+                    _archiveProgress.value = progress
+                }
+
+                // 完了メッセージを表示
+                result.onSuccess { message ->
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            appContext,
+                            message,
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }.onFailure { error ->
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            appContext,
+                            "スレッド保存に失敗しました: ${error.message}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
+                // 進捗表示をクリア
+                delay(500)
+                _archiveProgress.value = null
+                archiveJob = null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // キャンセルされた場合
+                _archiveProgress.value = null
+                archiveJob = null
+                throw e
+            } catch (e: Exception) {
+                Log.e("DetailViewModel", "Archive failed", e)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        appContext,
+                        "スレッド保存に失敗しました: ${e.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                _archiveProgress.value = null
+                archiveJob = null
+            }
+        }
+        return null
+    }
+
+    fun cancelArchive() {
+        archiveJob?.cancel()
+        archiveJob = null
+        _archiveProgress.value = null
     }
 
     // ========== TTS音声読み上げ制御 ==========

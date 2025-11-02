@@ -2,7 +2,7 @@
  * 画像カタログ（メイン一覧）画面の Compose 実装。
  *
  * 特徴:
- * - 更新: プル更新（PullToRefresh）と、端での強いオーバースクロール（バウンス）検知での自動再読み込み。
+ * - 更新: プル更新（PullToRefresh）で一覧を再読み込み。
  * - 体験: 可視範囲＋先読みの軽量プリフェッチでスクロールを滑らかに。
  * - 表示: カード下部に SurfaceVariant のタイトル領域を設け、返信数バッジは右上に配置。
  * - フィルタリング: OP画像なしスレッドは常時非表示に設定。
@@ -13,7 +13,10 @@
 package com.valoser.futaburakari.ui.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items as lazyListItems
@@ -21,9 +24,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
@@ -32,21 +37,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.BrokenImage
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import coil3.compose.AsyncImage
 import coil3.imageLoader
@@ -56,10 +64,8 @@ import coil3.size.Precision
 import coil3.network.HttpException
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import coil3.compose.SubcomposeAsyncImage
 import coil3.request.transitionFactory
 import coil3.transition.CrossfadeTransition
@@ -75,9 +81,9 @@ import com.valoser.futaburakari.ui.common.AppBarPosition
  * 画像カタログの一覧画面（メイン画面）。
  *
  * 機能概要:
- * - 更新: プルリフレッシュに加え、端での強いオーバースクロール（バウンス）でも再読み込みを実行（連発抑止あり）。
- * - 操作: トップバーに「再読み込み／ブックマーク選択／並び順／履歴／検索」を配置。
- *         右上メニューには「ブックマーク管理 → 設定 → 画像編集」を常設し、
+ * - 更新: プルリフレッシュを提供。
+ * - 操作: トップバーは「再読み込み／ブックマーク選択／検索」の主要操作に絞り、
+ *         右上メニューに補助操作（並び順・履歴・管理系）を集約。
  *         プロンプト機能が有効な場合のみ「ローカル画像を開く」を追加表示。
  * - トップバー: 通常時はサブタイトル（選択中ブックマーク名）のみを大きく表示。タイトルは非表示。
  *               検索中はタイトル領域を検索ボックスに切り替える。
@@ -92,16 +98,19 @@ import com.valoser.futaburakari.ui.common.AppBarPosition
  * - `items`: 表示対象のアイテム一覧（呼び出し側で取得）。
  * - `isLoading`: 読み込み中インジケータの表示制御。
  * - `spanCount`: グリッド列数。
+ * - `topBarPosition`: トップバーの配置位置。
+ * - `hasAnyBookmarks` / `hasSelectedBookmark`: ブックマークの登録・選択状況に応じて UI を調整するためのフラグ。
  * - `query`/`onQueryChange`: 検索クエリと変更ハンドラ。
- * - `onReload`: 更新アクション（プル/バウンス発火時も呼ぶ）。
+ * - `onReload`: 更新アクション（プルリフレッシュから呼び出し）。
  * - `onPrefetchHint`: 可視範囲＋先読み分のプリフェッチ要求を通知するコールバック。
  * - `onSelectBookmark`: ブックマーク選択ダイアログ等を開くアクション。
  * - `onManageBookmarks`: ブックマーク管理画面を開くアクション（メニューから呼び出し）。
  * - `onOpenSettings`: 設定画面を開くアクション（メニューから呼び出し）。
- * - `onOpenHistory`: 履歴画面を開くアクション（トップバーのアイコン）。
+ * - `onOpenHistory`: 履歴画面を開くアクション（メニューから呼び出し）。
  * - `onImageEdit`/`onBrowseLocalImages`: 画像編集／ローカル画像のメニュー操作。
  * - `onVideoEdit`: 動画編集のメニュー操作。
  * - `promptFeaturesEnabled`: プロンプト機能が有効な場合に追加メニューを表示するフラグ。
+ * - `onToggleDisplayMode`: グリッド/リスト表示を即座に切り替えるためのハンドラ。
  * - `onItemClick`: アイテムタップ時のハンドラ。
  * - `ngRules`: NG タイトルルール一覧（TITLE のみ対象）。
  * - `onImageLoadHttp404`: 画像ロードが 404 で失敗した際に呼ばれるコールバック。
@@ -120,6 +129,8 @@ fun MainCatalogScreen(
     spanCount: Int,
     catalogDisplayMode: String = "grid",
     topBarPosition: AppBarPosition = AppBarPosition.TOP,
+    hasAnyBookmarks: Boolean,
+    hasSelectedBookmark: Boolean,
     query: String,
     onQueryChange: (String) -> Unit,
     onReload: () -> Unit,
@@ -133,6 +144,7 @@ fun MainCatalogScreen(
     onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
     promptFeaturesEnabled: Boolean = true,
+    onToggleDisplayMode: () -> Unit,
     onItemClick: (ImageItem) -> Unit,
     ngRules: List<NgRule>,
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
@@ -142,6 +154,7 @@ fun MainCatalogScreen(
     val pullState = rememberPullToRefreshState()
 
     // NG タイトルルールとクエリ、画像有無で絞り込み（常時OP画像なしスレッドを非表示）
+    val hasNgFilters = ngRules.isNotEmpty()
     val filtered = remember(items, query, ngRules) {
         val titleRules = ngRules.filter { it.type == RuleType.TITLE }
         items.asSequence()
@@ -174,80 +187,9 @@ fun MainCatalogScreen(
     val sDp = spacing.s
     val xsDp = spacing.xs
 
-    // バウンス（端でのオーバースクロール）検出用の状態
     val density = LocalDensity.current
     val sPx by remember(sDp, density) { derivedStateOf { with(density) { sDp.toPx() } } }
     val xsPx by remember(xsDp, density) { derivedStateOf { with(density) { xsDp.toPx() } } }
-    val minBouncePx = with(density) { 120.dp.toPx() }.coerceAtLeast(48f) // トリガーに必要な最小距離
-    var continuousOverscrollPx by remember { mutableStateOf(0f) } // 連続オーバースクロール距離の累積
-    var lastScrollDirection by remember { mutableStateOf(0) } // 1: 下方向, -1: 上方向, 0: なし
-    var autoUpdatePending by remember { mutableStateOf(false) } // 誤連発防止のディレイ中フラグ
-
-    val bounceConnection = remember(isLoading, isListMode) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val atTop = if (isListMode) {
-                    listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
-                } else {
-                    gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0
-                }
-                val visibleLast = if (isListMode) {
-                    listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                } else {
-                    gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                }
-                val atBottom = items.isNotEmpty() && visibleLast >= items.lastIndex
-
-                val dy = available.y
-                val dir = if (dy > 0f) 1 else if (dy < 0f) -1 else 0
-                lastScrollDirection = dir
-
-                val pullingTop = atTop && dy > 0f
-                val pullingBottom = atBottom && dy < 0f
-
-                if (pullingTop || pullingBottom) {
-                    continuousOverscrollPx += kotlin.math.abs(dy)
-                } else {
-                    continuousOverscrollPx = 0f
-                }
-                return Offset.Zero
-            }
-        }
-    }
-
-    // スクロール停止検知 → 端に到達して十分に引っ張られていたら自動更新
-    LaunchedEffect(gridState, listState, isLoading, items, isListMode) {
-        snapshotFlow { if (isListMode) listState.isScrollInProgress else gridState.isScrollInProgress }
-            .distinctUntilChanged()
-            .collect { inProgress ->
-                if (!inProgress) {
-                    val visibleLast = if (isListMode) {
-                        listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                    } else {
-                        gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                    }
-                    val atTop = if (isListMode) {
-                        listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
-                    } else {
-                        gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0
-                    }
-                    val atBottom = items.isNotEmpty() && visibleLast >= items.lastIndex
-                    val atBoundary = (atTop && lastScrollDirection > 0) || (atBottom && lastScrollDirection < 0)
-                    if (!isLoading && atBoundary && continuousOverscrollPx >= minBouncePx && !autoUpdatePending) {
-                        autoUpdatePending = true
-                        // 少し待ってから実際の更新（誤判定や連発を避ける）
-                        launch {
-                            delay(1000L)
-                            onReload()
-                            autoUpdatePending = false
-                        }
-                    }
-                    continuousOverscrollPx = 0f
-                }
-            }
-    }
-
-    // 404のローカル抑止は廃止（VM側の回数管理と候補探索に委任）
 
     // 軽量プリフェッチ（可視範囲＋先読み分のみを事前ロード）
     // 実表示サイズと同一のサイズでプリフェッチし、メモリキャッシュのヒット率を最大化する
@@ -319,6 +261,11 @@ fun MainCatalogScreen(
         WindowInsets(0, 0, 0, 0)
     }
 
+    // システムナビゲーションバーのインセット（Androidの3ボタンナビゲーション対応）
+    val systemBarsInsets = WindowInsets.systemBars
+    val navigationBarHeight = with(LocalDensity.current) { systemBarsInsets.getBottom(this) }
+
+    val focusManager = LocalFocusManager.current
     val toolbar: @Composable () -> Unit = {
         TopAppBar(
             title = {
@@ -329,6 +276,13 @@ fun MainCatalogScreen(
                         onValueChange = onQueryChange,
                         singleLine = true,
                         placeholder = { Text(text = "検索") },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { onQueryChange(""); focusManager.clearFocus() }) {
+                                    Icon(Icons.Rounded.Close, contentDescription = "検索キーワードをクリア")
+                                }
+                            }
+                        },
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
@@ -351,28 +305,46 @@ fun MainCatalogScreen(
                 }
             },
             actions = {
-                IconButton(onClick = { if (!isLoading) onReload() }) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
+                // 最も頻繁に使う操作を前に配置
+                IconButton(
+                    onClick = {
+                        if (hasAnyBookmarks) {
+                            onSelectBookmark()
+                        } else {
+                            onManageBookmarks()
+                        }
+                    }
+                ) {
+                    Icon(Icons.Rounded.Bookmarks, contentDescription = "ブックマークを選択")
                 }
-                IconButton(onClick = onSelectBookmark) {
-                    Icon(Icons.Rounded.BookmarkBorder, contentDescription = "ブックマーク選択")
-                }
-                IconButton(onClick = onSelectSortMode) {
-                    Icon(Icons.Rounded.Sort, contentDescription = "カタログ並び順")
-                }
-                IconButton(onClick = onOpenHistory) {
-                    Icon(Icons.Rounded.History, contentDescription = "履歴")
-                }
-                IconButton(onClick = { searching = !searching }) {
+                IconButton(onClick = {
+                    if (searching) {
+                        searching = false
+                        focusManager.clearFocus()
+                    } else {
+                        searching = true
+                    }
+                }) {
                     Icon(Icons.Rounded.Search, contentDescription = "検索")
                 }
+                IconButton(
+                    onClick = { if (!isLoading && hasSelectedBookmark) onReload() },
+                    enabled = !isLoading && hasSelectedBookmark
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
+                }
                 MoreMenu(
+                    onToggleDisplayMode = onToggleDisplayMode,
                     onManageBookmarks = onManageBookmarks,
+                    onSelectSortMode = onSelectSortMode,
+                    onOpenHistory = onOpenHistory,
+                    onOpenSettings = onOpenSettings,
                     onImageEdit = onImageEdit,
                     onVideoEdit = onVideoEdit,
                     onBrowseLocalImages = onBrowseLocalImages,
-                    onSettings = onOpenSettings,
                     promptFeaturesEnabled = promptFeaturesEnabled,
+                    hasSelectedBookmark = hasSelectedBookmark,
+                    isListMode = isListMode,
                 )
             },
             colors = toolbarColors,
@@ -388,8 +360,13 @@ fun MainCatalogScreen(
         },
         bottomBar = {
             if (topBarPosition == AppBarPosition.BOTTOM) {
-                Column {
-                    Divider()
+                Column(
+                    modifier = Modifier
+                        // システムナビゲーションバーと重ならないようにパディング追加
+                        .padding(bottom = with(LocalDensity.current) { navigationBarHeight.toDp() })
+                        .background(MaterialTheme.colorScheme.surface)
+                ) {
+                    HorizontalDivider()
                     toolbar()
                 }
             }
@@ -398,81 +375,242 @@ fun MainCatalogScreen(
         PullToRefreshBox(
             modifier = modifier
                 .fillMaxSize()
-                .padding(padding)
-                // 端でのオーバースクロール距離を計測するための NestedScroll を追加
-                .nestedScroll(bounceConnection),
+                .padding(padding),
             state = pullState,
             isRefreshing = isLoading,
             onRefresh = onReload,
-            // トップのインジケータは使わず、中央に独自インジケータを重ねる
-            indicator = {}
-        ) {
-            if (isListMode) {
-                // リスト本体
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    state = listState,
-                    contentPadding = PaddingValues(LocalSpacing.current.s)
-                ) {
-                    lazyListItems(
-                        filtered,
-                        key = { it.detailUrl },
-                        contentType = { "image_list_item" }
-                    ) { item ->
-                        CatalogListItem(
-                            item = item,
-                            onClick = remember(item.detailUrl) { { onItemClick(item) } },
-                            onImageLoadHttp404 = onImageLoadHttp404,
-                            onImageLoadSuccess = onImageLoadSuccess,
-                        )
-                    }
-                }
-            } else {
-                // グリッド本体
-                LazyVerticalGrid(
-                    modifier = Modifier.fillMaxSize(),
-                    state = gridState,
-                    columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
-                    contentPadding = PaddingValues(LocalSpacing.current.s)
-                ) {
-                    // 安定キーと contentType でリサイクルを効率化
-                    items(
-                        filtered,
-                        key = { it.detailUrl },
-                        contentType = { "image_card" }
-                    ) { item ->
-                        CatalogCard(
-                            item = item,
-                            // Stable 参照でリコンポジションを最小化
-                            onClick = remember(item.detailUrl) { { onItemClick(item) } },
-                            onImageLoadHttp404 = onImageLoadHttp404,
-                            onImageLoadSuccess = onImageLoadSuccess,
-                        )
-                    }
+            indicator = {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    PullToRefreshDefaults.Indicator(
+                        modifier = Modifier.align(Alignment.Center),
+                        state = pullState,
+                        isRefreshing = isLoading
+                    )
                 }
             }
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    val showFilters = query.isNotBlank() || hasNgFilters
+                    if (showFilters) {
+                        ActiveFilterRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs),
+                            query = query,
+                            hasNgFilters = hasNgFilters,
+                            onClearQuery = { onQueryChange("") }
+                        )
+                    }
+                    if (isListMode) {
+                        // リスト本体
+                        LazyColumn(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            state = listState,
+                            contentPadding = PaddingValues(LocalSpacing.current.s)
+                        ) {
+                            lazyListItems(
+                                filtered,
+                                key = { it.detailUrl },
+                                contentType = { "image_list_item" }
+                            ) { item ->
+                                CatalogListItem(
+                                    item = item,
+                                    onClick = remember(item.detailUrl) { { onItemClick(item) } },
+                                    onImageLoadHttp404 = onImageLoadHttp404,
+                                    onImageLoadSuccess = onImageLoadSuccess,
+                                )
+                            }
+                        }
+                    } else {
+                        // グリッド本体
+                        LazyVerticalGrid(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            state = gridState,
+                            columns = GridCells.Fixed(spanCount.coerceAtLeast(1)),
+                            contentPadding = PaddingValues(LocalSpacing.current.s)
+                        ) {
+                            // 安定キーと contentType でリサイクルを効率化
+                            items(
+                                filtered,
+                                key = { it.detailUrl },
+                                contentType = { "image_card" }
+                            ) { item ->
+                                CatalogCard(
+                                    item = item,
+                                    // Stable 参照でリコンポジションを最小化
+                                    onClick = remember(item.detailUrl) { { onItemClick(item) } },
+                                    onImageLoadHttp404 = onImageLoadHttp404,
+                                    onImageLoadSuccess = onImageLoadSuccess,
+                                )
+                            }
+                        }
+                    }
+                }
 
-            // 中央インジケータ（ぐるぐる）
-            if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                }
+
+                if (!isLoading && filtered.isEmpty()) {
+                    EmptyCatalogState(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(LocalSpacing.current.l),
+                        hasAnyBookmarks = hasAnyBookmarks,
+                        hasSelectedBookmark = hasSelectedBookmark,
+                        query = query,
+                        hasNgFilters = hasNgFilters,
+                        onSelectBookmark = onSelectBookmark,
+                        onManageBookmarks = onManageBookmarks
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveFilterRow(
+    modifier: Modifier = Modifier,
+    query: String,
+    hasNgFilters: Boolean,
+    onClearQuery: () -> Unit,
+) {
+    val spacing = LocalSpacing.current
+    Row(
+        modifier = modifier
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (query.isNotBlank()) {
+            AssistChip(
+                onClick = onClearQuery,
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = "検索") },
+                label = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "検索: $query",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "検索条件をクリア",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            )
+        }
+        if (hasNgFilters) {
+            AssistChip(
+                onClick = {},
+                enabled = false,
+                leadingIcon = { Icon(Icons.Rounded.Block, contentDescription = "NGフィルタ") },
+                label = { Text("NGフィルタ適用中") }
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyCatalogState(
+    modifier: Modifier = Modifier,
+    hasAnyBookmarks: Boolean,
+    hasSelectedBookmark: Boolean,
+    query: String,
+    hasNgFilters: Boolean,
+    onSelectBookmark: () -> Unit,
+    onManageBookmarks: () -> Unit,
+) {
+    val spacing = LocalSpacing.current
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        when {
+            !hasAnyBookmarks -> {
+                Text(
+                    text = "ブックマークがまだ登録されていません",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(spacing.s))
+                Text(
+                    text = "「ブックマークを追加」で表示したい板を登録するとカタログが表示されます。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(spacing.m))
+                Button(onClick = onManageBookmarks) {
+                    Text("ブックマークを追加")
+                }
+            }
+            !hasSelectedBookmark -> {
+                Text(
+                    text = "表示するブックマークを選択してください",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(spacing.s))
+                Button(onClick = onSelectBookmark) {
+                    Text("ブックマークを選ぶ")
+                }
+                Spacer(modifier = Modifier.height(spacing.xs))
+                TextButton(onClick = onManageBookmarks) {
+                    Text("ブックマークを管理")
+                }
+            }
+            else -> {
+                Text(
+                    text = "表示できるスレッドがありません",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(spacing.s))
+                val hints = buildList {
+                    if (query.isNotBlank()) add("検索キーワード")
+                    if (hasNgFilters) add("NG設定")
+                }
+                val hintText = if (hints.isEmpty()) {
+                    "一覧を更新するか、別のブックマークを選択してください。"
+                } else {
+                    hints.joinToString("・", postfix = "を確認してください。")
+                }
+                Text(
+                    text = hintText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
 }
 
 /**
- * 右上「その他」メニュー。ブックマーク管理・設定・画像編集・動画編集を提供し、
+ * 右上「その他」メニュー。ブックマーク管理や編集系の操作を集約し、
  * プロンプト機能が有効な場合のみ「ローカル画像を開く」を追加表示する。
  * 選択時はメニューを閉じてから各ハンドラを呼び出す。
  */
 @Composable
 private fun MoreMenu(
+    onToggleDisplayMode: () -> Unit,
     onManageBookmarks: () -> Unit,
+    onSelectSortMode: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenSettings: () -> Unit,
     onImageEdit: () -> Unit,
     onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
-    onSettings: () -> Unit,
     promptFeaturesEnabled: Boolean,
+    hasSelectedBookmark: Boolean,
+    isListMode: Boolean,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -480,8 +618,43 @@ private fun MoreMenu(
             Icon(Icons.Rounded.MoreVert, contentDescription = "その他")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("ブックマーク管理") }, onClick = { expanded = false; onManageBookmarks() })
-            DropdownMenuItem(text = { Text("設定") }, onClick = { expanded = false; onSettings() })
+            // よく使う操作グループ
+            DropdownMenuItem(
+                text = { Text("並び順") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = "並び順") },
+                onClick = { expanded = false; onSelectSortMode() },
+                enabled = hasSelectedBookmark
+            )
+            DropdownMenuItem(
+                text = { Text(if (isListMode) "グリッド表示に切り替え" else "リスト表示に切り替え") },
+                leadingIcon = {
+                    val icon = if (isListMode) Icons.Rounded.GridView else Icons.Rounded.ViewList
+                    Icon(icon, contentDescription = "表示切替")
+                },
+                onClick = { expanded = false; onToggleDisplayMode() }
+            )
+            DropdownMenuItem(
+                text = { Text("履歴") },
+                leadingIcon = { Icon(Icons.Rounded.History, contentDescription = "履歴") },
+                onClick = { expanded = false; onOpenHistory() }
+            )
+
+            HorizontalDivider()
+
+            // 管理系操作グループ
+            DropdownMenuItem(
+                text = { Text("ブックマーク管理") },
+                onClick = { expanded = false; onManageBookmarks() }
+            )
+            DropdownMenuItem(
+                text = { Text("設定") },
+                leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = "設定") },
+                onClick = { expanded = false; onOpenSettings() }
+            )
+
+            HorizontalDivider()
+
+            // 編集系操作グループ
             if (promptFeaturesEnabled) {
                 DropdownMenuItem(
                     text = { Text("ローカル画像を開く") },
@@ -510,7 +683,12 @@ private fun CatalogListItem(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs),
-        onClick = onClick
+        onClick = onClick,
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        // Ripple effectを明確にするための設定
+        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     ) {
         Row(
             modifier = Modifier
@@ -652,7 +830,12 @@ private fun CatalogCard(
         border = androidx.compose.foundation.BorderStroke(
             width = 2.dp,
             color = MaterialTheme.colorScheme.outlineVariant
-        )
+        ),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        // Ripple effectを明確にするための設定
+        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // ViewModel の判定を信頼し、表示URLはモデルから決定
@@ -749,22 +932,56 @@ private fun CatalogCard(
                                             }
                                         },
                                         error = {
-                                            Box(modifier = Modifier.fillMaxSize()) {
-                                                Text(
-                                                    text = "画像を表示できません",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    modifier = Modifier.align(Alignment.Center)
-                                                )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(MaterialTheme.colorScheme.errorContainer),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Column(
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    verticalArrangement = Arrangement.Center
+                                                ) {
+                                                    androidx.compose.material3.Icon(
+                                                        imageVector = androidx.compose.material.icons.Icons.Rounded.BrokenImage,
+                                                        contentDescription = "画像エラー",
+                                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                                        modifier = Modifier.size(32.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs))
+                                                    Text(
+                                                        text = "読み込みエラー",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                                    )
+                                                }
                                             }
                                         }
                                     )
                                 } else {
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        Text(
-                                            text = "画像を表示できません",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            modifier = Modifier.align(Alignment.Center)
-                                        )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(MaterialTheme.colorScheme.errorContainer),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            androidx.compose.material3.Icon(
+                                                imageVector = androidx.compose.material.icons.Icons.Rounded.BrokenImage,
+                                                contentDescription = "画像エラー",
+                                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                                modifier = Modifier.size(32.dp)
+                                            )
+                                            Spacer(modifier = Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs))
+                                            Text(
+                                                text = "読み込みエラー",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
                                     }
                                 }
                             }

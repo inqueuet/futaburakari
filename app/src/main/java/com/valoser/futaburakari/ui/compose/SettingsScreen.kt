@@ -43,10 +43,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,6 +78,11 @@ import com.valoser.futaburakari.ui.theme.LocalSpacing
 import coil3.imageLoader
 import com.valoser.futaburakari.AppPreferences
 import com.valoser.futaburakari.NgManagerActivity
+import com.valoser.futaburakari.PrivacyScreenColor
+import com.valoser.futaburakari.PrivacyScreenPattern
+import com.valoser.futaburakari.PrivacyScreenSettings
+import com.valoser.futaburakari.PrivacyScreenStyle
+import com.valoser.futaburakari.PrivacyScreenIntensity
 import com.valoser.futaburakari.PromptSettings
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.RuleType
@@ -123,6 +130,11 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
     // Expressive 配色モード: Dynamic Color と併用するか（タイポ/シェイプ/余白のみ Expressive 適用）
     var expressiveDynamicColor by remember { mutableStateOf(prefs.getBoolean("pref_key_expressive_use_dynamic_color", false)) }
+    var privacyScreenEnabled by remember { mutableStateOf(PrivacyScreenSettings.isPrivacyScreenEnabled(ctx)) }
+    val initialPrivacyStyle = remember { PrivacyScreenSettings.getPrivacyScreenStyle(ctx) }
+    var privacyScreenColor by remember { mutableStateOf(initialPrivacyStyle.color.storageValue) }
+    var privacyScreenPattern by remember { mutableStateOf(initialPrivacyStyle.pattern.storageValue) }
+    var privacyScreenIntensity by remember { mutableStateOf(initialPrivacyStyle.intensity.storageValue) }
     // 旧「カラーモード」設定は廃止
 
     // 自動クリーンアップ設定の初期化（レガシー値からの移行処理を含む）
@@ -156,6 +168,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     var pwdText by remember { mutableStateOf("") }
     var clearingCache by remember { mutableStateOf(false) }
 
+    // 拡張可能セクションの状態
+    var advancedExpanded by remember { mutableStateOf(false) }
+
     // ドロップダウン用の表示ラベルと値の配列（strings.xmlから取得）
     val gridEntries = remember { ctx.resources.getStringArray(R.array.pref_grid_span_entries).toList() }
     val gridValues = remember { ctx.resources.getStringArray(R.array.pref_grid_span_values).toList() }
@@ -171,6 +186,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     // removed: color mode entries/values
     val cleanupEntries = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_entries).toList() }
     val cleanupValues = remember { ctx.resources.getStringArray(R.array.pref_auto_cleanup_values).toList() }
+    val privacyScreenColorEntries = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_color_entries).toList() }
+    val privacyScreenColorValues = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_color_values).toList() }
+    val privacyScreenPatternEntries = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_pattern_entries).toList() }
+    val privacyScreenPatternValues = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_pattern_values).toList() }
+    val privacyScreenIntensityEntries = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_intensity_entries).toList() }
+    val privacyScreenIntensityValues = remember { ctx.resources.getStringArray(R.array.pref_privacy_screen_intensity_values).toList() }
 
     Scaffold(
         topBar = {
@@ -266,11 +287,70 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
             item {
+                // 覗き見防止の有効/無効を切り替える
+                SwitchRow(
+                    title = "覗き見防止",
+                    checked = privacyScreenEnabled,
+                    summary = "画面上にフィルタを被せて周囲から見えにくくします（色・模様・濃さを選べます）"
+                ) { enabled ->
+                    privacyScreenEnabled = enabled
+                    prefs.edit().putBoolean(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN, enabled).apply()
+                }
+            }
+            item {
+                DropdownPreferenceRow(
+                    title = "覗き見フィルタの色",
+                    entries = privacyScreenColorEntries,
+                    values = privacyScreenColorValues,
+                    value = privacyScreenColor,
+                    summary = when (PrivacyScreenColor.fromPreferenceValue(privacyScreenColor)) {
+                        PrivacyScreenColor.Dark -> "黒ベースで明るさを抑えます"
+                        PrivacyScreenColor.Light -> "白ベースで眩しさを和らげます"
+                    }
+                ) { value ->
+                    privacyScreenColor = value
+                    prefs.edit().putString(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_COLOR, value).apply()
+                }
+            }
+            item {
+                val patternSummary = when (PrivacyScreenPattern.fromPreferenceValue(privacyScreenPattern)) {
+                    PrivacyScreenPattern.Plain -> "無地でシンプルに覆います"
+                    PrivacyScreenPattern.Pattern -> "格子模様で視線を分散させます"
+                }
+                DropdownPreferenceRow(
+                    title = "覗き見フィルタの模様",
+                    entries = privacyScreenPatternEntries,
+                    values = privacyScreenPatternValues,
+                    value = privacyScreenPattern,
+                    summary = patternSummary
+                ) { value ->
+                    privacyScreenPattern = value
+                    prefs.edit().putString(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_PATTERN, value).apply()
+                }
+            }
+            item {
+                val intensitySummary = when (PrivacyScreenIntensity.fromPreferenceValue(privacyScreenIntensity)) {
+                    PrivacyScreenIntensity.Light -> "薄め（周囲の視認性を保ちつつ軽くぼかします）"
+                    PrivacyScreenIntensity.Medium -> "標準（従来の濃さと同程度です）"
+                    PrivacyScreenIntensity.Strong -> "濃いめ（極力暗く/明るくして視線を遮ります）"
+                }
+                DropdownPreferenceRow(
+                    title = "覗き見フィルタの濃さ",
+                    entries = privacyScreenIntensityEntries,
+                    values = privacyScreenIntensityValues,
+                    value = privacyScreenIntensity,
+                    summary = intensitySummary
+                ) { value ->
+                    privacyScreenIntensity = value
+                    prefs.edit().putString(PrivacyScreenSettings.PREF_KEY_PRIVACY_SCREEN_INTENSITY, value).apply()
+                }
+            }
+            item {
                 // 画像プロンプト（メタデータ）解析の有効/無効を切り替える
                 val promptSummary = if (lowBandwidthMode) {
-                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します（低帯域モード中は利用できません）"
+                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します\n※低帯域モード中は利用できません。先に低帯域モードを無効化してください"
                 } else {
-                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します"
+                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します\n※低帯域モードを有効にすると自動的に無効になります"
                 }
                 SwitchRow(
                     title = "画像プロンプトを取得",
@@ -375,16 +455,39 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // ネットワーク（同時接続数）
-            item { SectionHeader(text = "ネットワーク") }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            item { SectionHeader(text = "投稿設定") }
+            item {
+                // 投稿時に使う削除キー（パスワード）を保存
+                ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            // 高度な設定セクション（折りたたみ可能）
+            item {
+                CollapsibleSectionHeader(
+                    text = "高度な設定",
+                    expanded = advancedExpanded,
+                    onToggle = { advancedExpanded = !advancedExpanded }
+                )
+            }
+
+            if (advancedExpanded) {
+                // ネットワーク（同時接続数）
+                item { SectionHeader(text = "ネットワーク") }
             item {
                 SwitchRow(
                     title = "低帯域モード",
                     checked = lowBandwidthMode,
-                    summary = "スレ詳細ではサムネイルのみを読み込みます（タップ時はフル画像）"
+                    summary = "スレ詳細ではサムネイルのみを読み込みます（タップ時はフル画像）\n※有効時は画像プロンプトの取得が無効になります"
                 ) { enabled ->
                     lowBandwidthMode = enabled
                     AppPreferences.setLowBandwidthMode(ctx, enabled)
+                    // 低帯域モード有効時はプロンプト取得を自動的に無効化
+                    if (enabled && promptFetchEnabled) {
+                        promptFetchEnabled = false
+                        prefs.edit().putBoolean(PromptSettings.PREF_KEY_FETCH_ENABLED, false).apply()
+                    }
                     android.widget.Toast.makeText(
                         ctx,
                         if (enabled) "低帯域モードを有効にしました。スレを再読み込みしてください。" else "低帯域モードを無効にしました。",
@@ -418,15 +521,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             // フル画像アップグレード同時数の個別設定は廃止（同時接続数に統合）
 
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "投稿設定") }
-            item {
-                // 投稿時に使う削除キー（パスワード）を保存
-                ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
-            }
-
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "キャッシュ管理") }
+                item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+                item { SectionHeader(text = "キャッシュ管理") }
 
             // メモリ使用量情報の表示
             item {
@@ -561,22 +657,24 @@ fun SettingsScreen(onBack: () -> Unit) {
                         prefs.edit().putString("pref_key_auto_cleanup_limit_percent", v).apply()
                     }
                 )
-            }
-
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "広告表示") }
-            item {
-                // Detail画面にバナー広告を固定表示するか
-                SwitchRow(title = "広告を表示", checked = adsEnabled, summary = "Detail画面下部にバナー広告を固定表示します") {
-                    adsEnabled = it
-                    prefs.edit().putBoolean("pref_key_ads_enabled", it).apply()
                 }
-            }
 
-            // removed: background monitoring toggle (always enabled)
+                // removed: background monitoring toggle (always enabled)
 
-            // その他セクション（必要な1本だけ区切り線を表示）
-            item { Divider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+                // 広告表示
+                item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+                item { SectionHeader(text = "広告表示") }
+                item {
+                    // Detail画面にバナー広告を固定表示するか
+                    SwitchRow(title = "広告を表示", checked = adsEnabled, summary = "Detail画面下部にバナー広告を固定表示します") {
+                        adsEnabled = it
+                        prefs.edit().putBoolean("pref_key_ads_enabled", it).apply()
+                    }
+                }
+            } // End of advanced settings
+
+            // その他セクション（高度な設定の外側）
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "その他") }
             item {
                 // リソースで指定したプライバシーポリシー URL を外部ブラウザで表示
@@ -744,5 +842,39 @@ private fun SwitchRow(
             }
         }
         Switch(checked = checked, onCheckedChange = onToggle, enabled = enabled)
+    }
+}
+
+/**
+ * 折りたたみ可能なセクションヘッダー。
+ * 展開/折りたたみアイコンを持つクリック可能な見出しを表示します。
+ *
+ * パラメータ:
+ * - `text`: セクションのタイトル。
+ * - `expanded`: 現在の展開状態。
+ * - `onToggle`: クリック時に呼ばれるハンドラ。
+ */
+@Composable
+private fun CollapsibleSectionHeader(
+    text: String,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            imageVector = if (expanded) Icons.Rounded.ExpandMore else Icons.Rounded.ChevronRight,
+            contentDescription = if (expanded) "折りたたむ" else "展開する"
+        )
     }
 }

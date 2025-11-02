@@ -5,7 +5,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -234,7 +235,7 @@ fun TimelineView(
                     )
 
                     // リンクライン（4dp）
-                    Divider(
+                    HorizontalDivider(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(4.dp),
@@ -304,7 +305,7 @@ fun TimelineView(
         }
 
         // プレイヘッド（赤線）は常に中央に固定表示
-        Divider(
+        VerticalDivider(
             color = Color.Red,
             modifier = Modifier
                 .fillMaxHeight()

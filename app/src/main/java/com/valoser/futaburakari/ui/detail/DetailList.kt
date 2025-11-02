@@ -50,13 +50,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Divider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.unit.dp
@@ -82,11 +82,11 @@ import androidx.compose.ui.platform.LocalDensity
  
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -108,7 +108,6 @@ import coil3.request.transitionFactory
 import coil3.transition.CrossfadeTransition
 import com.valoser.futaburakari.image.ImageKeys
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.foundation.clickable
 import android.util.Patterns
 import android.content.Intent
 import android.net.Uri
@@ -561,9 +560,22 @@ fun DetailListCompose(
                     }
                     // クリック可能領域（No./引用/ID/URL/ファイル名/そうだね/検索ハイライト）を付与
                     val annotated = remember(displayText, searchQuery, threadTitle, myPostNumbers) { buildAnnotatedFromText(displayText, searchQuery, threadTitle, myPostNumbers) }
+                    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // ヘッダー行（最初の行）の背景色を設定して視覚的に分離
+                            .background(
+                                if (displayText.trim().lines().firstOrNull()?.let { firstLine ->
+                                    Regex("""\d{2}/\d{2}/\d{2}\(\S+\)\d{2}:\d{2}:\d{2}""").containsMatchIn(firstLine)
+                                } == true) {
+                                    androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.3f)
+                                } else {
+                                    androidx.compose.ui.graphics.Color.Transparent
+                                }
+                            )
+                            // タッチ領域を広げるため、最小タッチターゲット高さ（48dp）を保証
+                            .sizeIn(minHeight = 48.dp)
                             // 短押しは子の ClickableText に渡す。ここでは「長押しのみ」を本文引用として扱う。
                             .pointerInput(plain) {
                                 detectTapGestures(
@@ -576,57 +588,85 @@ fun DetailListCompose(
                                 )
                             }
                     ) {
-                        ClickableText(
+                        androidx.compose.material3.Text(
                             text = annotated,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs)
+                                .pointerInput(annotated, textLayoutResult) {
+                                    detectTapGestures { position ->
+                                        val layout = textLayoutResult ?: return@detectTapGestures
+                                        val offset = layout.getOffsetForPosition(position)
+                                        val tags = annotated.getStringAnnotations(start = offset, end = offset)
+                                        val res = tags.firstOrNull { it.tag == "res" }?.item
+                                        val filename = tags.firstOrNull { it.tag == "filename" }?.item
+                                        val quote = tags.firstOrNull { it.tag == "quote" }?.item
+                                        val id = tags.firstOrNull { it.tag == "id" }?.item
+                                        val url = tags.firstOrNull { it.tag == "url" }?.item
+                                        val sodane = tags.firstOrNull { it.tag == "sodane" }?.item
+                                        when {
+                                            // No. タップ: メニュー（返信 / 確認）
+                                            res != null -> {
+                                                resNumForDialog = res
+                                            }
+                                            // ファイル名タップ: メニュー（返信 / 確認）
+                                            filename != null -> {
+                                                fileNameForDialog = filename
+                                            }
+                                            // 引用(>)タップ: メニュー（返信 / 確認）
+                                            quote != null -> {
+                                                quoteForDialog = quote
+                                            }
+                                            id != null -> onIdClick?.invoke(id)
+                                            url != null -> try {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                            } catch (_: Exception) {
+                                            }
+                                            sodane != null -> {
+                                                // 推定対象 No. を同一行から取得（なければ投稿自身の No. をフォールバック）
+                                                val adjustedOffset = offset.coerceAtMost(displayText.length)
+                                                val lineStart = displayText.lastIndexOf('\n', startIndex = adjustedOffset, ignoreCase = false)
+                                                    .let { if (it < 0) 0 else it + 1 }
+                                                val lineEnd = displayText.indexOf('\n', startIndex = lineStart)
+                                                    .let { if (it < 0) displayText.length else it }
+                                                val lineText = displayText.substring(lineStart, lineEnd)
+                                                val m = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(lineText)
+                                                val rn = m?.groupValues?.getOrNull(2)
+                                                val target = rn ?: selfResNum
+                                                if (!target.isNullOrBlank()) {
+                                                    // 既に押していれば無視
+                                                    val disabled = getSodaneState?.invoke(target) ?: false
+                                                    if (!disabled) {
+                                                        // 楽観的に +1 表示（親に委譲）
+                                                        val next = (sodaneCounts[target] ?: 0) + 1
+                                                        onSetSodaneCount?.invoke(target, next)
+                                                        // コールバック（サーバ送信）
+                                                        onSodaneClick?.invoke(target)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // 本文（どのタグにも該当しない領域）タップ: メニュー（返信 / 確認 / NG）
+                                        if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
+                                            bodyForDialog = item
+                                        }
+                                    }
+                                },
                             // 明示的にテーマの文字色を適用して、ダークモードでの黒固定を回避
                             style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
                             ),
-                            onClick = { offset ->
-                            val tags = annotated.getStringAnnotations(start = offset, end = offset)
-                            val res = tags.firstOrNull { it.tag == "res" }?.item
-                            val filename = tags.firstOrNull { it.tag == "filename" }?.item
-                            val quote = tags.firstOrNull { it.tag == "quote" }?.item
-                            val id = tags.firstOrNull { it.tag == "id" }?.item
-                            val url = tags.firstOrNull { it.tag == "url" }?.item
-                            val sodane = tags.firstOrNull { it.tag == "sodane" }?.item
-                            when {
-                                // No. タップ: メニュー（返信 / 確認）
-                                res != null -> { resNumForDialog = res }
-                                // ファイル名タップ: メニュー（返信 / 確認）
-                                filename != null -> { fileNameForDialog = filename }
-                                // 引用(>)タップ: メニュー（返信 / 確認）
-                                quote != null -> { quoteForDialog = quote }
-                                id != null -> onIdClick?.invoke(id)
-                                url != null -> try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
-                                sodane != null -> {
-                                    // 推定対象 No. を同一行から取得（なければ投稿自身の No. をフォールバック）
-                                    val lineStart = displayText.lastIndexOf('\n', startIndex = offset.coerceAtMost(displayText.length), ignoreCase = false).let { if (it < 0) 0 else it + 1 }
-                                    val lineEnd = displayText.indexOf('\n', startIndex = lineStart).let { if (it < 0) displayText.length else it }
-                                    val lineText = displayText.substring(lineStart, lineEnd)
-                                    val m = Regex("""(?i)No[.\uFF0E]?\s*(\n?\s*)?(\d+)""").find(lineText)
-                                    val rn = m?.groupValues?.getOrNull(2)
-                                    val target = rn ?: selfResNum
-                                    if (!target.isNullOrBlank()) {
-                                        // 既に押していれば無視
-                                        val disabled = getSodaneState?.invoke(target) ?: false
-                                        if (!disabled) {
-                                            // 楽観的に +1 表示（親に委譲）
-                                            val next = (sodaneCounts[target] ?: 0) + 1
-                                            onSetSodaneCount?.invoke(target, next)
-                                            // コールバック（サーバ送信）
-                                            onSodaneClick?.invoke(target)
-                                        }
-                                    }
-                                }
-                            }
-                            // 本文（どのタグにも該当しない領域）タップ: メニュー（返信 / 確認 / NG）
-                            if (res == null && filename == null && quote == null && id == null && url == null && sodane == null) {
-                                bodyForDialog = item
-                            }
-                            }
+                            onTextLayout = { textLayoutResult = it }
                         )
                     }
+                    // レス間の視覚的区切り（コントラスト向上）
+                    androidx.compose.material3.HorizontalDivider(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = LocalSpacing.current.xs),
+                        thickness = 1.dp,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                    )
                 }
 
                 is DetailContent.Image -> {
@@ -843,7 +883,7 @@ fun DetailListCompose(
             if (isEndOfBlock(filteredItems, index)) {
                 // 視認性のための余白を上下に付与し、コンテンツと線が密着しないようにする
                 // ダークモードでも見やすいよう太くalpha値を高めに設定
-                androidx.compose.material3.Divider(
+                androidx.compose.material3.HorizontalDivider(
                     modifier = Modifier.padding(vertical = LocalSpacing.current.s),
                     thickness = 2.dp,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.outline
@@ -1132,6 +1172,9 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         return false
     }
 
+    // クリック可能要素用の色（Material3のプライマリ色）
+    val clickableColor = Color(0xFF6750A4) // Material3 Primary color
+
     // No.1234 pattern（ドット任意・全角ドット・空白許容）
     val resRegex = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""")
     resRegex.findAll(text).forEach { m ->
@@ -1149,20 +1192,25 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val isQuoteLine = trimmedLine.startsWith(">") || trimmedLine.startsWith("＞")
         if (isHeaderLine(line, lineIndex) || isQuoteLine) {
             val num = m.groupValues[1]
-            // 自レス番号なら強調色、それ以外は下線のみ
+            // 自レス番号なら強調色、それ以外はプライマリ色
             if (myPostNumbers.contains(num)) {
                 addStyle(SpanStyle(
                     textDecoration = TextDecoration.Underline,
-                    color = Color(0xFF4CAF50) // 緑色で強調
+                    color = Color(0xFF4CAF50), // 緑色で強調
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 ), m.range.first, m.range.last + 1)
             } else {
-                addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+                addStyle(SpanStyle(
+                    textDecoration = TextDecoration.Underline,
+                    color = clickableColor,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                ), m.range.first, m.range.last + 1)
             }
             addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
         }
     }
     // 引用行: 行頭の空白や全角＞を許容し、タグには正規化したトークンを渡す
-    // 視認性向上のため背景色を追加
+    // 視認性向上のため色と背景色を追加
     val lineRegex = Regex("^(?:[\\t \\u3000])*[>＞]+[^\\n]*", RegexOption.MULTILINE)
     lineRegex.findAll(text).forEach { m ->
         val tokenRaw = m.value
@@ -1171,7 +1219,9 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val end = m.range.last + 1
         addStyle(SpanStyle(
             textDecoration = TextDecoration.Underline,
-            background = Color(0x1A9C27B0) // 薄い紫色の背景
+            color = clickableColor,
+            background = Color(0x1A9C27B0), // 薄い紫色の背景
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
         ), start, end)
         addStringAnnotation(tag = "quote", annotation = token, start = start, end = end)
     }
@@ -1206,7 +1256,11 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     val idRegex = Regex("""ID([:：])([\u0021-\u007E\u00A0-\u00FF\w./+]+)""")
     idRegex.findAll(text).forEach { m ->
         val id = m.groupValues.getOrNull(2) ?: return@forEach
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+        addStyle(SpanStyle(
+            textDecoration = TextDecoration.Underline,
+            color = clickableColor,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+        ), m.range.first, m.range.last + 1)
         addStringAnnotation(tag = "id", annotation = id, start = m.range.first, end = m.range.last + 1)
     }
     // 検索ハイライト
@@ -1219,7 +1273,10 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     // URL: クリック可能にする
     val urlRegex = Patterns.WEB_URL.toRegex()
     urlRegex.findAll(text).forEach { m ->
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+        addStyle(SpanStyle(
+            textDecoration = TextDecoration.Underline,
+            color = clickableColor
+        ), m.range.first, m.range.last + 1)
         addStringAnnotation("url", m.value, m.range.first, m.range.last + 1)
     }
     // ファイル名トークン（拡張子を含むものを検出しクリック可能に）
@@ -1227,7 +1284,11 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val ext = "(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)"
         val pat = Regex("""(?i)([A-Za-z0-9._-]+\.$ext)""")
         pat.findAll(text).forEach { m ->
-            addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+            addStyle(SpanStyle(
+                textDecoration = TextDecoration.Underline,
+                color = clickableColor,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+            ), m.range.first, m.range.last + 1)
             addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
         }
     }

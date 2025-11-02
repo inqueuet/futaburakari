@@ -262,7 +262,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").absolutePath.toPath())
                     .maxSizeBytes(diskCacheSize)
-                    .cleanupDispatcher(Dispatchers.IO) // ディスクI/Oの最適化
+                    .cleanupCoroutineContext(Dispatchers.IO) // ディスクI/Oの最適化
                     .build()
             )
             // デバッグビルド時のみ詳細ログを有効化
@@ -337,6 +337,7 @@ class MyApplication : Application(), Configuration.Provider, SingletonImageLoade
         }
     }
 
+    @Suppress("DEPRECATION") // Running-level trim constants still reported by framework callbacks.
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         Log.d("MyApplication", "onTrimMemory called with level=$level")

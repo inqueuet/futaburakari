@@ -21,7 +21,7 @@ import kotlinx.coroutines.withTimeout
  */
  @Singleton
 class PlayerEngineImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : PlayerEngine {
 
     private val renderersFactory = CustomRenderersFactory(context)

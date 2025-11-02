@@ -259,18 +259,19 @@ fun HistoryScreen(
 
                     // 安定したキーとして `HistoryEntry.key` を使用（表示順は渡された `entries` に従う）
                     items(localEntries, key = { it.key }) { e ->
-                        val dismissState = rememberSwipeToDismissBoxState(
-                            // スワイプ確定時に即時削除（Undoは一旦無効化）
-                            confirmValueChange = { value ->
-                                if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
-                                    val current = localEntries
-                                    val idx = current.indexOfFirst { it.key == e.key }
-                                    if (idx >= 0) localEntries = current.toMutableList().also { it.removeAt(idx) }
+                        val dismissState = rememberSwipeToDismissBoxState()
+                        LaunchedEffect(dismissState.currentValue) {
+                            val value = dismissState.currentValue
+                            if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
+                                val current = localEntries
+                                val idx = current.indexOfFirst { it.key == e.key }
+                                if (idx >= 0) {
+                                    localEntries = current.toMutableList().also { it.removeAt(idx) }
                                     onDeleteItem(e)
-                                    true
-                                } else false
+                                }
+                                dismissState.reset()
                             }
-                        )
+                        }
                         SwipeToDismissBox(
                             state = dismissState,
                             enableDismissFromStartToEnd = true,

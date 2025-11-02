@@ -15,7 +15,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class EditorSessionManagerImpl @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val mediaRepository: MediaRepository
 ) : EditorSessionManager {
 

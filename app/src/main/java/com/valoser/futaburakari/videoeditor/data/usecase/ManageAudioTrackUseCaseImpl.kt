@@ -16,7 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
  */
 class ManageAudioTrackUseCaseImpl @Inject constructor(
     private val sessionManager: EditorSessionManager,
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : ManageAudioTrackUseCase {
 
     override suspend fun muteRange(

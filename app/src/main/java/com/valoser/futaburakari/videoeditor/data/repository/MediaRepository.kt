@@ -20,7 +20,7 @@ import kotlin.math.max
  */
 @Singleton
 class MediaRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val thumbnailGenerator: ThumbnailGenerator,
     private val waveformGenerator: WaveformGenerator
 ) {

@@ -313,17 +313,15 @@ class ImageEditActivity : BaseActivity() {
                     editorBitmapState.value = bmp
                     // ImageEditorCanvas はこのBitmapとEngineを直接参照して描画する
                 }
+            } catch (e: OutOfMemoryError) {
+                notifyImageLoadFailure("メモリ不足で画像を読み込めません", e)
             } catch (e: Exception) {
-                Log.e("ImageEditActivity", "Failed to load image", e)
                 val userMessage = when (e) {
                     is SecurityException -> "画像へのアクセス権限がありません"
                     is java.io.FileNotFoundException -> "画像ファイルが見つかりません"
-                    is OutOfMemoryError -> "メモリ不足で画像を読み込めません"
                     else -> "画像の読み込みに失敗しました"
                 }
-                Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
-                Toast.makeText(this@ImageEditActivity, "画像の読み込みに失敗: ${e.message}", Toast.LENGTH_LONG).show()
-                finish()
+                notifyImageLoadFailure(userMessage, e)
             }
         }
     }
@@ -437,6 +435,17 @@ class ImageEditActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    private fun notifyImageLoadFailure(userMessage: String, error: Throwable) {
+        Log.e("ImageEditActivity", "Failed to load image", error)
+        Toast.makeText(this@ImageEditActivity, userMessage, Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            this@ImageEditActivity,
+            "画像の読み込みに失敗: ${error.message}",
+            Toast.LENGTH_LONG
+        ).show()
+        finish()
     }
 
     /** 権限要求の結果を受け取り、許可された場合は保存処理を再開する。 */

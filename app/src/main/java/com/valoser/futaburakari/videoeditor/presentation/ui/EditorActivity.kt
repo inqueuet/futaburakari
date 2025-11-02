@@ -223,7 +223,7 @@ fun LoadingScreen(progress: Float? = null) {
         ) {
             val clampedProgress = progress?.coerceIn(0f, 100f)
             if (clampedProgress != null) {
-                CircularProgressIndicator(progress = clampedProgress / 100f)
+                CircularProgressIndicator(progress = { clampedProgress / 100f })
                 Text("エクスポート中... ${clampedProgress.roundToInt()}%")
             } else {
                 CircularProgressIndicator()

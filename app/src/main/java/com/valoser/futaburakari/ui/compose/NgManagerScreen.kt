@@ -64,6 +64,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -221,15 +222,15 @@ fun NgManagerScreen(
             ) {
                 item { Spacer(Modifier.height(LocalSpacing.current.xs)) }
                 items(filtered, key = { it.id }) { rule ->
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
-                                // 直接削除（メニューと同等の動作）
-                                onDeleteRule(rule.id)
-                                true
-                            } else false
+                    val dismissState = rememberSwipeToDismissBoxState()
+                    LaunchedEffect(dismissState.currentValue) {
+                        val value = dismissState.currentValue
+                        if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
+                            // 直接削除（メニューと同等の動作）
+                            onDeleteRule(rule.id)
+                            dismissState.reset()
                         }
-                    )
+                    }
                     SwipeToDismissBox(
                         state = dismissState,
                         enableDismissFromStartToEnd = true,

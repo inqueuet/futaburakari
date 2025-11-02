@@ -55,7 +55,7 @@ interface ExportPipeline {
 }
 
 class ExportPipelineImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : ExportPipeline {
 
     private val TIMEOUT_US = 10000L

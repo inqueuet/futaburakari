@@ -2,6 +2,7 @@ package com.valoser.futaburakari.cache
 
 import android.content.Context
 import android.util.Log
+import com.valoser.futaburakari.ArchiveStorageResolver
 import com.valoser.futaburakari.DetailContent
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -36,7 +37,7 @@ data class CachedDetails(
  */
 @Singleton
 class DetailCacheManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
 
     private val gson: Gson = GsonBuilder()
@@ -55,9 +56,7 @@ class DetailCacheManager @Inject constructor(
     private val cacheDir: File by lazy {
         File(context.cacheDir, "details_cache").apply { mkdirs() }
     }
-    private val archiveRoot: File by lazy {
-        File(context.filesDir, "archive_media").apply { mkdirs() }
-    }
+    private val archiveRoot: File by lazy { ArchiveStorageResolver.resolveArchiveRoot(context) }
 
     /**
      * 詳細リストのチェックサムを計算する（差分更新用）

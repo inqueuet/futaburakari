@@ -44,7 +44,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -162,7 +162,7 @@ fun ReplyScreen(
                             .union(WindowInsets.ime)
                     )
             ) {
-                Divider()
+                HorizontalDivider()
                 Button(
                     onClick = {
                         onSubmit(name.ifBlank { null }, email.ifBlank { null }, sub.ifBlank { null }, comment, pwd.ifBlank { null }, pickedUri, textOnly)
