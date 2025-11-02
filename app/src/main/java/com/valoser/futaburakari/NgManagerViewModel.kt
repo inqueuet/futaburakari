@@ -24,7 +24,7 @@ import kotlinx.coroutines.withContext
  */
 @HiltViewModel
 class NgManagerViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     data class UiState(

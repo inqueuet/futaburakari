@@ -23,8 +23,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
 
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Edit
@@ -45,6 +48,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.DockedSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -64,6 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -73,6 +78,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import com.valoser.futaburakari.DetailContent
 import androidx.compose.ui.viewinterop.AndroidView
 import com.valoser.futaburakari.ui.detail.FastScroller
@@ -212,6 +218,7 @@ fun DetailScreenScaffold(
     onDownloadImagesSkipExisting: ((List<String>) -> Unit)? = null,
     // ダウンロード進捗状態
     downloadProgressFlow: StateFlow<com.valoser.futaburakari.DownloadProgress?>? = null,
+    onCancelDownload: (() -> Unit)? = null,
     downloadConflictFlow: Flow<DownloadConflictRequest>? = null,
     onDownloadConflictSkip: ((Long) -> Unit)? = null,
     onDownloadConflictOverwrite: ((Long) -> Unit)? = null,
@@ -219,6 +226,7 @@ fun DetailScreenScaffold(
     // スレッド保存機能
     onArchiveThread: (() -> Unit)? = null,
     archiveProgressFlow: StateFlow<com.valoser.futaburakari.ThreadArchiveProgress?>? = null,
+    onCancelArchive: (() -> Unit)? = null,
     // そうだねのサーバ応答（resNum -> count）
     sodaneUpdates: kotlinx.coroutines.flow.Flow<Pair<String, Int>>? = null,
     promptLoadingIdsFlow: StateFlow<Set<String>>? = null,
@@ -228,6 +236,13 @@ fun DetailScreenScaffold(
     val searchActive: Boolean = searchActiveFlow?.collectAsState(initial = false)?.value ?: localSearchActive.value
     val setSearchActive = remember(onSearchActiveChange) {
         { active: Boolean -> onSearchActiveChange?.invoke(active) ?: run { localSearchActive.value = active } }
+    }
+    val activeQuery = currentQueryFlow?.collectAsStateWithLifecycle(null)?.value
+
+    LaunchedEffect(activeQuery, searchActive) {
+        if (!searchActive) {
+            query = activeQuery.orEmpty()
+        }
     }
 
     // ダウンロード進捗状態
@@ -273,6 +288,13 @@ fun DetailScreenScaffold(
         WindowInsets(0, 0, 0, 0)
     }
 
+    // システムナビゲーションバーのインセット（Androidの3ボタンナビゲーション対応）
+    val systemBarsInsets = WindowInsets.systemBars
+    val navigationBarHeight = systemBarsInsets.getBottom(LocalDensity.current)
+
+    // ボトムバーの高さを保持（検索ナビ・TTSパネルのオフセット計算用）
+    var bottomBarHeightPx by remember { mutableIntStateOf(0) }
+
     val toolbar: @Composable () -> Unit = {
         TopAppBar(
             title = {
@@ -290,17 +312,24 @@ fun DetailScreenScaffold(
                 }
             },
             actions = {
-                IconButton(onClick = onReload) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "Reload")
+                IconButton(onClick = { onReply() }) {
+                    Icon(Icons.AutoMirrored.Rounded.Reply, contentDescription = "返信")
+                }
+                if (!searchActive && !activeQuery.isNullOrBlank()) {
+                    SuggestionChip(
+                        modifier = Modifier.padding(end = 8.dp),
+                        onClick = {
+                            query = activeQuery
+                            setSearchActive(true)
+                        },
+                        icon = { Icon(Icons.Rounded.Search, contentDescription = "検索") },
+                        label = { Text(text = activeQuery, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
                 }
                 IconButton(onClick = { setSearchActive(!searchActive) }) {
                     Icon(Icons.Rounded.Search, contentDescription = "Search")
                 }
-                // メディア一覧はComposeのシートで内製。互換のためコールバック引数は保持
-                IconButton(onClick = { openMediaSheet = true }) {
-                    Icon(Icons.Rounded.Image, contentDescription = "Media List")
-                }
-                // 返信/NG/音声読み上げ/一括ダウンロード/画像編集をオーバーフローメニューに集約
+                // 返信/NG/音声読み上げ/一括ダウンロード/画像編集などをオーバーフローメニューに集約
                 var moreExpanded by remember { mutableStateOf(false) }
                 IconButton(onClick = { moreExpanded = true }) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = "More")
@@ -309,17 +338,11 @@ fun DetailScreenScaffold(
                     expanded = moreExpanded,
                     onDismissRequest = { moreExpanded = false }
                 ) {
+                    // 基本操作グループ
                     androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("返信") },
-                        onClick = { moreExpanded = false; onReply() }
-                    )
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("NG 管理") },
-                        onClick = { moreExpanded = false; onOpenNg() }
-                    )
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("音声読み上げ") },
-                        onClick = { moreExpanded = false; onTtsStart?.invoke() }
+                        text = { Text("再読み込み") },
+                        leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み") },
+                        onClick = { moreExpanded = false; onReload() }
                     )
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("一番下まで飛ぶ") },
@@ -329,7 +352,17 @@ fun DetailScreenScaffold(
                         }
                     )
                     androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("メディア一覧") },
+                        leadingIcon = { Icon(Icons.Rounded.Image, contentDescription = "メディア一覧") },
+                        onClick = { moreExpanded = false; openMediaSheet = true }
+                    )
+
+                    HorizontalDivider()
+
+                    // ダウンロード関連グループ
+                    androidx.compose.material3.DropdownMenuItem(
                         text = { Text("画像一括ダウンロード") },
+                        leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = "ダウンロード") },
                         onClick = {
                             moreExpanded = false
                             onBulkDownloadImagesSkipExisting?.invoke()
@@ -337,7 +370,8 @@ fun DetailScreenScaffold(
                     )
                     if (promptFeaturesEnabled) {
                         androidx.compose.material3.DropdownMenuItem(
-                            text = { Text("プロンプト付き画像ダウンロード") },
+                            text = { Text("プロンプト付き画像DL") },
+                            leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = "ダウンロード") },
                             onClick = {
                                 moreExpanded = false
                                 onBulkDownloadPromptImagesSkipExisting?.invoke()
@@ -347,15 +381,30 @@ fun DetailScreenScaffold(
                     if (onArchiveThread != null) {
                         androidx.compose.material3.DropdownMenuItem(
                             text = { Text("スレッド保存") },
+                            leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = "ダウンロード") },
                             onClick = {
                                 moreExpanded = false
                                 onArchiveThread()
                             }
                         )
                     }
+
+                    HorizontalDivider()
+
+                    // その他機能グループ
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("音声読み上げ") },
+                        onClick = { moreExpanded = false; onTtsStart?.invoke() }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("NG 管理") },
+                        leadingIcon = { Icon(Icons.Rounded.Block, contentDescription = "NG管理") },
+                        onClick = { moreExpanded = false; onOpenNg() }
+                    )
                     if (onImageEdit != null) {
                         androidx.compose.material3.DropdownMenuItem(
                             text = { Text("画像編集") },
+                            leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = "編集") },
                             onClick = { moreExpanded = false; onImageEdit() }
                         )
                     }
@@ -379,7 +428,15 @@ fun DetailScreenScaffold(
         },
         bottomBar = {
             if (appBarPosition == AppBarPosition.BOTTOM) {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .onGloballyPositioned { coordinates ->
+                            bottomBarHeightPx = coordinates.size.height
+                        }
+                        // システムナビゲーションバーと重ならないようにパディング追加
+                        .padding(bottom = with(LocalDensity.current) { navigationBarHeight.toDp() })
+                        .background(MaterialTheme.colorScheme.surface)
+                ) {
                     HorizontalDivider()
                     toolbar()
                 }
@@ -474,7 +531,7 @@ fun DetailScreenScaffold(
                 externalOnImageLoaded.value?.invoke()
             }
             if (itemsFlow != null) {
-                val searchQuery = currentQueryFlow?.collectAsStateWithLifecycle(null)?.value
+                val searchQuery = activeQuery
                 val refreshing = isRefreshingFlow?.collectAsStateWithLifecycle(false)?.value ?: false
                 val pullState = rememberPullToRefreshState()
                 var fastScrollActive by remember { mutableStateOf(false) }
@@ -714,6 +771,10 @@ fun DetailScreenScaffold(
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                 )
                             }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            androidx.compose.material3.TextButton(onClick = { onCancelDownload?.invoke() }) {
+                                Text("キャンセル")
+                            }
                         }
                     }
                 }
@@ -753,6 +814,10 @@ fun DetailScreenScaffold(
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                                     maxLines = 1
                                 )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            androidx.compose.material3.TextButton(onClick = { onCancelArchive?.invoke() }) {
+                                Text("キャンセル")
                             }
                         }
                     }
@@ -882,7 +947,8 @@ fun DetailScreenScaffold(
                                         onReapplyNgFilter?.invoke()
                                         android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
                                     } else {
-                                        android.widget.Toast.makeText(ctx, "追加に失敗しました", android.widget.Toast.LENGTH_SHORT).show()
+                                        val errorMsg = result.exceptionOrNull()?.message ?: "不明なエラー"
+                                        android.widget.Toast.makeText(ctx, "追加に失敗しました: $errorMsg", android.widget.Toast.LENGTH_LONG).show()
                                     }
                                     pendingNgId = null
                                 }
@@ -952,7 +1018,8 @@ fun DetailScreenScaffold(
                                         onReapplyNgFilter?.invoke()
                                         android.widget.Toast.makeText(ctx, "追加しました", android.widget.Toast.LENGTH_SHORT).show()
                                     } else {
-                                        android.widget.Toast.makeText(ctx, "追加に失敗しました", android.widget.Toast.LENGTH_SHORT).show()
+                                        val errorMsg = result.exceptionOrNull()?.message ?: "不明なエラー"
+                                        android.widget.Toast.makeText(ctx, "追加に失敗しました: $errorMsg", android.widget.Toast.LENGTH_LONG).show()
                                     }
                                     pendingNgBody = null
                                 }
@@ -1347,7 +1414,16 @@ fun DetailScreenScaffold(
             }
 
             // 検索バー（DockedSearchBar）: 虫眼鏡で表示/非表示をトグル
+            // ボトムバー時は下部に配置
             if (searchActive) {
+                val searchBarAlignment = if (appBarPosition == AppBarPosition.BOTTOM) Alignment.BottomCenter else Alignment.TopCenter
+                val searchBarBottomPadding = if (appBarPosition == AppBarPosition.BOTTOM) {
+                    // ボトムバーの高さとシステムナビゲーションバーの高さを考慮
+                    with(LocalDensity.current) { (bottomBarHeightPx + navigationBarHeight).toDp() }
+                } else {
+                    0.dp
+                }
+
                 DockedSearchBar(
                     inputField = {
                         SearchBarDefaults.InputField(
@@ -1356,23 +1432,30 @@ fun DetailScreenScaffold(
                             onSearch = {
                                 val q = query.trim()
                                 if (q.isNotEmpty()) onSubmitSearch(q) else onClearSearch()
-                                setSearchActive(false)
                             },
                             expanded = true,
                             onExpandedChange = { active -> setSearchActive(active) },
                             placeholder = { Text("検索キーワード") },
                             leadingIcon = {
-                                Icon(imageVector = Icons.Rounded.Search, contentDescription = null)
+                                Icon(imageVector = Icons.Rounded.Search, contentDescription = "検索")
                             },
                             trailingIcon = {
-                                if (query.isNotEmpty()) {
-                                    IconButton(onClick = {
-                                        query = ""
-                                        onClearSearch()
-                                    }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (query.isNotEmpty()) {
+                                        IconButton(onClick = {
+                                            query = ""
+                                            onClearSearch()
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Clear,
+                                                contentDescription = "検索条件をクリア"
+                                            )
+                                        }
+                                    }
+                                    IconButton(onClick = { setSearchActive(false) }) {
                                         Icon(
                                             imageVector = Icons.Rounded.Close,
-                                            contentDescription = "Clear"
+                                            contentDescription = "検索を閉じる"
                                         )
                                     }
                                 }
@@ -1389,8 +1472,9 @@ fun DetailScreenScaffold(
                     expanded = true,
                     onExpandedChange = { active -> setSearchActive(active) },
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(horizontal = LocalSpacing.current.s),
+                        .align(searchBarAlignment)
+                        .padding(horizontal = LocalSpacing.current.s)
+                        .padding(bottom = searchBarBottomPadding),
                     colors = SearchBarDefaults.colors(
                         containerColor = MaterialTheme.colorScheme.surface
                     )
@@ -1446,7 +1530,7 @@ fun DetailScreenScaffold(
                                             }
                                             .padding(horizontal = LocalSpacing.current.xs),
                                         leadingContent = {
-                                            Icon(Icons.Rounded.Search, contentDescription = null)
+                                            Icon(Icons.Rounded.Search, contentDescription = "検索")
                                         },
                                     )
                                 }
@@ -1475,7 +1559,10 @@ fun DetailScreenScaffold(
 
                 if (ttsState is TtsManager.TtsState.Playing || ttsState is TtsManager.TtsState.Paused) {
                     val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
-                    val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
+                    // ボトムバーの高さとシステムナビゲーションバーの高さも考慮
+                    val totalBottomPx = bottomPx +
+                        if (appBarPosition == AppBarPosition.BOTTOM) bottomBarHeightPx + navigationBarHeight else 0
+                    val bottomDp = with(LocalDensity.current) { totalBottomPx.toDp() }
                     TtsControlPanel(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -1502,7 +1589,10 @@ fun DetailScreenScaffold(
                 val s by searchStateFlow.collectAsStateWithLifecycle(com.valoser.futaburakari.ui.detail.SearchState(false, 0, 0))
                 if (s.active) {
                     val bottomPx = bottomOffsetPxFlow?.collectAsState(initial = 0)?.value ?: 0
-                    val bottomDp = with(LocalDensity.current) { bottomPx.toDp() }
+                    // ボトムバーの高さとシステムナビゲーションバーの高さも考慮
+                    val totalBottomPx = bottomPx +
+                        if (appBarPosition == AppBarPosition.BOTTOM) bottomBarHeightPx + navigationBarHeight else 0
+                    val bottomDp = with(LocalDensity.current) { totalBottomPx.toDp() }
                     SearchNavigationBar(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)

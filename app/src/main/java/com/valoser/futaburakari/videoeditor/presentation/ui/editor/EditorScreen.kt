@@ -9,7 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.valoser.futaburakari.videoeditor.presentation.viewmodel.EditorViewModel
 import com.valoser.futaburakari.videoeditor.presentation.ui.components.TimelineView
 import com.valoser.futaburakari.videoeditor.presentation.ui.components.PreviewView
@@ -28,9 +28,9 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.ZoomIn
@@ -107,7 +107,7 @@ fun EditorScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         // バックアイコン
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -118,7 +118,7 @@ fun EditorScreen(
                         },
                         enabled = state.session != null && !state.isLoading
                     ) {
-                        Icon(Icons.Default.Undo, contentDescription = "Undo")
+                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
                     }
 
                     // Redoボタン
@@ -128,7 +128,7 @@ fun EditorScreen(
                         },
                         enabled = state.session != null && !state.isLoading
                     ) {
-                        Icon(Icons.Default.Redo, contentDescription = "Redo")
+                        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo")
                     }
 
                     TextButton(
@@ -161,7 +161,7 @@ fun EditorScreen(
                     .weight(0.45f)
             )
 
-            Divider()
+            HorizontalDivider()
 
             // タイムライン操作バー（48dp）
             Surface(
@@ -347,7 +347,7 @@ fun EditorScreen(
                 )
             }
 
-            Divider()
+            HorizontalDivider()
 
             // Main toolbar (always visible)
             MainToolbar(
@@ -515,7 +515,7 @@ fun EditorScreen(
             ) {
                 val clampedProgress = state.exportProgress?.coerceIn(0f, 100f)
                 if (clampedProgress != null) {
-                    CircularProgressIndicator(progress = clampedProgress / 100f)
+                    CircularProgressIndicator(progress = { clampedProgress / 100f })
                     Text("エクスポート中... ${clampedProgress.roundToInt()}%")
                 } else {
                     CircularProgressIndicator()

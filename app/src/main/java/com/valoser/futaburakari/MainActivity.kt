@@ -20,13 +20,26 @@ import coil3.request.ImageRequest
 import coil3.network.httpHeaders
 import coil3.network.NetworkHeaders
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TextButton
@@ -40,9 +53,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.semantics.Role
 import com.valoser.futaburakari.ui.compose.MainCatalogScreen
 import com.valoser.futaburakari.ui.common.AppBarPosition
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
@@ -139,6 +155,8 @@ class MainActivity : BaseActivity() {
     private val listIdentityState = mutableStateOf("")
     private val ngRulesState = mutableStateOf<List<NgRule>>(emptyList())
     private val promptFetchEnabledState = mutableStateOf(false)
+    private val hasBookmarksState = mutableStateOf(false)
+    private val hasSelectedBookmarkState = mutableStateOf(false)
     private var listIdentityVersion = 0L
     private var pendingScrollReset = false
 
@@ -171,8 +189,11 @@ class MainActivity : BaseActivity() {
             }
         }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        refreshBookmarkState()
 
         // Compose用初期化
         spanCountState.intValue = getGridSpanCount()
@@ -187,8 +208,12 @@ class MainActivity : BaseActivity() {
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
                 val errorMessage by viewModel.error.observeAsState()
-                var showBookmarkDialog by rememberSaveable { mutableStateOf(currentSelectedUrl.isNullOrBlank()) }
+                val hasBookmarks = hasBookmarksState.value
+                val hasSelectedBookmark = hasSelectedBookmarkState.value
+                var showBookmarkDialog by rememberSaveable { mutableStateOf(false) }
                 var showSortModeDialog by rememberSaveable { mutableStateOf(false) }
+
+                // 自動表示を削除し、ユーザーが明示的にブックマーク選択を行う方式に変更
 
                 LaunchedEffect(errorMessage) {
                     val msg = errorMessage
@@ -205,12 +230,27 @@ class MainActivity : BaseActivity() {
                         spanCount = spanCountState.intValue,
                         catalogDisplayMode = catalogDisplayModeState.value,
                         topBarPosition = topBarPositionState.value,
+                        hasAnyBookmarks = hasBookmarks,
+                        hasSelectedBookmark = hasSelectedBookmark,
                         query = queryState.value,
                         onQueryChange = { q -> queryState.value = q },
                         onReload = {
                             cancelAutoUpdate()
-                            fetchDataForCurrentUrl()
-                            scope.launch { snackbarHostState.showSnackbar(getString(R.string.reloading)) }
+                            when {
+                                !hasBookmarks -> {
+                                    scope.launch { snackbarHostState.showSnackbar("まずはブックマークを追加してください") }
+                                    val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
+                                    bookmarkActivityResultLauncher.launch(intent)
+                                }
+                                currentSelectedUrl.isNullOrBlank() -> {
+                                    scope.launch { snackbarHostState.showSnackbar("表示するブックマークを選択してください") }
+                                    showBookmarkDialog = true
+                                }
+                                else -> {
+                                    fetchDataForCurrentUrl()
+                                    scope.launch { snackbarHostState.showSnackbar(getString(R.string.reloading)) }
+                                }
+                            }
                         },
                         onPrefetchHint = { hint -> viewModel.submitCatalogPrefetchHint(hint) },
                         onSelectBookmark = {
@@ -236,10 +276,14 @@ class MainActivity : BaseActivity() {
                         onVideoEdit = { startActivity(Intent(this@MainActivity, com.valoser.futaburakari.videoeditor.presentation.ui.EditorActivity::class.java)) },
                         onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
                         promptFeaturesEnabled = promptFetchEnabledState.value,
+                        onToggleDisplayMode = { toggleCatalogDisplayMode() },
                         onItemClick = { item -> handleItemClick(item) },
                         ngRules = ngRulesState.value,
                         onImageLoadHttp404 = { item, failedUrl ->
                             viewModel.fixImageIf404NoHtml(item.detailUrl, failedUrl)
+                            scope.launch {
+                                snackbarHostState.showSnackbar("画像URLを修正しました")
+                            }
                         },
                         onImageLoadSuccess = { item, loadedUrl ->
                             viewModel.notifyFullImageSuccess(item.detailUrl, loadedUrl)
@@ -249,37 +293,96 @@ class MainActivity : BaseActivity() {
                     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
 
                     if (showBookmarkDialog) {
-                        val bookmarks = remember { BookmarkManager.getBookmarks(this@MainActivity) }
-                        AlertDialog(
+                        val bookmarks = BookmarkManager.getBookmarks(this@MainActivity)
+                        hasBookmarksState.value = bookmarks.isNotEmpty()
+                        if (bookmarks.isEmpty()) {
+                            hasSelectedBookmarkState.value = false
+                        }
+                        val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                        androidx.compose.material3.ModalBottomSheet(
                             onDismissRequest = { showBookmarkDialog = false },
-                            title = { androidx.compose.material3.Text("ブックマークを選択") },
-                            text = {
-                                LazyColumn {
-                                    items(bookmarks) { b ->
+                            sheetState = sheetState
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(bottom = com.valoser.futaburakari.ui.theme.LocalSpacing.current.l)) {
+                                // タイトル
+                                androidx.compose.material3.Text(
+                                    text = "ブックマークを選択",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(horizontal = com.valoser.futaburakari.ui.theme.LocalSpacing.current.l, vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m)
+                                )
+
+                                if (bookmarks.isEmpty()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.l),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
                                         androidx.compose.material3.Text(
-                                            text = b.name,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    currentSelectedUrl = b.url
-                                                    toolbarSubtitleState.value = b.name
-                                                    BookmarkManager.saveSelectedBookmarkUrl(this@MainActivity, b.url)
-                                                    showBookmarkDialog = false
-                                                    pendingScrollReset = true
-                                                    fetchDataForCurrentUrl()
-                                                }
-                                                .padding(vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m)
+                                            text = "登録済みのブックマークがありません。",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodyLarge
                                         )
+                                        Spacer(modifier = Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.m))
+                                        androidx.compose.material3.Text(
+                                            text = "ブックマーク管理から追加してください。",
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Spacer(modifier = Modifier.height(com.valoser.futaburakari.ui.theme.LocalSpacing.current.l))
+                                        androidx.compose.material3.Button(
+                                            onClick = {
+                                                showBookmarkDialog = false
+                                                val intent = Intent(this@MainActivity, BookmarkActivity::class.java)
+                                                bookmarkActivityResultLauncher.launch(intent)
+                                            }
+                                        ) {
+                                            androidx.compose.material3.Text("ブックマークを管理")
+                                        }
+                                    }
+                                } else {
+                                    val selectedUrl = currentSelectedUrl
+                                    val listState = rememberLazyListState()
+                                    LazyColumn(
+                                        state = listState,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(bookmarks) { b ->
+                                            val selected = b.url == selectedUrl
+                                            val backgroundColor =
+                                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                                else Color.Transparent
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(backgroundColor)
+                                                    .clickable {
+                                                        currentSelectedUrl = b.url
+                                                        toolbarSubtitleState.value = b.name
+                                                        BookmarkManager.saveSelectedBookmarkUrl(this@MainActivity, b.url)
+                                                        hasSelectedBookmarkState.value = true
+                                                        showBookmarkDialog = false
+                                                        pendingScrollReset = true
+                                                        fetchDataForCurrentUrl()
+                                                    }
+                                                    .padding(vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m, horizontal = com.valoser.futaburakari.ui.theme.LocalSpacing.current.l),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                androidx.compose.material3.Text(
+                                                    text = b.name,
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
                                     }
                                 }
-                            },
-                            confirmButton = {
-                                TextButton(onClick = { showBookmarkDialog = false }) { androidx.compose.material3.Text("閉じる") }
                             }
-                        )
+                        }
                     }
 
                     if (showSortModeDialog) {
+                        val currentSortValue = extractSortValue(currentSelectedUrl)
                         val sortModes = listOf(
                             "カタログ" to "",
                             "新順" to "1",
@@ -288,43 +391,72 @@ class MainActivity : BaseActivity() {
                             "少順" to "4",
                             "勢順" to "6"
                         )
-                        AlertDialog(
+                        val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+                        androidx.compose.material3.ModalBottomSheet(
                             onDismissRequest = { showSortModeDialog = false },
-                            title = { androidx.compose.material3.Text("カタログ並び順を選択") },
-                            text = {
-                                LazyColumn {
+                            sheetState = sheetState
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(bottom = com.valoser.futaburakari.ui.theme.LocalSpacing.current.l)) {
+                                // タイトル
+                                androidx.compose.material3.Text(
+                                    text = "カタログ並び順を選択",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(horizontal = com.valoser.futaburakari.ui.theme.LocalSpacing.current.l, vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m)
+                                )
+
+                                val listState = rememberLazyListState()
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
                                     items(sortModes) { (label, sortValue) ->
-                                        androidx.compose.material3.Text(
-                                            text = label,
+                                        val selected = sortValue == currentSortValue
+                                        val backgroundColor =
+                                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                            else Color.Transparent
+                                        Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable {
-                                                    val baseUrl = currentSelectedUrl
-                                                    if (!baseUrl.isNullOrBlank() && baseUrl.contains("futaba.php")) {
-                                                        // ベースURLを取得（クエリパラメータを除去）
-                                                        val urlBase = baseUrl.substringBefore("?")
-                                                        // 新しいURLを構築
-                                                        val newUrl = if (sortValue.isEmpty()) {
-                                                            "$urlBase?mode=cat"
-                                                        } else {
-                                                            "$urlBase?mode=cat&sort=$sortValue"
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .selectable(
+                                                    selected = selected,
+                                                    role = Role.RadioButton,
+                                                    onClick = {
+                                                        val baseUrl = currentSelectedUrl
+                                                        if (!baseUrl.isNullOrBlank() && baseUrl.contains("futaba.php")) {
+                                                            val urlBase = baseUrl.substringBefore("?")
+                                                            val newUrl = if (sortValue.isEmpty()) {
+                                                                "$urlBase?mode=cat"
+                                                            } else {
+                                                                "$urlBase?mode=cat&sort=$sortValue"
+                                                            }
+                                                            currentSelectedUrl = newUrl
+                                                            BookmarkManager.saveSelectedBookmarkUrl(this@MainActivity, newUrl)
+                                                            showSortModeDialog = false
+                                                            pendingScrollReset = true
+                                                            fetchDataForCurrentUrl()
                                                         }
-                                                        currentSelectedUrl = newUrl
-                                                        BookmarkManager.saveSelectedBookmarkUrl(this@MainActivity, newUrl)
-                                                        showSortModeDialog = false
-                                                        pendingScrollReset = true
-                                                        fetchDataForCurrentUrl()
                                                     }
-                                                }
-                                                .padding(vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m)
-                                        )
+                                                )
+                                                .background(backgroundColor)
+                                                .padding(
+                                                    horizontal = com.valoser.futaburakari.ui.theme.LocalSpacing.current.l,
+                                                    vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.m
+                                                ),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(selected = selected, onClick = null)
+                                            Spacer(modifier = Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s))
+                                            androidx.compose.material3.Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
                                     }
                                 }
-                            },
-                            confirmButton = {
-                                TextButton(onClick = { showSortModeDialog = false }) { androidx.compose.material3.Text("閉じる") }
                             }
-                        )
+                        }
                     }
                 }
             }
@@ -364,6 +496,7 @@ class MainActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         // 設定でのNG変更を反映（Composeへ）
+        refreshBookmarkState()
         ngRulesState.value = ngStore.getRules()
     }
 
@@ -449,20 +582,70 @@ class MainActivity : BaseActivity() {
             .getString("pref_key_catalog_display_mode", "grid") ?: "grid"
     }
 
+    private fun extractSortValue(url: String?): String {
+        if (url.isNullOrBlank()) return ""
+        val query = url.substringAfter("?", "")
+        if (query.isEmpty()) return ""
+        for (param in query.split("&")) {
+            val parts = param.split("=", limit = 2)
+            if (parts.size == 2 && parts[0] == "sort") {
+                return parts[1]
+            }
+        }
+        return ""
+    }
+
     private fun getTopBarPosition(): AppBarPosition {
         val pref = PreferenceManager.getDefaultSharedPreferences(this)
             .getString("pref_key_top_bar_position", "top") ?: "top"
         return if (pref == "bottom") AppBarPosition.BOTTOM else AppBarPosition.TOP
     }
 
+    private fun refreshBookmarkState() {
+        val bookmarks = BookmarkManager.getBookmarks(this)
+        hasBookmarksState.value = bookmarks.isNotEmpty()
+
+        if (bookmarks.isEmpty()) {
+            currentSelectedUrl = null
+            hasSelectedBookmarkState.value = false
+            toolbarSubtitleState.value = "ブックマーク未選択"
+            return
+        }
+
+        val storedUrl = BookmarkManager.getSelectedBookmarkUrl(this)
+        val storedBase = storedUrl.substringBefore("?")
+        val matched = bookmarks.firstOrNull { it.url == storedUrl }
+            ?: bookmarks.firstOrNull { it.url.substringBefore("?") == storedBase }
+        val effectiveBookmark = matched ?: bookmarks.first()
+
+        if (matched == null) {
+            BookmarkManager.saveSelectedBookmarkUrl(this, effectiveBookmark.url)
+            currentSelectedUrl = effectiveBookmark.url
+        } else {
+            currentSelectedUrl = storedUrl
+        }
+        toolbarSubtitleState.value = effectiveBookmark.name
+        hasSelectedBookmarkState.value = true
+    }
+
     /**
      * 初期の選択ブックマークと副題を設定し、現在のURLでデータ取得を開始する。
      */
     private fun loadAndFetchInitialData() {
-        currentSelectedUrl = BookmarkManager.getSelectedBookmarkUrl(this)
-        toolbarSubtitleState.value = getCurrentBookmarkName()
+        refreshBookmarkState()
         pendingScrollReset = true
-        fetchDataForCurrentUrl()
+        val url = currentSelectedUrl
+        if (!url.isNullOrBlank()) {
+            fetchDataForCurrentUrl()
+        }
+    }
+
+    private fun toggleCatalogDisplayMode() {
+        val next = if (catalogDisplayModeState.value == "list") "grid" else "list"
+        catalogDisplayModeState.value = next
+        if (::prefs.isInitialized) {
+            prefs.edit().putString("pref_key_catalog_display_mode", next).apply()
+        }
     }
 
     private fun updateListIdentity(url: String?, force: Boolean = false) {

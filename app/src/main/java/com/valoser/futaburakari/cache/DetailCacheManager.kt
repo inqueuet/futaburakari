@@ -37,7 +37,7 @@ data class CachedDetails(
  */
 @Singleton
 class DetailCacheManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
 
     private val gson: Gson = GsonBuilder()

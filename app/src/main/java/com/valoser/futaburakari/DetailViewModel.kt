@@ -133,6 +133,10 @@ class DetailViewModel @Inject constructor(
     /** スレッドアーカイバー */
     private val threadArchiver by lazy { ThreadArchiver(appContext, networkClient) }
 
+    /** ダウンロード/アーカイブのキャンセル用Job */
+    private var downloadJob: kotlinx.coroutines.Job? = null
+    private var archiveJob: kotlinx.coroutines.Job? = null
+
     private val downloadRequestIdGenerator = AtomicLong(0)
     private val pendingDownloadMutex = Mutex()
     private val pendingDownloadRequests = mutableMapOf<Long, PendingDownloadRequest>()
@@ -1844,7 +1848,8 @@ class DetailViewModel @Inject constructor(
     fun downloadImages(urls: List<String>) {
         if (urls.isEmpty()) return
 
-        viewModelScope.launch {
+        downloadJob?.cancel()
+        downloadJob = viewModelScope.launch {
             _downloadProgress.value = DownloadProgress(0, urls.size, isActive = true)
             var completed = 0
 
@@ -1868,11 +1873,21 @@ class DetailViewModel @Inject constructor(
                     }
                     jobs.awaitAll()
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // キャンセルされた場合
+                throw e
             } finally {
                 delay(500) // 完了表示を少し見せる
                 _downloadProgress.value = null
+                downloadJob = null
             }
         }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        _downloadProgress.value = null
     }
 
     fun downloadImagesSkipExisting(urls: List<String>) {
@@ -2091,7 +2106,8 @@ class DetailViewModel @Inject constructor(
             return "既にスレッド保存が実行中です"
         }
 
-        viewModelScope.launch {
+        archiveJob?.cancel()
+        archiveJob = viewModelScope.launch {
             try {
                 _archiveProgress.value = ThreadArchiveProgress(
                     current = 0,
@@ -2133,6 +2149,12 @@ class DetailViewModel @Inject constructor(
                 // 進捗表示をクリア
                 delay(500)
                 _archiveProgress.value = null
+                archiveJob = null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // キャンセルされた場合
+                _archiveProgress.value = null
+                archiveJob = null
+                throw e
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Archive failed", e)
                 withContext(Dispatchers.Main) {
@@ -2143,9 +2165,16 @@ class DetailViewModel @Inject constructor(
                     ).show()
                 }
                 _archiveProgress.value = null
+                archiveJob = null
             }
         }
         return null
+    }
+
+    fun cancelArchive() {
+        archiveJob?.cancel()
+        archiveJob = null
+        _archiveProgress.value = null
     }
 
     // ========== TTS音声読み上げ制御 ==========

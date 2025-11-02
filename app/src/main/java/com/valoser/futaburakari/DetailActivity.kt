@@ -292,10 +292,12 @@ class DetailActivity : BaseActivity() {
                     onDownloadImages = { urls -> viewModel.downloadImages(urls) },
                     onDownloadImagesSkipExisting = { urls -> viewModel.downloadImagesSkipExisting(urls) },
                     downloadProgressFlow = viewModel.downloadProgress,
+                    onCancelDownload = { viewModel.cancelDownload() },
                     downloadConflictFlow = viewModel.downloadConflictRequests,
                     onDownloadConflictSkip = { id -> viewModel.confirmDownloadSkip(id) },
                     onArchiveThread = { viewModel.archiveThread(toolbarTitleText) },
                     archiveProgressFlow = viewModel.archiveProgress,
+                    onCancelArchive = { viewModel.cancelArchive() },
                     // TTS音声読み上げ
                     ttsStateFlow = viewModel.ttsState,
                     ttsCurrentResNumFlow = viewModel.ttsCurrentResNum,

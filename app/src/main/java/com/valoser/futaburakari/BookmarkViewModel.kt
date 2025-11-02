@@ -25,6 +25,9 @@ class BookmarkViewModel @Inject constructor(
     private val _bookmarks = MutableStateFlow<List<Bookmark>>(emptyList())
     /** UIから購読されるブックマークリスト。 */
     val bookmarks: StateFlow<List<Bookmark>> = _bookmarks.asStateFlow()
+    /** 現在選択されているブックマークURL。 */
+    private val _selectedBookmarkUrl = MutableStateFlow<String?>(null)
+    val selectedBookmarkUrl: StateFlow<String?> = _selectedBookmarkUrl.asStateFlow()
 
     init {
         loadBookmarks()
@@ -34,6 +37,7 @@ class BookmarkViewModel @Inject constructor(
     private fun loadBookmarks() {
         viewModelScope.launch(Dispatchers.IO) {
             _bookmarks.value = BookmarkManager.getBookmarks(context)
+            _selectedBookmarkUrl.value = BookmarkManager.getSelectedBookmarkUrl(context)
         }
     }
 
@@ -77,6 +81,7 @@ class BookmarkViewModel @Inject constructor(
     fun saveSelectedBookmarkUrl(url: String?) {
         viewModelScope.launch(Dispatchers.IO) {
             BookmarkManager.saveSelectedBookmarkUrl(context, url)
+            _selectedBookmarkUrl.value = BookmarkManager.getSelectedBookmarkUrl(context)
         }
     }
 }

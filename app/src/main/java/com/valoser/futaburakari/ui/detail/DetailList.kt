@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
@@ -563,6 +564,18 @@ fun DetailListCompose(
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // ヘッダー行（最初の行）の背景色を設定して視覚的に分離
+                            .background(
+                                if (displayText.trim().lines().firstOrNull()?.let { firstLine ->
+                                    Regex("""\d{2}/\d{2}/\d{2}\(\S+\)\d{2}:\d{2}:\d{2}""").containsMatchIn(firstLine)
+                                } == true) {
+                                    androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.3f)
+                                } else {
+                                    androidx.compose.ui.graphics.Color.Transparent
+                                }
+                            )
+                            // タッチ領域を広げるため、最小タッチターゲット高さ（48dp）を保証
+                            .sizeIn(minHeight = 48.dp)
                             // 短押しは子の ClickableText に渡す。ここでは「長押しのみ」を本文引用として扱う。
                             .pointerInput(plain) {
                                 detectTapGestures(
@@ -579,6 +592,7 @@ fun DetailListCompose(
                             text = annotated,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs)
                                 .pointerInput(annotated, textLayoutResult) {
                                     detectTapGestures { position ->
                                         val layout = textLayoutResult ?: return@detectTapGestures
@@ -645,6 +659,14 @@ fun DetailListCompose(
                             onTextLayout = { textLayoutResult = it }
                         )
                     }
+                    // レス間の視覚的区切り（コントラスト向上）
+                    androidx.compose.material3.HorizontalDivider(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = LocalSpacing.current.xs),
+                        thickness = 1.dp,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                    )
                 }
 
                 is DetailContent.Image -> {
@@ -1150,6 +1172,9 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         return false
     }
 
+    // クリック可能要素用の色（Material3のプライマリ色）
+    val clickableColor = Color(0xFF6750A4) // Material3 Primary color
+
     // No.1234 pattern（ドット任意・全角ドット・空白許容）
     val resRegex = Regex("""(?i)No[.\uFF0E]?\s*(\d+)""")
     resRegex.findAll(text).forEach { m ->
@@ -1167,20 +1192,25 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val isQuoteLine = trimmedLine.startsWith(">") || trimmedLine.startsWith("＞")
         if (isHeaderLine(line, lineIndex) || isQuoteLine) {
             val num = m.groupValues[1]
-            // 自レス番号なら強調色、それ以外は下線のみ
+            // 自レス番号なら強調色、それ以外はプライマリ色
             if (myPostNumbers.contains(num)) {
                 addStyle(SpanStyle(
                     textDecoration = TextDecoration.Underline,
-                    color = Color(0xFF4CAF50) // 緑色で強調
+                    color = Color(0xFF4CAF50), // 緑色で強調
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 ), m.range.first, m.range.last + 1)
             } else {
-                addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+                addStyle(SpanStyle(
+                    textDecoration = TextDecoration.Underline,
+                    color = clickableColor,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                ), m.range.first, m.range.last + 1)
             }
             addStringAnnotation(tag = "res", annotation = num, start = m.range.first, end = m.range.last + 1)
         }
     }
     // 引用行: 行頭の空白や全角＞を許容し、タグには正規化したトークンを渡す
-    // 視認性向上のため背景色を追加
+    // 視認性向上のため色と背景色を追加
     val lineRegex = Regex("^(?:[\\t \\u3000])*[>＞]+[^\\n]*", RegexOption.MULTILINE)
     lineRegex.findAll(text).forEach { m ->
         val tokenRaw = m.value
@@ -1189,7 +1219,9 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val end = m.range.last + 1
         addStyle(SpanStyle(
             textDecoration = TextDecoration.Underline,
-            background = Color(0x1A9C27B0) // 薄い紫色の背景
+            color = clickableColor,
+            background = Color(0x1A9C27B0), // 薄い紫色の背景
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
         ), start, end)
         addStringAnnotation(tag = "quote", annotation = token, start = start, end = end)
     }
@@ -1224,7 +1256,11 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     val idRegex = Regex("""ID([:：])([\u0021-\u007E\u00A0-\u00FF\w./+]+)""")
     idRegex.findAll(text).forEach { m ->
         val id = m.groupValues.getOrNull(2) ?: return@forEach
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+        addStyle(SpanStyle(
+            textDecoration = TextDecoration.Underline,
+            color = clickableColor,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+        ), m.range.first, m.range.last + 1)
         addStringAnnotation(tag = "id", annotation = id, start = m.range.first, end = m.range.last + 1)
     }
     // 検索ハイライト
@@ -1237,7 +1273,10 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
     // URL: クリック可能にする
     val urlRegex = Patterns.WEB_URL.toRegex()
     urlRegex.findAll(text).forEach { m ->
-        addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+        addStyle(SpanStyle(
+            textDecoration = TextDecoration.Underline,
+            color = clickableColor
+        ), m.range.first, m.range.last + 1)
         addStringAnnotation("url", m.value, m.range.first, m.range.last + 1)
     }
     // ファイル名トークン（拡張子を含むものを検出しクリック可能に）
@@ -1245,7 +1284,11 @@ private fun buildAnnotatedFromText(text: String, highlight: String?, threadTitle
         val ext = "(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|avi|mov|mkv)"
         val pat = Regex("""(?i)([A-Za-z0-9._-]+\.$ext)""")
         pat.findAll(text).forEach { m ->
-            addStyle(SpanStyle(textDecoration = TextDecoration.Underline), m.range.first, m.range.last + 1)
+            addStyle(SpanStyle(
+                textDecoration = TextDecoration.Underline,
+                color = clickableColor,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+            ), m.range.first, m.range.last + 1)
             addStringAnnotation("filename", m.groupValues[1], m.range.first, m.range.last + 1)
         }
     }

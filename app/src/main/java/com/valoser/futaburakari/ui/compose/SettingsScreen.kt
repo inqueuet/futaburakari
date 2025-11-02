@@ -43,6 +43,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -165,6 +167,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     var showPwdDialog by remember { mutableStateOf(false) }
     var pwdText by remember { mutableStateOf("") }
     var clearingCache by remember { mutableStateOf(false) }
+
+    // 拡張可能セクションの状態
+    var advancedExpanded by remember { mutableStateOf(false) }
 
     // ドロップダウン用の表示ラベルと値の配列（strings.xmlから取得）
     val gridEntries = remember { ctx.resources.getStringArray(R.array.pref_grid_span_entries).toList() }
@@ -343,9 +348,9 @@ fun SettingsScreen(onBack: () -> Unit) {
             item {
                 // 画像プロンプト（メタデータ）解析の有効/無効を切り替える
                 val promptSummary = if (lowBandwidthMode) {
-                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します（低帯域モード中は利用できません）"
+                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します\n※低帯域モード中は利用できません。先に低帯域モードを無効化してください"
                 } else {
-                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します"
+                    "Detail/メディア画面でメタデータを解析してプロンプトを表示します\n※低帯域モードを有効にすると自動的に無効になります"
                 }
                 SwitchRow(
                     title = "画像プロンプトを取得",
@@ -450,16 +455,39 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // ネットワーク（同時接続数）
-            item { SectionHeader(text = "ネットワーク") }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            item { SectionHeader(text = "投稿設定") }
+            item {
+                // 投稿時に使う削除キー（パスワード）を保存
+                ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+            // 高度な設定セクション（折りたたみ可能）
+            item {
+                CollapsibleSectionHeader(
+                    text = "高度な設定",
+                    expanded = advancedExpanded,
+                    onToggle = { advancedExpanded = !advancedExpanded }
+                )
+            }
+
+            if (advancedExpanded) {
+                // ネットワーク（同時接続数）
+                item { SectionHeader(text = "ネットワーク") }
             item {
                 SwitchRow(
                     title = "低帯域モード",
                     checked = lowBandwidthMode,
-                    summary = "スレ詳細ではサムネイルのみを読み込みます（タップ時はフル画像）"
+                    summary = "スレ詳細ではサムネイルのみを読み込みます（タップ時はフル画像）\n※有効時は画像プロンプトの取得が無効になります"
                 ) { enabled ->
                     lowBandwidthMode = enabled
                     AppPreferences.setLowBandwidthMode(ctx, enabled)
+                    // 低帯域モード有効時はプロンプト取得を自動的に無効化
+                    if (enabled && promptFetchEnabled) {
+                        promptFetchEnabled = false
+                        prefs.edit().putBoolean(PromptSettings.PREF_KEY_FETCH_ENABLED, false).apply()
+                    }
                     android.widget.Toast.makeText(
                         ctx,
                         if (enabled) "低帯域モードを有効にしました。スレを再読み込みしてください。" else "低帯域モードを無効にしました。",
@@ -493,15 +521,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             // フル画像アップグレード同時数の個別設定は廃止（同時接続数に統合）
 
-            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "投稿設定") }
-            item {
-                // 投稿時に使う削除キー（パスワード）を保存
-                ListRow(title = "投稿用パスワード", summary = "タップして変更") { showPwdDialog = true }
-            }
-
-            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "キャッシュ管理") }
+                item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+                item { SectionHeader(text = "キャッシュ管理") }
 
             // メモリ使用量情報の表示
             item {
@@ -636,21 +657,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                         prefs.edit().putString("pref_key_auto_cleanup_limit_percent", v).apply()
                     }
                 )
-            }
-
-            item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
-            item { SectionHeader(text = "広告表示") }
-            item {
-                // Detail画面にバナー広告を固定表示するか
-                SwitchRow(title = "広告を表示", checked = adsEnabled, summary = "Detail画面下部にバナー広告を固定表示します") {
-                    adsEnabled = it
-                    prefs.edit().putBoolean("pref_key_ads_enabled", it).apply()
                 }
-            }
 
-            // removed: background monitoring toggle (always enabled)
+                // removed: background monitoring toggle (always enabled)
 
-            // その他セクション（必要な1本だけ区切り線を表示）
+                // 広告表示
+                item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
+                item { SectionHeader(text = "広告表示") }
+                item {
+                    // Detail画面にバナー広告を固定表示するか
+                    SwitchRow(title = "広告を表示", checked = adsEnabled, summary = "Detail画面下部にバナー広告を固定表示します") {
+                        adsEnabled = it
+                        prefs.edit().putBoolean("pref_key_ads_enabled", it).apply()
+                    }
+                }
+            } // End of advanced settings
+
+            // その他セクション（高度な設定の外側）
             item { HorizontalDivider(modifier = Modifier.padding(vertical = LocalSpacing.current.s)) }
             item { SectionHeader(text = "その他") }
             item {
@@ -819,5 +842,39 @@ private fun SwitchRow(
             }
         }
         Switch(checked = checked, onCheckedChange = onToggle, enabled = enabled)
+    }
+}
+
+/**
+ * 折りたたみ可能なセクションヘッダー。
+ * 展開/折りたたみアイコンを持つクリック可能な見出しを表示します。
+ *
+ * パラメータ:
+ * - `text`: セクションのタイトル。
+ * - `expanded`: 現在の展開状態。
+ * - `onToggle`: クリック時に呼ばれるハンドラ。
+ */
+@Composable
+private fun CollapsibleSectionHeader(
+    text: String,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            imageVector = if (expanded) Icons.Rounded.ExpandMore else Icons.Rounded.ChevronRight,
+            contentDescription = if (expanded) "折りたたむ" else "展開する"
+        )
     }
 }

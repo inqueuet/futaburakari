@@ -52,13 +52,13 @@ class EncoderInputSurface(
         val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
         val share = sharedContext ?: EGL14.EGL_NO_CONTEXT
         eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, share, ctxAttribs, 0)
-        if (eglContext == null || eglContext == EGL14.EGL_NO_CONTEXT) {
+        if (eglContext == EGL14.EGL_NO_CONTEXT) {
             throw RuntimeException("eglCreateContext failed (shared=${sharedContext!=null}) err=0x${Integer.toHexString(EGL14.eglGetError())}")
         }
 
         val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
         eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, surface, surfaceAttribs, 0)
-        if (eglSurface == null || eglSurface == EGL14.EGL_NO_SURFACE) {
+        if (eglSurface == EGL14.EGL_NO_SURFACE) {
             throw RuntimeException("eglCreateWindowSurface failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
         }
 
@@ -173,7 +173,7 @@ class DecoderOutputSurface(
         val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
         val share = sharedContext ?: EGL14.EGL_NO_CONTEXT
         eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, share, ctxAttribs, 0)
-        if (eglContext == null || eglContext == EGL14.EGL_NO_CONTEXT) {
+        if (eglContext == EGL14.EGL_NO_CONTEXT) {
             throw RuntimeException("eglCreateContext(decoder) failed (shared=${sharedContext!=null})")
         }
 
