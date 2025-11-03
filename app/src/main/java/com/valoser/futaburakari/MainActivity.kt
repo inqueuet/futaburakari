@@ -60,8 +60,10 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.semantics.Role
 import com.valoser.futaburakari.ui.compose.MainCatalogScreen
+import com.valoser.futaburakari.ui.compose.BookmarkOnboardingSheet
 import com.valoser.futaburakari.ui.common.AppBarPosition
 import com.valoser.futaburakari.ui.theme.FutaburakariTheme
+import com.valoser.futaburakari.NgManagerActivity
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.EntryPointAccessors
 import com.google.gson.Gson
@@ -159,6 +161,8 @@ class MainActivity : BaseActivity() {
     private val hasSelectedBookmarkState = mutableStateOf(false)
     private var listIdentityVersion = 0L
     private var pendingScrollReset = false
+    private val bookmarkSnapshotState = mutableStateOf<List<Bookmark>>(emptyList())
+    private val showBookmarkOnboardingState = mutableStateOf(false)
 
     // ブックマーク画面から戻った後にデータ再取得
     private val bookmarkActivityResultLauncher = registerForActivityResult(
@@ -194,7 +198,7 @@ class MainActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
 
         refreshBookmarkState()
-
+        showBookmarkOnboardingState.value = shouldShowBookmarkOnboarding()
         // Compose用初期化
         spanCountState.intValue = getGridSpanCount()
         catalogDisplayModeState.value = getCatalogDisplayMode()
@@ -275,6 +279,8 @@ class MainActivity : BaseActivity() {
                         onImageEdit = { startActivity(Intent(this@MainActivity, ImagePickerActivity::class.java)) },
                         onVideoEdit = { startActivity(Intent(this@MainActivity, com.valoser.futaburakari.videoeditor.presentation.ui.EditorActivity::class.java)) },
                         onBrowseLocalImages = { pickImageLauncher.launch("image/*") },
+                        onOpenNgFilters = { startActivity(Intent(this@MainActivity, NgManagerActivity::class.java)) },
+                        onLaunchBookmarkHelper = { launchBookmarkOnboarding(force = true) },
                         promptFeaturesEnabled = promptFetchEnabledState.value,
                         onToggleDisplayMode = { toggleCatalogDisplayMode() },
                         onItemClick = { item -> handleItemClick(item) },
@@ -459,6 +465,15 @@ class MainActivity : BaseActivity() {
                         }
                     }
                 }
+
+                if (showBookmarkOnboardingState.value) {
+                    BookmarkOnboardingSheet(
+                        presets = BookmarkPresets.all(),
+                        existing = bookmarkSnapshotState.value,
+                        onDismiss = { finishBookmarkOnboarding(emptyList()) },
+                        onConfirm = { selections -> finishBookmarkOnboarding(selections) }
+                    )
+                }
             }
         }
 
@@ -604,6 +619,7 @@ class MainActivity : BaseActivity() {
     private fun refreshBookmarkState() {
         val bookmarks = BookmarkManager.getBookmarks(this)
         hasBookmarksState.value = bookmarks.isNotEmpty()
+        bookmarkSnapshotState.value = bookmarks
 
         if (bookmarks.isEmpty()) {
             currentSelectedUrl = null
@@ -638,6 +654,32 @@ class MainActivity : BaseActivity() {
         if (!url.isNullOrBlank()) {
             fetchDataForCurrentUrl()
         }
+    }
+
+    private fun launchBookmarkOnboarding(force: Boolean = false) {
+        if (force || shouldShowBookmarkOnboarding()) {
+            bookmarkSnapshotState.value = BookmarkManager.getBookmarks(this)
+            showBookmarkOnboardingState.value = true
+        }
+    }
+
+    private fun shouldShowBookmarkOnboarding(): Boolean {
+        if (BookmarkManager.isOnboardingCompleted(this)) return false
+        val bookmarks = BookmarkManager.getBookmarks(this)
+        val defaultSeedCount = BookmarkPresets.defaultSeeds().size
+        return bookmarks.size <= defaultSeedCount
+    }
+
+    private fun finishBookmarkOnboarding(selected: List<BookmarkPresets.Preset>) {
+        if (selected.isNotEmpty()) {
+            selected.forEach { preset ->
+                BookmarkManager.addBookmark(this, preset.toBookmark())
+            }
+            BookmarkManager.saveSelectedBookmarkUrl(this, selected.first().url)
+        }
+        BookmarkManager.setOnboardingCompleted(this)
+        refreshBookmarkState()
+        showBookmarkOnboardingState.value = false
     }
 
     private fun toggleCatalogDisplayMode() {

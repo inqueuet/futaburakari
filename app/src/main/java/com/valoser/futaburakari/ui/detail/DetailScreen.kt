@@ -7,10 +7,11 @@ package com.valoser.futaburakari.ui.detail
 
 import com.valoser.futaburakari.TtsManager
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.WindowInsets
@@ -34,6 +36,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -46,16 +49,19 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.DockedSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -328,6 +334,12 @@ fun DetailScreenScaffold(
                 IconButton(onClick = { setSearchActive(!searchActive) }) {
                     Icon(Icons.Rounded.Search, contentDescription = "Search")
                 }
+                IconButton(onClick = onReload) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
+                }
+                IconButton(onClick = { openMediaSheet = true }) {
+                    Icon(Icons.Rounded.Image, contentDescription = "メディア一覧")
+                }
                 // 返信/NG/音声読み上げ/一括ダウンロード/画像編集などをオーバーフローメニューに集約
                 var moreExpanded by remember { mutableStateOf(false) }
                 IconButton(onClick = { moreExpanded = true }) {
@@ -339,21 +351,11 @@ fun DetailScreenScaffold(
                 ) {
                     // 基本操作グループ
                     androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("再読み込み") },
-                        leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み") },
-                        onClick = { moreExpanded = false; onReload() }
-                    )
-                    androidx.compose.material3.DropdownMenuItem(
                         text = { Text("一番下まで飛ぶ") },
                         onClick = {
                             moreExpanded = false
                             jumpToBottomRequest = if (jumpToBottomRequest == Int.MAX_VALUE) 1 else jumpToBottomRequest + 1
                         }
-                    )
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("メディア一覧") },
-                        leadingIcon = { Icon(Icons.Rounded.Image, contentDescription = "メディア一覧") },
-                        onClick = { moreExpanded = false; openMediaSheet = true }
                     )
 
 
@@ -574,13 +576,25 @@ fun DetailScreenScaffold(
                         onNearListEnd?.invoke()
                     }
                 }
-                PullToRefreshBox(
-                    state = pullState,
-                    isRefreshing = refreshing,
-                    onRefresh = onReload,
-                ) {
-                    val endPadding = DefaultFastScrollerWidth + 8.dp
-                    DetailListCompose(
+                Column(modifier = Modifier.fillMaxSize()) {
+                    DetailQuickActions(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs),
+                        onReload = onReload,
+                        onOpenMedia = { openMediaSheet = true },
+                        onOpenNg = onOpenNg,
+                        onImageEdit = onImageEdit,
+                        onTtsStart = onTtsStart
+                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        PullToRefreshBox(
+                            state = pullState,
+                            isRefreshing = refreshing,
+                            onRefresh = onReload,
+                        ) {
+                            val endPadding = DefaultFastScrollerWidth + 8.dp
+                            DetailListCompose(
                         items = items,
                         searchQuery = searchQuery,
                         threadUrl = threadUrl,
@@ -687,6 +701,8 @@ fun DetailScreenScaffold(
                             navNext = n
                         }
                     )
+                        }
+                    }
                 }
                 // 削除確認（Compose）
                 val pendingDelete = deleteTarget
@@ -1110,12 +1126,12 @@ fun DetailScreenScaffold(
                             contentPadding = PaddingValues(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.s)
                         )
                     }
-                }
             }
+        }
 
-            // 本ファイル末尾に補助的なトップレベル関数を定義
+        // 本ファイル末尾に補助的なトップレベル関数を定義
 
-            // メディア一覧（Compose ModalBottomSheet）
+        // メディア一覧（Compose ModalBottomSheet）
             if (openMediaSheet) {
                 val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
                 // シート内の操作用のローカルスコープ（例: クリックで親リストへスクロール）
@@ -1502,6 +1518,7 @@ fun DetailScreenScaffold(
                             Spacer(Modifier.width(LocalSpacing.current.s))
                             QuickFilterChip(label = "No.", onClick = {
                                 query = "No."
+                                onDebouncedSearch("No.")
                             })
                         }
                         Spacer(Modifier.height(LocalSpacing.current.xs))
@@ -1793,6 +1810,53 @@ private fun TtsControlPanel(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = LocalSpacing.current.s)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailQuickActions(
+    modifier: Modifier = Modifier,
+    onReload: () -> Unit,
+    onOpenMedia: () -> Unit,
+    onOpenNg: () -> Unit,
+    onImageEdit: (() -> Unit)?,
+    onTtsStart: (() -> Unit)?,
+) {
+    val spacing = LocalSpacing.current
+    val scrollState = rememberScrollState()
+    Row(
+        modifier = modifier.horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(spacing.s)
+    ) {
+        FilledTonalButton(onClick = onReload) {
+            Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み", modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(spacing.xs))
+            Text("再読み込み")
+        }
+        FilledTonalButton(onClick = onOpenMedia) {
+            Icon(Icons.Rounded.Image, contentDescription = "メディア一覧", modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(spacing.xs))
+            Text("メディア一覧")
+        }
+        OutlinedButton(onClick = onOpenNg) {
+            Icon(Icons.Rounded.Block, contentDescription = "NG管理", modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(spacing.xs))
+            Text("NG管理")
+        }
+        if (onImageEdit != null) {
+            OutlinedButton(onClick = onImageEdit) {
+                Icon(Icons.Rounded.Edit, contentDescription = "画像編集", modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Text("画像編集")
+            }
+        }
+        if (onTtsStart != null) {
+            OutlinedButton(onClick = onTtsStart) {
+                Icon(Icons.Rounded.PlayArrow, contentDescription = "読み上げ", modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Text("読み上げ")
             }
         }
     }

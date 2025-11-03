@@ -20,6 +20,8 @@ object BookmarkManager {
     private const val KEY_SELECTED_BOOKMARK_URL = "selected_bookmark_url"
     /** Flag indicating whether the built-in defaults have been seeded already. */
     private const val KEY_BOOKMARKS_SEEDED = "bookmarks_seeded"
+    /** Flag indicating whether the bookmark onboarding helper was already completed. */
+    private const val KEY_ONBOARDING_COMPLETED = "bookmark_onboarding_completed"
 
     /** Returns the preferences instance scoped to this manager. */
     private fun getPreferences(context: Context): SharedPreferences {
@@ -34,9 +36,7 @@ object BookmarkManager {
         val gson = Gson()
         val json = gson.toJson(bookmarks)
         editor.putString(KEY_BOOKMARKS, json)
-        if (bookmarks.isNotEmpty() && !prefs.getBoolean(KEY_BOOKMARKS_SEEDED, false)) {
-            editor.putBoolean(KEY_BOOKMARKS_SEEDED, true)
-        }
+        markSeededIfNeeded(prefs, bookmarks.isNotEmpty(), editor)
         editor.apply()
     }
 
@@ -115,14 +115,43 @@ object BookmarkManager {
         val prefs = getPreferences(context)
         // Get the list of bookmarks; this ensures defaults are created if the list is empty.
         val existingBookmarks = getBookmarks(context)
-        val defaultUrl = existingBookmarks.firstOrNull()?.url ?: "https://may.2chan.net/b/futaba.php"
+        val defaultUrl = existingBookmarks.firstOrNull()?.url ?: BookmarkPresets.defaultSeeds().first().url
         return prefs.getString(KEY_SELECTED_BOOKMARK_URL, null) ?: defaultUrl
     }
 
     private fun defaultBookmarks(): MutableList<Bookmark> {
-        return mutableListOf(
-            Bookmark("どうぶつ", "https://dat.2chan.net/d/futaba.php"),
-            Bookmark("しょくぶつ", "https://zip.2chan.net/z/futaba.php"),
-        )
+        return BookmarkPresets.defaultSeeds()
+            .map { it.toBookmark() }
+            .toMutableList()
+    }
+
+    /** Returns whether bookmark onboarding was completed. */
+    fun isOnboardingCompleted(context: Context): Boolean {
+        val prefs = getPreferences(context)
+        return prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    }
+
+    /** Marks bookmark onboarding as completed to avoid re-showing helper UI. */
+    fun setOnboardingCompleted(context: Context) {
+        val prefs = getPreferences(context)
+        prefs.edit()
+            .putBoolean(KEY_ONBOARDING_COMPLETED, true)
+            .apply()
+    }
+
+    /** Returns whether default bookmarks have already been seeded. */
+    fun isSeeded(context: Context): Boolean {
+        val prefs = getPreferences(context)
+        return prefs.getBoolean(KEY_BOOKMARKS_SEEDED, false)
+    }
+
+    private fun markSeededIfNeeded(
+        prefs: SharedPreferences,
+        nonEmpty: Boolean,
+        editor: SharedPreferences.Editor,
+    ) {
+        if (nonEmpty && !prefs.getBoolean(KEY_BOOKMARKS_SEEDED, false)) {
+            editor.putBoolean(KEY_BOOKMARKS_SEEDED, true)
+        }
     }
 }

@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Settings
@@ -56,6 +57,9 @@ import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import coil3.compose.AsyncImage
 import coil3.imageLoader
 import coil3.request.ImageRequest
@@ -143,6 +147,8 @@ fun MainCatalogScreen(
     onImageEdit: () -> Unit,
     onVideoEdit: () -> Unit,
     onBrowseLocalImages: () -> Unit,
+    onOpenNgFilters: () -> Unit,
+    onLaunchBookmarkHelper: () -> Unit,
     promptFeaturesEnabled: Boolean = true,
     onToggleDisplayMode: () -> Unit,
     onItemClick: (ImageItem) -> Unit,
@@ -266,19 +272,35 @@ fun MainCatalogScreen(
     val navigationBarHeight = with(LocalDensity.current) { systemBarsInsets.getBottom(this) }
 
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
     val toolbar: @Composable () -> Unit = {
+        LaunchedEffect(searching) {
+            if (searching) {
+                focusRequester.requestFocus()
+                keyboardController?.show()
+            } else {
+                keyboardController?.hide()
+            }
+        }
         TopAppBar(
             title = {
                 if (searching) {
                     TextField(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester),
                         value = query,
                         onValueChange = onQueryChange,
                         singleLine = true,
                         placeholder = { Text(text = "検索") },
                         trailingIcon = {
                             if (query.isNotEmpty()) {
-                                IconButton(onClick = { onQueryChange(""); focusManager.clearFocus() }) {
+                                IconButton(onClick = {
+                                    onQueryChange("")
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                }) {
                                     Icon(Icons.Rounded.Close, contentDescription = "検索キーワードをクリア")
                                 }
                             }
@@ -321,6 +343,7 @@ fun MainCatalogScreen(
                     if (searching) {
                         searching = false
                         focusManager.clearFocus()
+                        keyboardController?.hide()
                     } else {
                         searching = true
                     }
@@ -399,9 +422,26 @@ fun MainCatalogScreen(
                                 .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs),
                             query = query,
                             hasNgFilters = hasNgFilters,
-                            onClearQuery = { onQueryChange("") }
+                            onClearQuery = { onQueryChange("") },
+                            onOpenNgFilters = onOpenNgFilters
                         )
                     }
+                    CatalogQuickActionChips(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = LocalSpacing.current.s, vertical = LocalSpacing.current.xs),
+                        hasAnyBookmarks = hasAnyBookmarks,
+                        hasSelectedBookmark = hasSelectedBookmark,
+                        isListMode = isListMode,
+                        onShowBookmarks = {
+                            if (hasAnyBookmarks) onSelectBookmark() else onManageBookmarks()
+                        },
+                        onManageBookmarks = onManageBookmarks,
+                        onOpenHistory = onOpenHistory,
+                        onOpenSettings = onOpenSettings,
+                        onToggleDisplayMode = onToggleDisplayMode,
+                        onSelectSortMode = onSelectSortMode,
+                    )
                     if (isListMode) {
                         // リスト本体
                         LazyColumn(
@@ -452,7 +492,7 @@ fun MainCatalogScreen(
                     }
                 }
 
-                if (isLoading) {
+                if (isLoading && items.isEmpty()) {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 }
 
@@ -466,7 +506,8 @@ fun MainCatalogScreen(
                         query = query,
                         hasNgFilters = hasNgFilters,
                         onSelectBookmark = onSelectBookmark,
-                        onManageBookmarks = onManageBookmarks
+                        onManageBookmarks = onManageBookmarks,
+                        onLaunchBookmarkHelper = onLaunchBookmarkHelper
                     )
                 }
             }
@@ -480,6 +521,7 @@ private fun ActiveFilterRow(
     query: String,
     hasNgFilters: Boolean,
     onClearQuery: () -> Unit,
+    onOpenNgFilters: () -> Unit,
 ) {
     val spacing = LocalSpacing.current
     Row(
@@ -511,10 +553,84 @@ private fun ActiveFilterRow(
         }
         if (hasNgFilters) {
             AssistChip(
-                onClick = {},
-                enabled = false,
+                onClick = onOpenNgFilters,
+                enabled = true,
                 leadingIcon = { Icon(Icons.Rounded.Block, contentDescription = "NGフィルタ") },
                 label = { Text("NGフィルタ適用中") }
+            )
+        }
+    }
+}
+
+@Composable
+private fun CatalogQuickActionChips(
+    modifier: Modifier = Modifier,
+    hasAnyBookmarks: Boolean,
+    hasSelectedBookmark: Boolean,
+    isListMode: Boolean,
+    onShowBookmarks: () -> Unit,
+    onManageBookmarks: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onToggleDisplayMode: () -> Unit,
+    onSelectSortMode: () -> Unit,
+) {
+    val spacing = LocalSpacing.current
+    val scrollState = rememberScrollState()
+    Row(
+        modifier = modifier
+            .horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AssistChip(
+            onClick = onShowBookmarks,
+            label = { Text(if (hasAnyBookmarks) "ブックマーク" else "ブックマーク追加") },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Rounded.Bookmarks,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        )
+        AssistChip(
+            onClick = onToggleDisplayMode,
+            label = { Text(if (isListMode) "グリッド表示" else "リスト表示") },
+            leadingIcon = {
+                val icon = if (isListMode) Icons.Rounded.GridView else Icons.Rounded.ViewList
+                Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
+        )
+        AssistChip(
+            onClick = onSelectSortMode,
+            enabled = hasSelectedBookmark,
+            label = { Text("並び順") },
+            leadingIcon = {
+                Icon(imageVector = Icons.AutoMirrored.Rounded.Sort, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
+        )
+        AssistChip(
+            onClick = onOpenHistory,
+            label = { Text("履歴") },
+            leadingIcon = {
+                Icon(imageVector = Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
+        )
+        AssistChip(
+            onClick = onOpenSettings,
+            label = { Text("設定") },
+            leadingIcon = {
+                Icon(imageVector = Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
+        )
+        if (!hasAnyBookmarks) {
+            AssistChip(
+                onClick = onManageBookmarks,
+                label = { Text("URL を追加") },
+                leadingIcon = {
+                    Icon(imageVector = Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
             )
         }
     }
@@ -529,6 +645,7 @@ private fun EmptyCatalogState(
     hasNgFilters: Boolean,
     onSelectBookmark: () -> Unit,
     onManageBookmarks: () -> Unit,
+    onLaunchBookmarkHelper: () -> Unit,
 ) {
     val spacing = LocalSpacing.current
     Column(
@@ -549,8 +666,12 @@ private fun EmptyCatalogState(
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(spacing.m))
-                Button(onClick = onManageBookmarks) {
-                    Text("ブックマークを追加")
+                Button(onClick = onLaunchBookmarkHelper) {
+                    Text("おすすめから選ぶ")
+                }
+                Spacer(modifier = Modifier.height(spacing.xs))
+                TextButton(onClick = onManageBookmarks) {
+                    Text("URL を直接追加")
                 }
             }
             !hasSelectedBookmark -> {
