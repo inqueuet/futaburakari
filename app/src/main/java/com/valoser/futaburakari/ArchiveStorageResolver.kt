@@ -17,33 +17,84 @@ object ArchiveStorageResolver {
     private const val LEGACY_APP_SPECIFIC_DIR = "ThreadArchives"
     private const val LEGACY_INTERNAL_DIR = "archive_media"
 
+    enum class ArchiveScope {
+        CACHE,
+        USER_EXPORT
+    }
+
     @Volatile
-    private var cachedRoot: File? = null
+    private var cachedCacheRoot: File? = null
+
+    @Volatile
+    private var cachedExportRoot: File? = null
 
     /**
      * アーカイブのルートディレクトリを返す（存在しない場合は作成）。
      * 初回解決時にレガシーディレクトリの移行も実施する。
      */
-    fun resolveArchiveRoot(context: Context): File {
-        cachedRoot?.let { return it }
-        return synchronized(this) {
-            cachedRoot?.let { return it }
-            val root = computeArchiveRoot(context)
-            cachedRoot = root
-            root
+    fun resolveArchiveRoot(context: Context, scope: ArchiveScope = ArchiveScope.CACHE): File {
+        return when (scope) {
+            ArchiveScope.CACHE -> {
+                var root = cachedCacheRoot
+                if (root == null) {
+                    synchronized(this) {
+                        root = cachedCacheRoot
+                        if (root == null) {
+                            root = computeCacheRoot(context)
+                            cachedCacheRoot = root
+                        }
+                    }
+                }
+                root!!
+            }
+            ArchiveScope.USER_EXPORT -> {
+                var root = cachedExportRoot
+                if (root == null) {
+                    synchronized(this) {
+                        root = cachedExportRoot
+                        if (root == null) {
+                            root = computeExportRoot(context)
+                            cachedExportRoot = root
+                        }
+                    }
+                }
+                root!!
+            }
         }
     }
 
     /**
      * アーカイブ内に指定サブディレクトリを作成して返す。
      */
-    fun ensureArchiveDirectory(context: Context, dirName: String): File? {
-        val root = resolveArchiveRoot(context)
+    fun ensureArchiveDirectory(
+        context: Context,
+        dirName: String,
+        scope: ArchiveScope = ArchiveScope.USER_EXPORT
+    ): File? {
+        val root = resolveArchiveRoot(context, scope)
         val dir = File(root, dirName)
         return if (ensureDirectory(dir)) dir else null
     }
 
-    private fun computeArchiveRoot(context: Context): File {
+    private fun computeCacheRoot(context: Context): File {
+        val legacyInternalRoot = File(context.filesDir, LEGACY_INTERNAL_DIR)
+
+        val candidates = buildList {
+            context.getExternalFilesDir(null)?.let { add(File(it, APP_SPECIFIC_DIR)) }
+            context.externalMediaDirs?.forEach { base ->
+                if (base != null) add(File(base, APP_SPECIFIC_DIR))
+            }
+            add(legacyInternalRoot)
+        }
+
+        val root = candidates.firstOrNull { ensureDirectory(it) }
+            ?: legacyInternalRoot.also { ensureDirectory(it) }
+
+        Log.d(TAG, "Using cache archive root: ${root.absolutePath}")
+        return root
+    }
+
+    private fun computeExportRoot(context: Context): File {
         val legacyInternalRoot = File(context.filesDir, LEGACY_INTERNAL_DIR)
 
         val candidates = buildList {
@@ -61,7 +112,7 @@ object ArchiveStorageResolver {
             ?: legacyInternalRoot.also { ensureDirectory(it) }
 
         migrateLegacyDirectories(context, root)
-        Log.d(TAG, "Using archive root: ${root.absolutePath}")
+        Log.d(TAG, "Using export archive root: ${root.absolutePath}")
         return root
     }
 

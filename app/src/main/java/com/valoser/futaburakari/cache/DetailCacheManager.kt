@@ -56,7 +56,12 @@ class DetailCacheManager @Inject constructor(
     private val cacheDir: File by lazy {
         File(context.cacheDir, "details_cache").apply { mkdirs() }
     }
-    private val archiveRoot: File by lazy { ArchiveStorageResolver.resolveArchiveRoot(context) }
+    private val archiveRoot: File by lazy {
+        ArchiveStorageResolver.resolveArchiveRoot(
+            context,
+            ArchiveStorageResolver.ArchiveScope.CACHE
+        )
+    }
 
     /**
      * 詳細リストのチェックサムを計算する（差分更新用）

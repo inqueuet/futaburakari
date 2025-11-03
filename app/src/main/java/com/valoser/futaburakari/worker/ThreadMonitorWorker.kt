@@ -21,6 +21,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.preference.PreferenceManager
 import com.valoser.futaburakari.HistoryManager
 import com.valoser.futaburakari.NetworkClient
 import com.valoser.futaburakari.UrlNormalizer
@@ -36,6 +37,8 @@ import com.valoser.futaburakari.cache.DetailCacheManager
 import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
+
+private const val PREF_KEY_BACKGROUND_MEDIA_ARCHIVE = "pref_key_background_media_archive"
 
 /**
  * 背景でスレ URL を監視し、媒体のアーカイブとキャッシュ/履歴更新を行う Worker。
@@ -132,20 +135,26 @@ class ThreadMonitorWorker @AssistedInject constructor(
                 }
             }
 
-            // 2) メディアを内部保存し、ローカル file: URI に差し替え（マージ後のリストを使用）
-            val archived = archiveMedia(url, merged)
+            // 2) 自動で媒体を保存するかは利用者設定で制御（既定では保存しない）
+            val shouldArchiveMedia = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+                .getBoolean(PREF_KEY_BACKGROUND_MEDIA_ARCHIVE, false)
+            val cachedContent = if (shouldArchiveMedia) {
+                archiveMedia(url, merged)
+            } else {
+                merged
+            }
 
             // 3) キャッシュへ保存（置き換え保存）
             val cm = cacheMgr
-            cm.saveDetails(url, archived)
+            cm.saveDetails(url, cachedContent)
 
             // 3.5) サムネイル（履歴）をローカルに更新（OPの画像のみを使用）
             try {
-                val firstTextIndex = archived.indexOfFirst { it is com.valoser.futaburakari.DetailContent.Text }
+                val firstTextIndex = cachedContent.indexOfFirst { it is com.valoser.futaburakari.DetailContent.Text }
                 val media = when {
                     firstTextIndex >= 0 -> {
                         // OPレスの直後で次の Text レスが現れるまでの範囲から、実体URLを持つ最初の媒体を採用
-                        archived.drop(firstTextIndex + 1)
+                        cachedContent.drop(firstTextIndex + 1)
                             .takeWhile { it !is com.valoser.futaburakari.DetailContent.Text }
                             .firstOrNull {
                                 when (it) {
@@ -157,7 +166,7 @@ class ThreadMonitorWorker @AssistedInject constructor(
                     }
                     else -> {
                         // OP本文が検出できなかった場合（画像のみ等）はリスト先頭から最初の媒体を採用
-                        archived.firstOrNull {
+                        cachedContent.firstOrNull {
                             when (it) {
                                 is com.valoser.futaburakari.DetailContent.Image -> it.imageUrl.isNotBlank()
                                 is com.valoser.futaburakari.DetailContent.Video -> it.videoUrl.isNotBlank()

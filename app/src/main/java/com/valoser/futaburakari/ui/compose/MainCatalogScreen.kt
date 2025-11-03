@@ -47,11 +47,14 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.BrokenImage
+import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.ui.platform.LocalContext
@@ -436,9 +439,6 @@ fun MainCatalogScreen(
                         onShowBookmarks = {
                             if (hasAnyBookmarks) onSelectBookmark() else onManageBookmarks()
                         },
-                        onManageBookmarks = onManageBookmarks,
-                        onOpenHistory = onOpenHistory,
-                        onOpenSettings = onOpenSettings,
                         onToggleDisplayMode = onToggleDisplayMode,
                         onSelectSortMode = onSelectSortMode,
                     )
@@ -569,9 +569,6 @@ private fun CatalogQuickActionChips(
     hasSelectedBookmark: Boolean,
     isListMode: Boolean,
     onShowBookmarks: () -> Unit,
-    onManageBookmarks: () -> Unit,
-    onOpenHistory: () -> Unit,
-    onOpenSettings: () -> Unit,
     onToggleDisplayMode: () -> Unit,
     onSelectSortMode: () -> Unit,
 ) {
@@ -583,17 +580,19 @@ private fun CatalogQuickActionChips(
         horizontalArrangement = Arrangement.spacedBy(spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AssistChip(
-            onClick = onShowBookmarks,
-            label = { Text(if (hasAnyBookmarks) "ブックマーク" else "ブックマーク追加") },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Rounded.Bookmarks,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        )
+        if (!hasAnyBookmarks) {
+            AssistChip(
+                onClick = onShowBookmarks,
+                label = { Text("ブックマーク追加") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Rounded.Bookmarks,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            )
+        }
         AssistChip(
             onClick = onToggleDisplayMode,
             label = { Text(if (isListMode) "グリッド表示" else "リスト表示") },
@@ -610,29 +609,6 @@ private fun CatalogQuickActionChips(
                 Icon(imageVector = Icons.AutoMirrored.Rounded.Sort, contentDescription = null, modifier = Modifier.size(16.dp))
             }
         )
-        AssistChip(
-            onClick = onOpenHistory,
-            label = { Text("履歴") },
-            leadingIcon = {
-                Icon(imageVector = Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp))
-            }
-        )
-        AssistChip(
-            onClick = onOpenSettings,
-            label = { Text("設定") },
-            leadingIcon = {
-                Icon(imageVector = Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-            }
-        )
-        if (!hasAnyBookmarks) {
-            AssistChip(
-                onClick = onManageBookmarks,
-                label = { Text("URL を追加") },
-                leadingIcon = {
-                    Icon(imageVector = Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                }
-            )
-        }
     }
 }
 
@@ -765,6 +741,7 @@ private fun MoreMenu(
             // 管理系操作グループ
             DropdownMenuItem(
                 text = { Text("ブックマーク管理") },
+                leadingIcon = { Icon(Icons.Rounded.Bookmarks, contentDescription = "ブックマーク管理") },
                 onClick = { expanded = false; onManageBookmarks() }
             )
             DropdownMenuItem(
@@ -779,11 +756,20 @@ private fun MoreMenu(
             if (promptFeaturesEnabled) {
                 DropdownMenuItem(
                     text = { Text("ローカル画像を開く") },
+                    leadingIcon = { Icon(Icons.Rounded.Image, contentDescription = "ローカル画像を開く") },
                     onClick = { expanded = false; onBrowseLocalImages() }
                 )
             }
-            DropdownMenuItem(text = { Text("画像編集") }, onClick = { expanded = false; onImageEdit() })
-            DropdownMenuItem(text = { Text("動画編集") }, onClick = { expanded = false; onVideoEdit() })
+            DropdownMenuItem(
+                text = { Text("画像編集") },
+                leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = "画像編集") },
+                onClick = { expanded = false; onImageEdit() }
+            )
+            DropdownMenuItem(
+                text = { Text("動画編集") },
+                leadingIcon = { Icon(Icons.Rounded.Movie, contentDescription = "動画編集") },
+                onClick = { expanded = false; onVideoEdit() }
+            )
         }
     }
 }

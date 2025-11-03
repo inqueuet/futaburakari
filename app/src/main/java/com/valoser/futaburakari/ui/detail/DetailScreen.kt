@@ -50,6 +50,8 @@ import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.SuggestionChip
@@ -334,12 +336,6 @@ fun DetailScreenScaffold(
                 IconButton(onClick = { setSearchActive(!searchActive) }) {
                     Icon(Icons.Rounded.Search, contentDescription = "Search")
                 }
-                IconButton(onClick = onReload) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み")
-                }
-                IconButton(onClick = { openMediaSheet = true }) {
-                    Icon(Icons.Rounded.Image, contentDescription = "メディア一覧")
-                }
                 // 返信/NG/音声読み上げ/一括ダウンロード/画像編集などをオーバーフローメニューに集約
                 var moreExpanded by remember { mutableStateOf(false) }
                 IconButton(onClick = { moreExpanded = true }) {
@@ -352,9 +348,26 @@ fun DetailScreenScaffold(
                     // 基本操作グループ
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("一番下まで飛ぶ") },
+                        leadingIcon = { Icon(Icons.Rounded.KeyboardDoubleArrowDown, contentDescription = "一番下まで飛ぶ") },
                         onClick = {
                             moreExpanded = false
                             jumpToBottomRequest = if (jumpToBottomRequest == Int.MAX_VALUE) 1 else jumpToBottomRequest + 1
+                        }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("再読み込み") },
+                        leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み") },
+                        onClick = {
+                            moreExpanded = false
+                            onReload()
+                        }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("メディア一覧") },
+                        leadingIcon = { Icon(Icons.Rounded.Image, contentDescription = "メディア一覧") },
+                        onClick = {
+                            moreExpanded = false
+                            openMediaSheet = true
                         }
                     )
 
@@ -393,6 +406,7 @@ fun DetailScreenScaffold(
                     // その他機能グループ
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("音声読み上げ") },
+                        leadingIcon = { Icon(Icons.Rounded.RecordVoiceOver, contentDescription = "音声読み上げ") },
                         onClick = { moreExpanded = false; onTtsStart?.invoke() }
                     )
                     androidx.compose.material3.DropdownMenuItem(

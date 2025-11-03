@@ -260,7 +260,11 @@ class ThreadArchiver(
      */
     private fun createArchiveDirectory(dirName: String): File? {
         return try {
-            val dir = ArchiveStorageResolver.ensureArchiveDirectory(context, dirName)
+            val dir = ArchiveStorageResolver.ensureArchiveDirectory(
+                context,
+                dirName,
+                ArchiveStorageResolver.ArchiveScope.USER_EXPORT
+            )
             if (dir != null) {
                 Log.d(TAG, "Archive directory resolved: ${dir.absolutePath}")
             } else {
