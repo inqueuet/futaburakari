@@ -29,6 +29,7 @@ object BookmarkPresets {
         BoardDefinition("二次元裏 (may)", "https://may.2chan.net/b/", "人気"),
         BoardDefinition("二次元裏 (dec)", "https://dec.2chan.net/dec/", "人気"),
         BoardDefinition("二次元裏 (jun)", "https://jun.2chan.net/jun/", "人気"),
+        BoardDefinition("二次元裏 (img)", "https://img.2chan.net/b/", "人気"),
         BoardDefinition("雑談", "https://img.2chan.net/9/", "人気"),
         BoardDefinition("避難所", "https://www.2chan.net/hinan/", "人気"),
         BoardDefinition("webm", "https://may.2chan.net/webm/", "人気"),
