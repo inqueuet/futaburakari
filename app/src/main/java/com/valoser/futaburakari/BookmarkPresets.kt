@@ -137,7 +137,7 @@ object BookmarkPresets {
 
     private fun catalogUrl(basePath: String): String {
         val normalized = if (basePath.endsWith("/")) basePath else "$basePath/"
-        return "$normalizedfutaba.php?mode=cat"
+        return "${normalized}futaba.php?mode=cat"
     }
 
     /** Returns all preset categories sorted alphabetically with "すべて" leading. */
