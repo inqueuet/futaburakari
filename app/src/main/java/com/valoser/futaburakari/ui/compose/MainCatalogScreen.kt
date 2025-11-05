@@ -443,6 +443,8 @@ fun MainCatalogScreen(
                         },
                         onToggleDisplayMode = onToggleDisplayMode,
                         onSelectSortMode = onSelectSortMode,
+                        onOpenHistory = onOpenHistory,
+                        onManageBookmarks = onManageBookmarks,
                     )
                     if (isListMode) {
                         // リスト本体
@@ -573,12 +575,13 @@ private fun CatalogQuickActionChips(
     onShowBookmarks: () -> Unit,
     onToggleDisplayMode: () -> Unit,
     onSelectSortMode: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onManageBookmarks: () -> Unit,
 ) {
     val spacing = LocalSpacing.current
     val scrollState = rememberScrollState()
     Row(
-        modifier = modifier
-            .horizontalScroll(scrollState),
+        modifier = modifier.horizontalScroll(scrollState),
         horizontalArrangement = Arrangement.spacedBy(spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -609,6 +612,20 @@ private fun CatalogQuickActionChips(
             label = { Text("並び順") },
             leadingIcon = {
                 Icon(imageVector = Icons.AutoMirrored.Rounded.Sort, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
+        )
+        AssistChip(
+            onClick = onOpenHistory,
+            label = { Text("履歴") },
+            leadingIcon = {
+                Icon(imageVector = Icons.Rounded.History, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
+        )
+        AssistChip(
+            onClick = onManageBookmarks,
+            label = { Text("ブックマーク管理") },
+            leadingIcon = {
+                Icon(imageVector = Icons.Rounded.Bookmarks, contentDescription = null, modifier = Modifier.size(16.dp))
             }
         )
     }

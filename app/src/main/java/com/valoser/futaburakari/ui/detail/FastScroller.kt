@@ -43,6 +43,12 @@ import kotlin.math.roundToInt
 val DefaultFastScrollerWidth: Dp = 20.dp
 
 /**
+ * 高速スクローラーを表示する際の既定のアイテム数しきい値。
+ * `visibleThreshold` のデフォルトとしても利用する。
+ */
+const val FastScrollerVisibleThreshold: Int = 30
+
+/**
  * 縦方向の軽量な高速スクローラー（長い `LazyColumn` 向け）。
  * - `itemsCount` が `visibleThreshold` を超える場合のみ描画。
  * - 画面上部に揃えた全高のトラック上にドラッグ可能なサムを表示。
@@ -64,7 +70,7 @@ fun FastScroller(
     listState: LazyListState,
     itemsCount: Int,
     bottomPadding: Dp = 0.dp,
-    visibleThreshold: Int = 30,
+    visibleThreshold: Int = FastScrollerVisibleThreshold,
     onDragActiveChange: ((Boolean) -> Unit)? = null,
 ) {
     if (itemsCount <= visibleThreshold) return

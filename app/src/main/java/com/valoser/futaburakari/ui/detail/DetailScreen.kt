@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.rounded.KeyboardDoubleArrowUp
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -58,6 +60,7 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.DockedSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -88,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import com.valoser.futaburakari.DetailContent
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.draw.alpha
 import com.valoser.futaburakari.ui.detail.FastScroller
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -287,7 +291,6 @@ fun DetailScreenScaffold(
 
             var selectionMode by remember { mutableStateOf(false) }
             val selectedImages = remember { mutableStateListOf<String>() }
-            var jumpToBottomRequest by remember { mutableIntStateOf(0) }
 
     val toolbarWindowInsets = if (appBarPosition == AppBarPosition.TOP) {
         TopAppBarDefaults.windowInsets
@@ -346,14 +349,6 @@ fun DetailScreenScaffold(
                     onDismissRequest = { moreExpanded = false }
                 ) {
                     // 基本操作グループ
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("一番下まで飛ぶ") },
-                        leadingIcon = { Icon(Icons.Rounded.KeyboardDoubleArrowDown, contentDescription = "一番下まで飛ぶ") },
-                        onClick = {
-                            moreExpanded = false
-                            jumpToBottomRequest = if (jumpToBottomRequest == Int.MAX_VALUE) 1 else jumpToBottomRequest + 1
-                        }
-                    )
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("再読み込み") },
                         leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = "再読み込み") },
@@ -523,16 +518,6 @@ fun DetailScreenScaffold(
                 initialFirstVisibleItemIndex = initialScrollIndex.coerceAtLeast(0),
                 initialFirstVisibleItemScrollOffset = initialScrollOffset.coerceAtLeast(0)
             )
-            var lastHandledJumpRequest by remember { mutableIntStateOf(0) }
-            LaunchedEffect(jumpToBottomRequest, itemsVersion) {
-                if (jumpToBottomRequest == 0 || jumpToBottomRequest == lastHandledJumpRequest) return@LaunchedEffect
-                if (items.isEmpty()) return@LaunchedEffect
-                val targetIndex = items.lastIndex
-                if (targetIndex >= 0) {
-                    listState.animateScrollToItem(targetIndex)
-                    lastHandledJumpRequest = jumpToBottomRequest
-                }
-            }
             // 検索ナビ（Compose 内でリストに吸着）を上位スコープで保持
             var navPrev by remember { mutableStateOf<(() -> Unit)?>(null) }
             var navNext by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -573,6 +558,23 @@ fun DetailScreenScaffold(
                     bottomPaddingVersion = if (bottomPaddingVersion == Int.MAX_VALUE) 0 else bottomPaddingVersion + 1
                 }
                 var deleteTarget by remember { mutableStateOf<String?>(null) }
+                val fastScrollerVisible = items.size > FastScrollerVisibleThreshold
+                val showJumpToTop by remember(fastScrollerVisible) {
+                    derivedStateOf {
+                        fastScrollerVisible && (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0)
+                    }
+                }
+                val showJumpToBottom by remember(fastScrollerVisible, itemsVersion) {
+                    derivedStateOf {
+                        if (!fastScrollerVisible || items.isEmpty()) return@derivedStateOf false
+                        val layoutInfo = listState.layoutInfo
+                        if (layoutInfo.totalItemsCount == 0) return@derivedStateOf false
+                        val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
+                        val viewportEnd = layoutInfo.viewportEndOffset
+                        val lastItemEnd = lastVisible.offset + lastVisible.size
+                        lastVisible.index < layoutInfo.totalItemsCount - 1 || lastItemEnd < viewportEnd
+                    }
+                }
 
                 // 無限スクロール検知: 末尾のコンテンツ（Text/Image/Video）近辺に到達したら通知。
                 // 同一サイズの items に対しては 1 回だけ発火（重複抑止）。
@@ -715,6 +717,59 @@ fun DetailScreenScaffold(
                             navNext = n
                         }
                     )
+                        }
+                    }
+                }
+                if (showJumpToTop || showJumpToBottom) {
+                    val spacing = LocalSpacing.current
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .align(Alignment.CenterEnd)
+                            .padding(
+                                top = spacing.s,
+                                bottom = bottomDp + spacing.s,
+                                end = DefaultFastScrollerWidth + spacing.s
+                            )
+                    ) {
+                        if (showJumpToTop) {
+                            FilledTonalIconButton(
+                                onClick = {
+                                    scope.launch {
+                                        listState.animateScrollToItem(0)
+                                    }
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(48.dp)
+                                    .alpha(0.85f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.KeyboardDoubleArrowUp,
+                                    contentDescription = "一番上まで移動"
+                                )
+                            }
+                        }
+                        if (showJumpToBottom) {
+                            FilledTonalIconButton(
+                                onClick = {
+                                    scope.launch {
+                                        val target = items.lastIndex
+                                        if (target >= 0) {
+                                            listState.animateScrollToItem(target)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .size(48.dp)
+                                    .alpha(0.85f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.KeyboardDoubleArrowDown,
+                                    contentDescription = "一番下まで移動"
+                                )
+                            }
                         }
                     }
                 }
