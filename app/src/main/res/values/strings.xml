@@ -54,6 +54,8 @@
     <string name="clear_history">履歴を全削除</string>
     <string name="confirm_clear_history">履歴をすべて削除しますか？</string>
     <string name="no_history">履歴がありません</string>
+    <string name="history_item_deleted">履歴を削除しました</string>
+    <string name="undo">元に戻す</string>
     <string name="bg_monitor">バックグラウンド監視</string>
     <string name="bg_monitor_summary">スレッドが消えるまで定期的に更新を確認します</string>
     <string name="settings_inquiry">お問合せ</string>

@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -22,11 +25,12 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -34,11 +38,13 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.Switch
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,8 +73,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import com.valoser.futaburakari.ui.expressive.SplitButton
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import com.valoser.futaburakari.R
 import com.valoser.futaburakari.image.ImageKeys
 import com.valoser.futaburakari.ui.theme.LocalSpacing
@@ -88,7 +94,7 @@ enum class HistorySortMode { MIXED, UPDATED, VIEWED, UNREAD }
 /**
  * 閲覧履歴の一覧画面。
  * 未読のみ表示の切り替え、並び替え、全削除、スワイプによる削除を提供する。
- * 現状 Undo は未実装で、スワイプ確定時に即時削除する（UI 上はリストも即時反映）。
+ * 削除時はスナックバーで Undo を提示し、未読フィルタ/並び替えはシートに集約した操作で変更する。
  *
  * パラメータ:
  * - `title`: 上部アプリバーのタイトル文言。
@@ -116,11 +122,14 @@ fun HistoryScreen(
     onClickItem: (HistoryEntry) -> Unit,
     onDeleteItem: (HistoryEntry) -> Unit,
 ) {
-    // 右上のメニュー開閉状態
+    // 右上のメニュー開閉状態と表示設定シートの制御
     var menuExpanded by remember { mutableStateOf(false) }
+    var filterSheetVisible by remember { mutableStateOf(false) }
+    val filterSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    // スワイプ削除の即時反映のためのローカル表示用リスト（Undo 未実装）
+    val context = LocalContext.current
+    // スワイプ削除の即時反映のためのローカル表示用リスト（Undo あり）
     var localEntries by remember(entries) { mutableStateOf(entries) }
     LaunchedEffect(entries) { localEntries = entries }
 
@@ -134,35 +143,24 @@ fun HistoryScreen(
                     }
                 },
                 actions = {
-                    // 未読のみのトグルとその他メニュー
-                    IconButton(onClick = onToggleUnreadOnly) {
-                        Icon(Icons.Rounded.FilterList, contentDescription = if (showUnreadOnly) "未読のみ（ON）" else "未読のみ（OFF）")
+                    val filterActive = showUnreadOnly || sortMode != HistorySortMode.MIXED
+                    // 並び替え・未読フィルタをまとめた設定シートを開く
+                    IconButton(onClick = { filterSheetVisible = true }) {
+                        Icon(
+                            imageVector = Icons.Rounded.FilterList,
+                            contentDescription = "表示設定",
+                            tint = if (filterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
                     }
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Rounded.MoreVert, contentDescription = "メニュー")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        // メニュー: 全削除と並び替えモードの選択（選択状態の表示は持たない）
+                        // メニュー: 全削除のみ提供
                         DropdownMenuItem(
                             text = { Text("履歴をすべて削除") },
                             onClick = { menuExpanded = false; onClearAll() },
                             leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("並び替え: 新着優先") },
-                            onClick = { menuExpanded = false; onSelectSort(HistorySortMode.MIXED) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("並び替え: 更新順") },
-                            onClick = { menuExpanded = false; onSelectSort(HistorySortMode.UPDATED) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("並び替え: 閲覧順") },
-                            onClick = { menuExpanded = false; onSelectSort(HistorySortMode.VIEWED) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("並び替え: 未読数") },
-                            onClick = { menuExpanded = false; onSelectSort(HistorySortMode.UNREAD) }
                         )
                     }
                 },
@@ -174,7 +172,7 @@ fun HistoryScreen(
                 )
             )
         },
-        // 将来的な Undo 提示に利用予定のスナックバー（現状は未使用）
+        // スワイプ削除の Undo 提示に利用するスナックバー
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         AnimatedContent(
@@ -198,65 +196,6 @@ fun HistoryScreen(
                         .fillMaxSize()
                         .padding(innerPadding)
                 ) {
-                    item {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.s)) {
-                            // 並び替え SegmentedButton
-                            val sortOptions = listOf(
-                                "新着" to HistorySortMode.MIXED,
-                                "更新" to HistorySortMode.UPDATED,
-                                "閲覧" to HistorySortMode.VIEWED,
-                                "未読" to HistorySortMode.UNREAD
-                            )
-                            SingleChoiceSegmentedButtonRow {
-                                sortOptions.forEachIndexed { index, pair ->
-                                    SegmentedButton(
-                                        selected = pair.second == sortMode,
-                                        onClick = { if (pair.second != sortMode) onSelectSort(pair.second) },
-                                        shape = SegmentedButtonDefaults.itemShape(index, sortOptions.size)
-                                    ) { Text(pair.first) }
-                                }
-                            }
-
-                            Spacer(Modifier.height(LocalSpacing.current.s))
-                            // 未読フィルタ SegmentedButton
-                            val unreadOptions = listOf("すべて", "未読のみ")
-                            SingleChoiceSegmentedButtonRow {
-                                unreadOptions.forEachIndexed { index, label ->
-                                    SegmentedButton(
-                                        selected = (index == 1) == showUnreadOnly,
-                                        onClick = {
-                                            val wantUnread = index == 1
-                                            if (wantUnread != showUnreadOnly) onToggleUnreadOnly()
-                                        },
-                                        shape = SegmentedButtonDefaults.itemShape(index, unreadOptions.size)
-                                    ) { Text(label) }
-                                }
-                            }
-
-                            Spacer(Modifier.height(LocalSpacing.current.s))
-                            // SplitButton: 並び替えショートカット
-                            SplitButton(
-                                text = "並び替え",
-                                onPrimary = {
-                                    // 簡易: 次のモードにローテーション
-                                    val next = when (sortMode) {
-                                        HistorySortMode.MIXED -> HistorySortMode.UPDATED
-                                        HistorySortMode.UPDATED -> HistorySortMode.VIEWED
-                                        HistorySortMode.VIEWED -> HistorySortMode.UNREAD
-                                        HistorySortMode.UNREAD -> HistorySortMode.MIXED
-                                    }
-                                    onSelectSort(next)
-                                },
-                                menuItems = listOf(
-                                    "新着優先" to { onSelectSort(HistorySortMode.MIXED) },
-                                    "更新順" to { onSelectSort(HistorySortMode.UPDATED) },
-                                    "閲覧順" to { onSelectSort(HistorySortMode.VIEWED) },
-                                    "未読数" to { onSelectSort(HistorySortMode.UNREAD) }
-                                )
-                            )
-                        }
-                    }
-
                     // 安定したキーとして `HistoryEntry.key` を使用（表示順は渡された `entries` に従う）
                     items(localEntries, key = { it.key }) { e ->
                         val dismissState = rememberSwipeToDismissBoxState()
@@ -267,9 +206,26 @@ fun HistoryScreen(
                                 val idx = current.indexOfFirst { it.key == e.key }
                                 if (idx >= 0) {
                                     localEntries = current.toMutableList().also { it.removeAt(idx) }
-                                    onDeleteItem(e)
+                                    dismissState.reset()
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.history_item_deleted),
+                                            actionLabel = context.getString(R.string.undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Short
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            localEntries = localEntries.toMutableList().also { list ->
+                                                val insertIndex = idx.coerceIn(0, list.size)
+                                                list.add(insertIndex, e)
+                                            }
+                                        } else {
+                                            onDeleteItem(e)
+                                        }
+                                    }
+                                } else {
+                                    dismissState.reset()
                                 }
-                                dismissState.reset()
                             }
                         }
                         SwipeToDismissBox(
@@ -284,6 +240,93 @@ fun HistoryScreen(
                                 HistoryRow(entry = e, onClick = { onClickItem(e) })
                             }
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    if (filterSheetVisible) {
+        ModalBottomSheet(
+            onDismissRequest = { filterSheetVisible = false },
+            sheetState = filterSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = LocalSpacing.current.l, vertical = LocalSpacing.current.m)
+            ) {
+                Text("表示設定", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(LocalSpacing.current.m))
+                Text("並び替え", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(LocalSpacing.current.s))
+                val sortOptions = listOf(
+                    HistorySortMode.MIXED to "新着優先",
+                    HistorySortMode.UPDATED to "更新順",
+                    HistorySortMode.VIEWED to "閲覧順",
+                    HistorySortMode.UNREAD to "未読数"
+                )
+                sortOptions.forEach { (mode, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = sortMode == mode,
+                                onClick = {
+                                    if (sortMode != mode) onSelectSort(mode)
+                                },
+                                role = Role.RadioButton
+                            )
+                            .padding(vertical = LocalSpacing.current.xs),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = sortMode == mode,
+                            onClick = {
+                                if (sortMode != mode) onSelectSort(mode)
+                            }
+                        )
+                        Spacer(Modifier.width(LocalSpacing.current.m))
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                Spacer(Modifier.height(LocalSpacing.current.m))
+                HorizontalDivider()
+                Spacer(Modifier.height(LocalSpacing.current.m))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .toggleable(
+                            value = showUnreadOnly,
+                            role = Role.Switch,
+                            onValueChange = { checked ->
+                                if (checked != showUnreadOnly) onToggleUnreadOnly()
+                            }
+                        )
+                        .padding(vertical = LocalSpacing.current.xs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("未読のみ表示", style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.height(LocalSpacing.current.xxs))
+                        Text(
+                            "未読の履歴だけを一覧に表示します",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = showUnreadOnly,
+                        onCheckedChange = null
+                    )
+                }
+                Spacer(Modifier.height(LocalSpacing.current.m))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { filterSheetVisible = false }) {
+                        Text("閉じる")
                     }
                 }
             }
