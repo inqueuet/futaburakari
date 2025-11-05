@@ -36,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -786,13 +788,19 @@ private fun CatalogListItem(
     onImageLoadHttp404: (item: ImageItem, failedUrl: String) -> Unit,
     onImageLoadSuccess: (item: ImageItem, loadedUrl: String) -> Unit,
 ) {
+    val spacing = com.valoser.futaburakari.ui.theme.LocalSpacing.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs),
+            .padding(vertical = spacing.s),
         onClick = onClick,
         colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+        ),
+        shape = MaterialTheme.shapes.medium,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant
         ),
         // Ripple effectを明確にするための設定
         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -800,13 +808,14 @@ private fun CatalogListItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.s)
+                .padding(horizontal = spacing.s, vertical = spacing.xs)
         ) {
             // 左側: サムネイル（固定サイズ）
             Box(
                 modifier = Modifier
-                    .width(100.dp)
+                    .width(88.dp)
                     .aspectRatio(3f / 4f)
+                    .clip(MaterialTheme.shapes.small)
             ) {
                 val displayUrl = when {
                     !item.lastVerifiedFullUrl.isNullOrBlank() -> item.lastVerifiedFullUrl
@@ -845,6 +854,7 @@ private fun CatalogListItem(
                             .build(),
                         imageLoader = LocalContext.current.imageLoader,
                         contentDescription = item.title,
+                        contentScale = ContentScale.Crop,
                         loading = {
                             Box(Modifier.fillMaxSize()) {
                                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -882,23 +892,23 @@ private fun CatalogListItem(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.small)
-                            .padding(com.valoser.futaburakari.ui.theme.LocalSpacing.current.xs)
+                            .padding(spacing.xs)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(com.valoser.futaburakari.ui.theme.LocalSpacing.current.m))
+            Spacer(modifier = Modifier.width(spacing.m))
 
             // 右側: スレタイと返信数
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween
+                    .align(Alignment.CenterVertically),
+                verticalArrangement = Arrangement.spacedBy(spacing.xs)
             ) {
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -906,7 +916,7 @@ private fun CatalogListItem(
                     Text(
                         text = "返信: ${item.replyCount}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
