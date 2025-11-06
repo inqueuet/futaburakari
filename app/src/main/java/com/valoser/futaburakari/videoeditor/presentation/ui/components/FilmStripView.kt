@@ -1,5 +1,6 @@
 package com.valoser.futaburakari.videoeditor.presentation.ui.components
 
+import android.app.Application
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -18,9 +19,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.valoser.futaburakari.videoeditor.core.di.ThumbnailGeneratorEntryPoint
 import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
 import com.valoser.futaburakari.videoeditor.media.thumbnail.THUMBNAIL_BASE_INTERVAL_MS
-import com.valoser.futaburakari.videoeditor.media.thumbnail.ThumbnailGenerator
+import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,7 +50,13 @@ fun FilmStripView(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    val thumbnailGenerator = remember { ThumbnailGenerator(context) }
+    val application = remember(context) { context.applicationContext as Application }
+    val thumbnailGenerator = remember(application) {
+        EntryPointAccessors.fromApplication(
+            application,
+            ThumbnailGeneratorEntryPoint::class.java
+        ).thumbnailGenerator()
+    }
     val scope = rememberCoroutineScope()
 
     // サムネイルキャッシュ
@@ -139,6 +147,74 @@ fun FilmStripView(
         return closestKey?.let { thumbnailCache[it] }
     }
 
+    fun sourceToTimeline(clip: VideoClip, sourceTime: Long): Long {
+        val safeSpeed = clip.speed.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val clampedSource = sourceTime.coerceIn(clip.startTime, clip.endTime)
+        val offsetSource = clampedSource - clip.startTime
+        val timelineOffset = (offsetSource / safeSpeed).toLong()
+        return clip.position + timelineOffset
+    }
+
+    fun pruneCaches() {
+        val maxEntries = 600
+        if (thumbnailCache.isEmpty() && requestedRanges.isEmpty()) return
+
+        val retentionStartTimeline = (requestedStartMs - preloadWindowMs * 2).coerceAtLeast(0L)
+        val retentionEndTimeline = requestedEndMs + preloadWindowMs * 2
+
+        // Clip がなくなったら範囲情報も削除
+        requestedRanges.keys.toList().forEach { clipId ->
+            val clip = clips.firstOrNull { it.id == clipId }
+            if (clip == null) {
+                requestedRanges.remove(clipId)
+            } else {
+                val clipTimelineEnd = clip.position + clip.duration
+                val allowedTimelineStart = retentionStartTimeline.coerceIn(clip.position, clipTimelineEnd)
+                val allowedTimelineEnd = retentionEndTimeline.coerceIn(clip.position, clipTimelineEnd)
+                val allowedStart = mapTimelineToSource(clip, allowedTimelineStart)
+                val allowedEnd = mapTimelineToSource(clip, max(allowedTimelineStart, allowedTimelineEnd))
+                val normalizedStart = normalizeTimeForCache(allowedStart)
+                val normalizedEnd = normalizeTimeForCache(max(allowedStart, allowedEnd))
+                val existing = requestedRanges[clipId]
+                if (existing != null) {
+                    val clampedStart = existing.first.coerceIn(normalizedStart, normalizedEnd)
+                    val clampedEnd = existing.second.coerceIn(clampedStart, normalizedEnd)
+                    requestedRanges[clipId] = clampedStart to clampedEnd
+                } else {
+                    requestedRanges[clipId] = normalizedStart to normalizedStart
+                }
+            }
+        }
+
+        if (thumbnailCache.size <= maxEntries) {
+            return
+        }
+
+        val sortedKeys = thumbnailCache.keys.map { key ->
+            val clipId = key.substringBefore('_')
+            val clip = clips.firstOrNull { it.id == clipId }
+            val sourceTime = key.substringAfter('_').toLongOrNull()
+            val distance = if (clip == null || sourceTime == null) {
+                Long.MAX_VALUE
+            } else {
+                val timeline = sourceToTimeline(clip, sourceTime)
+                when {
+                    timeline in retentionStartTimeline..retentionEndTimeline -> 0L
+                    timeline < retentionStartTimeline -> retentionStartTimeline - timeline
+                    else -> timeline - retentionEndTimeline
+                }
+            }
+            key to distance
+        }.sortedBy { it.second }
+
+        val keysToKeep = sortedKeys.take(maxEntries).mapTo(mutableSetOf()) { it.first }
+        thumbnailCache.keys.toList().forEach { key ->
+            if (key !in keysToKeep) {
+                thumbnailCache.remove(key)
+            }
+        }
+    }
+
     // サムネイル生成（表示範囲に応じてオンデマンド実行）
     LaunchedEffect(clipSignature, quantizedStart, quantizedEnd, zoom) {
         val safeZoom = zoom.coerceAtLeast(0.01f)
@@ -204,7 +280,20 @@ fun FilmStripView(
             val mergedEnd = mergedSegments.maxOf { it.second }
             val updatedStart = existingRange?.first?.let { min(it, mergedStart) } ?: mergedStart
             val updatedEnd = existingRange?.second?.let { max(it, mergedEnd) } ?: mergedEnd
-            requestedRanges[clip.id] = updatedStart to updatedEnd
+
+            val retentionStartTimeline = (requestedStartMs - preloadWindowMs)
+                .coerceAtLeast(clip.position)
+            val retentionEndTimeline = (requestedEndMs + preloadWindowMs)
+                .coerceAtMost(clip.position + clip.duration)
+            val allowedSourceStart = normalizeTimeForCache(
+                mapTimelineToSource(clip, retentionStartTimeline)
+            )
+            val allowedSourceEnd = normalizeTimeForCache(
+                mapTimelineToSource(clip, max(retentionStartTimeline, retentionEndTimeline))
+            )
+            val clampedStart = updatedStart.coerceAtLeast(allowedSourceStart)
+            val clampedEnd = updatedEnd.coerceAtMost(max(clampedStart, allowedSourceEnd))
+            requestedRanges[clip.id] = clampedStart to max(clampedStart, clampedEnd)
 
             val mutex = clipLocks.getOrPut(clip.id) { Mutex() }
 
@@ -245,6 +334,8 @@ fun FilmStripView(
                 }
             }
         }
+
+        pruneCaches()
     }
 
     // 可変密度：画面上のタイル幅を一定に保つ（zoomに応じて時間間隔を自動計算）

@@ -19,6 +19,7 @@ class EncoderInputSurface(
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
     private var eglConfig: EGLConfig? = null
+    private var currentGlVersion: Int = 0
 
     fun setup() {
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
@@ -31,39 +32,21 @@ class EncoderInputSurface(
         }
         EglRefManager.addRef(eglDisplay)
 
-        // EGLExt.EGL_RECORDABLE_ANDROID flag is required for MediaCodec input surfaces on many devices.
-        val attribList = intArrayOf(
-            EGL14.EGL_RED_SIZE, 8,
-            EGL14.EGL_GREEN_SIZE, 8,
-            EGL14.EGL_BLUE_SIZE, 8,
-            EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
-            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
-            EGLExt.EGL_RECORDABLE_ANDROID, 1,
-            EGL14.EGL_NONE
-        )
-        val configs = arrayOfNulls<EGLConfig>(1)
-        val numConfigs = IntArray(1)
-        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)) {
-            throw RuntimeException("eglChooseConfig failed")
-        }
-        eglConfig = configs[0]
+        eglConfig = null
+        eglContext = EGL14.EGL_NO_CONTEXT
+        eglSurface = EGL14.EGL_NO_SURFACE
+        currentGlVersion = 0
 
-        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
-        val share = sharedContext ?: EGL14.EGL_NO_CONTEXT
-        eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, share, ctxAttribs, 0)
-        if (eglContext == EGL14.EGL_NO_CONTEXT) {
-            throw RuntimeException("eglCreateContext failed (shared=${sharedContext!=null}) err=0x${Integer.toHexString(EGL14.eglGetError())}")
-        }
-
-        val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
-        eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, surface, surfaceAttribs, 0)
-        if (eglSurface == EGL14.EGL_NO_SURFACE) {
-            throw RuntimeException("eglCreateWindowSurface failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
+        if (!initializeEglObjects(sharedContext, 3)) {
+            Log.w(TAG, "Falling back to OpenGL ES 2.0 for encoder surface")
+            if (!initializeEglObjects(sharedContext, 2)) {
+                cleanupDisplayOnFailure()
+                throw RuntimeException("Failed to create EGL context for encoder surface (ES3/ES2 unsupported)")
+            }
         }
 
         makeCurrent()
-        Log.d(TAG, "setup: shared=${sharedContext!=null}")
+        Log.d(TAG, "setup: shared=${sharedContext!=null}, glVersion=$currentGlVersion")
     }
 
     fun makeCurrent() {
@@ -98,6 +81,7 @@ class EncoderInputSurface(
             eglDisplay = EGL14.EGL_NO_DISPLAY
             eglContext = EGL14.EGL_NO_CONTEXT
             eglSurface = EGL14.EGL_NO_SURFACE
+            currentGlVersion = 0
         }
     }
 
@@ -106,6 +90,59 @@ class EncoderInputSurface(
     fun eglContext(): EGLContext = eglContext
     fun encoderEglSurface(): EGLSurface = eglSurface
     fun eglConfig(): EGLConfig? = eglConfig
+    fun glVersion(): Int = currentGlVersion
+
+    private fun initializeEglObjects(shared: EGLContext?, requestedVersion: Int): Boolean {
+        val renderableType = if (requestedVersion >= 3) {
+            EGLExt.EGL_OPENGL_ES3_BIT_KHR
+        } else {
+            EGL14.EGL_OPENGL_ES2_BIT
+        }
+
+        val attribList = intArrayOf(
+            EGL14.EGL_RED_SIZE, 8,
+            EGL14.EGL_GREEN_SIZE, 8,
+            EGL14.EGL_BLUE_SIZE, 8,
+            EGL14.EGL_ALPHA_SIZE, 8,
+            EGL14.EGL_RENDERABLE_TYPE, renderableType,
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+            EGLExt.EGL_RECORDABLE_ANDROID, 1,
+            EGL14.EGL_NONE
+        )
+        val configs = arrayOfNulls<EGLConfig>(1)
+        val numConfigs = IntArray(1)
+        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)) {
+            return false
+        }
+        val chosenConfig = configs[0] ?: return false
+
+        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, requestedVersion, EGL14.EGL_NONE)
+        val shareContext = shared ?: EGL14.EGL_NO_CONTEXT
+        val context = EGL14.eglCreateContext(eglDisplay, chosenConfig, shareContext, ctxAttribs, 0)
+        if (context == EGL14.EGL_NO_CONTEXT) {
+            return false
+        }
+
+        val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
+        val winSurface = EGL14.eglCreateWindowSurface(eglDisplay, chosenConfig, surface, surfaceAttribs, 0)
+        if (winSurface == EGL14.EGL_NO_SURFACE) {
+            EGL14.eglDestroyContext(eglDisplay, context)
+            return false
+        }
+
+        eglConfig = chosenConfig
+        eglContext = context
+        eglSurface = winSurface
+        currentGlVersion = requestedVersion
+        return true
+    }
+
+    private fun cleanupDisplayOnFailure() {
+        if (eglDisplay !== EGL14.EGL_NO_DISPLAY) {
+            EglRefManager.releaseDisplay(eglDisplay)
+        }
+        eglDisplay = EGL14.EGL_NO_DISPLAY
+    }
 }
 
 /**
@@ -123,11 +160,13 @@ class DecoderOutputSurface(
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
+    private var eglConfig: EGLConfig? = null
 
     // ★ アクセサメソッド追加
     fun getEglDisplay(): EGLDisplay = eglDisplay
     fun getEglContext(): EGLContext = eglContext
     fun getEglSurface(): EGLSurface = eglSurface
+    fun glVersion(): Int = currentGlVersion
     
     private var oesTexId: Int = 0
     private lateinit var surfaceTexture: SurfaceTexture
@@ -150,6 +189,7 @@ class DecoderOutputSurface(
     // ★ 元動画のアスペクト比を保存
     private var sourceWidth: Int = 0
     private var sourceHeight: Int = 0
+    private var currentGlVersion: Int = 0
 
     fun setup() {
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
@@ -157,32 +197,19 @@ class DecoderOutputSurface(
         EGL14.eglInitialize(eglDisplay, version, 0, version, 1)
         EglRefManager.addRef(eglDisplay)
 
-        val attribList = intArrayOf(
-            EGL14.EGL_RED_SIZE, 8,
-            EGL14.EGL_GREEN_SIZE, 8,
-            EGL14.EGL_BLUE_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
-            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
-            EGL14.EGL_NONE
-        )
-        val configs = arrayOfNulls<EGLConfig>(1)
-        val numConfigs = IntArray(1)
-        EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)
-        val eglConfig = configs[0]
+        eglConfig = null
+        eglContext = EGL14.EGL_NO_CONTEXT
+        eglSurface = EGL14.EGL_NO_SURFACE
+        currentGlVersion = 0
 
-        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
-        val share = sharedContext ?: EGL14.EGL_NO_CONTEXT
-        eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, share, ctxAttribs, 0)
-        if (eglContext == EGL14.EGL_NO_CONTEXT) {
-            throw RuntimeException("eglCreateContext(decoder) failed (shared=${sharedContext!=null})")
+        if (!initializeEglObjects(sharedContext, 3)) {
+            Log.w(TAG, "Falling back to OpenGL ES 2.0 for decoder surface")
+            if (!initializeEglObjects(sharedContext, 2)) {
+                cleanupDisplayOnFailure()
+                throw RuntimeException("Failed to create EGL context for decoder surface (ES3/ES2 unsupported)")
+            }
         }
 
-        val pbufferAttribs = intArrayOf(
-            EGL14.EGL_WIDTH, width,
-            EGL14.EGL_HEIGHT, height,
-            EGL14.EGL_NONE
-        )
-        eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, pbufferAttribs, 0)
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
 
         // OES テクスチャ + SurfaceTexture
@@ -412,6 +439,7 @@ private fun updateVertexBuffer() {
             eglDisplay = EGL14.EGL_NO_DISPLAY
             eglContext = EGL14.EGL_NO_CONTEXT
             eglSurface = EGL14.EGL_NO_SURFACE
+            currentGlVersion = 0
         }
     }
 
@@ -496,6 +524,60 @@ private fun updateVertexBuffer() {
             throw RuntimeException("shader compile failed: $msg")
         }
         return sh
+    }
+
+    private fun initializeEglObjects(shared: EGLContext?, requestedVersion: Int): Boolean {
+        val renderableType = if (requestedVersion >= 3) {
+            EGLExt.EGL_OPENGL_ES3_BIT_KHR
+        } else {
+            EGL14.EGL_OPENGL_ES2_BIT
+        }
+
+        val attribList = intArrayOf(
+            EGL14.EGL_RED_SIZE, 8,
+            EGL14.EGL_GREEN_SIZE, 8,
+            EGL14.EGL_BLUE_SIZE, 8,
+            EGL14.EGL_RENDERABLE_TYPE, renderableType,
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
+            EGL14.EGL_NONE
+        )
+        val configs = arrayOfNulls<EGLConfig>(1)
+        val numConfigs = IntArray(1)
+        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)) {
+            return false
+        }
+        val chosenConfig = configs[0] ?: return false
+
+        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, requestedVersion, EGL14.EGL_NONE)
+        val shareContext = shared ?: EGL14.EGL_NO_CONTEXT
+        val context = EGL14.eglCreateContext(eglDisplay, chosenConfig, shareContext, ctxAttribs, 0)
+        if (context == EGL14.EGL_NO_CONTEXT) {
+            return false
+        }
+
+        val pbufferAttribs = intArrayOf(
+            EGL14.EGL_WIDTH, width,
+            EGL14.EGL_HEIGHT, height,
+            EGL14.EGL_NONE
+        )
+        val pbufferSurface = EGL14.eglCreatePbufferSurface(eglDisplay, chosenConfig, pbufferAttribs, 0)
+        if (pbufferSurface == EGL14.EGL_NO_SURFACE) {
+            EGL14.eglDestroyContext(eglDisplay, context)
+            return false
+        }
+
+        eglConfig = chosenConfig
+        eglContext = context
+        eglSurface = pbufferSurface
+        currentGlVersion = requestedVersion
+        return true
+    }
+
+    private fun cleanupDisplayOnFailure() {
+        if (eglDisplay !== EGL14.EGL_NO_DISPLAY) {
+            EglRefManager.releaseDisplay(eglDisplay)
+        }
+        eglDisplay = EGL14.EGL_NO_DISPLAY
     }
 }
 

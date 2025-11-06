@@ -35,10 +35,12 @@ import java.net.URL
 import com.valoser.futaburakari.DetailContent
 import com.valoser.futaburakari.cache.DetailCacheManager
 import java.io.File
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val PREF_KEY_BACKGROUND_MEDIA_ARCHIVE = "pref_key_background_media_archive"
+private val SAFE_EXTENSION_REGEX = Regex("^[A-Za-z0-9]{1,8}$")
 
 /**
  * 背景でスレ URL を監視し、媒体のアーカイブとキャッシュ/履歴更新を行う Worker。
@@ -190,7 +192,11 @@ class ThreadMonitorWorker @AssistedInject constructor(
             }
 
             // 4) 既知の最終レス番号（Textの件数）を履歴へ反映（未読数更新のため）
-            val latestReplyNo = parsed.count { it is com.valoser.futaburakari.DetailContent.Text }
+            val latestReplyNo = parsed.asSequence()
+                .filterIsInstance<com.valoser.futaburakari.DetailContent.Text>()
+                .mapNotNull { it.resNum?.toIntOrNull() }
+                .maxOrNull()
+                ?: parsed.count { it is com.valoser.futaburakari.DetailContent.Text }
             HistoryManager.applyFetchResult(applicationContext, url, latestReplyNo)
 
             Result.success()
@@ -434,8 +440,10 @@ class ThreadMonitorWorker @AssistedInject constructor(
     private suspend fun archiveMedia(threadUrl: String, list: List<DetailContent>): List<DetailContent> {
         val dir = cacheManager.getArchiveDirForUrl(threadUrl)
         fun fileFor(url: String): File {
-            val ext = url.substringAfterLast('.', "")
-            val name = url.sha256() + if (ext.isNotBlank()) ".${ext.lowercase()}" else ""
+            val sanitizedUrl = url.substringBefore('#').substringBefore('?')
+            val extCandidate = sanitizedUrl.substringAfterLast('.', "")
+            val ext = extCandidate.takeIf { SAFE_EXTENSION_REGEX.matches(it) }?.lowercase(Locale.ROOT).orEmpty()
+            val name = url.sha256() + if (ext.isNotBlank()) ".${ext}" else ""
             return File(dir, name)
         }
         suspend fun ensureDownloaded(remoteUrl: String): File? {

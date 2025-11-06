@@ -10,6 +10,7 @@ import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
 import java.nio.ByteBuffer
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.util.Log
 
 class VideoEditorAudioSink : AudioSink {
 
@@ -27,6 +28,7 @@ class VideoEditorAudioSink : AudioSink {
     private var sourceEnded: Boolean = false
     private var isPlaying: Boolean = false
     // ↑ フィールドはこの1か所に集約（以下の重複クラス宣言と重複フィールドは削除）
+    private val TAG = "VideoEditorAudioSink"
 
     fun setSession(session: EditorSession) {
         this.session = session
@@ -76,14 +78,29 @@ class VideoEditorAudioSink : AudioSink {
         this.inputFormat = inputFormat
         this.sampleRate = inputFormat.sampleRate
         this.channelCount = inputFormat.channelCount
+        require(sampleRate > 0) { "Invalid sample rate: $sampleRate" }
+        require(channelCount > 0) { "Invalid channel count: $channelCount" }
         val channelConfig =
             if (channelCount == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
 
         // 既存のトラックを解放
         audioTrack?.release()
-        bufferSizeInBytes = AudioTrack.getMinBufferSize(
+        val minBuffer = AudioTrack.getMinBufferSize(
             sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(specifiedBufferSize.takeIf { it > 0 } ?: 0)
+        )
+        val requestedBuffer = specifiedBufferSize.takeIf { it > 0 } ?: 0
+        val sanitizedMinBuffer = if (minBuffer > 0) {
+            minBuffer
+        } else {
+            Log.w(TAG, "AudioTrack.getMinBufferSize returned $minBuffer for ${sampleRate}Hz/${channelCount}ch")
+            0
+        }
+        val fallbackBuffer = maxOf(
+            sampleRate * channelCount * 2 / 5, // 約200ms分
+            16 * 1024
+        )
+        var targetBufferSize = maxOf(sanitizedMinBuffer, requestedBuffer, fallbackBuffer)
+        bufferSizeInBytes = targetBufferSize
 
         val attrs = frameworkAttrs ?: android.media.AudioAttributes.Builder()
             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
@@ -95,13 +112,7 @@ class VideoEditorAudioSink : AudioSink {
             .setChannelMask(channelConfig)
             .build()
 
-        audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(attrs)
-            .setAudioFormat(fmt)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(bufferSizeInBytes)
-            .also { if (audioSessionId != 0) it.setSessionId(audioSessionId) }
-            .build()
+        audioTrack = buildAudioTrack(attrs, fmt, targetBufferSize)
 
         framesWritten = 0
         sourceEnded = false
@@ -231,5 +242,30 @@ class VideoEditorAudioSink : AudioSink {
         framesWritten = 0
         sourceEnded = false
         isPlaying = false
+    }
+
+    private fun buildAudioTrack(
+        attrs: android.media.AudioAttributes,
+        fmt: AudioFormat,
+        initialBufferSize: Int
+    ): AudioTrack {
+        var currentSize = initialBufferSize
+        var lastError: IllegalArgumentException? = null
+        repeat(2) { attempt ->
+            try {
+                return AudioTrack.Builder()
+                    .setAudioAttributes(attrs)
+                    .setAudioFormat(fmt)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(currentSize)
+                    .also { if (audioSessionId != 0) it.setSessionId(audioSessionId) }
+                    .build()
+            } catch (e: IllegalArgumentException) {
+                lastError = e
+                Log.w(TAG, "AudioTrack build failed on attempt ${attempt + 1} with bufferSize=$currentSize", e)
+                currentSize = maxOf(currentSize * 2, 32 * 1024)
+            }
+        }
+        throw IllegalArgumentException("Unable to create AudioTrack", lastError)
     }
 }

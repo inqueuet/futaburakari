@@ -18,6 +18,7 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.jsoup.Jsoup
 
 private const val IMAGES_SUBDIR = "images"
 private const val THUMBNAILS_SUBDIR = "thumbnails"
@@ -558,7 +559,7 @@ class ThreadArchiver(
                         sb.append("""            <div class="post-number">No.${escapeHtml(content.resNum)}</div>
 """)
                     }
-                    val processedHtmlContent = replaceLinksWithLocalPaths(content.htmlContent, downloadedFiles, archiveDir)
+                    val processedHtmlContent = replaceLinksWithLocalPaths(content.htmlContent, downloadedFiles)
                     // 改行・<br> の段落化、および長大 blockquote の折りたたみ整形を適用
                     val normalizedHtml = formatParagraphsAndQuotes(processedHtmlContent)
                     sb.append("""            <div class="post-content">$normalizedHtml</div>
@@ -894,33 +895,48 @@ class ThreadArchiver(
      */
     private fun replaceLinksWithLocalPaths(
         htmlContent: String,
-        downloadedFiles: Map<String, String>,
-        archiveDir: File
+        downloadedFiles: Map<String, String>
     ): String {
-        var result = htmlContent
+        if (downloadedFiles.isEmpty()) return htmlContent
 
-        // downloadedFilesのキー（元URL）から置き換えマップを作成
-        downloadedFiles.forEach { (originalUrl, localPath) ->
-            try {
-                val url = URL(originalUrl)
-                val path = url.path // 例: "/b/src/1761893219711.png"
+        val aliasMap = buildUrlAliasMap(downloadedFiles)
+        val document = Jsoup.parseBodyFragment(htmlContent)
 
-                // HTMLコンテンツ内でこのパスを参照している箇所を置き換え
-                // href="/b/src/1761893219711.png" -> href="images/1761893219711.png"
-                // src="/b/src/1761893219711.png" -> src="images/1761893219711.png"
-                result = result.replace("href=\"$path\"", "href=\"$localPath\"")
-                result = result.replace("src=\"$path\"", "src=\"$localPath\"")
-                result = result.replace("href='$path'", "href='$localPath'")
-                result = result.replace("src='$path'", "src='$localPath'")
-
-                Log.d(TAG, "Replaced link in HTML: $path -> $localPath")
-            } catch (e: Exception) {
-                // URLのパースに失敗した場合はスキップ
-                Log.w(TAG, "Failed to parse URL for link replacement: $originalUrl", e)
+        document.select("[href],[src]").forEach { element ->
+            listOf("href", "src").forEach { attr ->
+                if (!element.hasAttr(attr)) return@forEach
+                val current = element.attr(attr)
+                val replacement = aliasMap[current] ?: aliasMap[current.substringBefore('#')] ?: aliasMap[current.substringBefore('?')]
+                if (replacement != null) {
+                    element.attr(attr, replacement)
+                    Log.d(TAG, "Replaced link in HTML: $current -> $replacement")
+                }
             }
         }
 
-        return result
+        return document.body().html()
+    }
+
+    private fun buildUrlAliasMap(downloadedFiles: Map<String, String>): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+        downloadedFiles.forEach { (remoteUrl, localPath) ->
+            map[remoteUrl] = localPath
+            val sanitized = remoteUrl.substringBefore('#').substringBefore('?')
+            map[sanitized] = localPath
+            try {
+                val parsed = URL(remoteUrl)
+                val absolute = "${parsed.protocol}://${parsed.host}${parsed.path}"
+                map[absolute] = localPath
+                val path = parsed.path
+                if (path.isNotBlank()) {
+                    map[path] = localPath
+                    map[path.trimStart('/')] = localPath
+                }
+            } catch (_: Exception) {
+                // URL の解析に失敗しても他のエイリアスでカバーする
+            }
+        }
+        return map
     }
 
     /**

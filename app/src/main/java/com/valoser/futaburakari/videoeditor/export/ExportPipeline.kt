@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.*
 import android.net.Uri
 import android.util.Log
+import android.opengl.GLES20
 import android.opengl.GLES30
 import android.opengl.EGL14
 import com.valoser.futaburakari.videoeditor.domain.model.EditorSession
@@ -12,6 +13,8 @@ import com.valoser.futaburakari.videoeditor.domain.model.VideoClip
 import com.valoser.futaburakari.videoeditor.domain.model.Keyframe
 import com.valoser.futaburakari.videoeditor.utils.findTrack
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CloseableCoroutineDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -62,9 +65,23 @@ class ExportPipelineImpl @Inject constructor(
     private val TAG = "ExportPipeline"
     private fun logMuxerGate(msg: String) = Log.d(TAG, "[MuxerGate] $msg")
 
-    // ★ GL操作用の専用シングルスレッドDispatcher
-    private val glThread = HandlerThread("ExportGL").apply { start() }
-    private val glDispatcher = Handler(glThread.looper).asCoroutineDispatcher()
+    private val glThreadLock = Any()
+    @Volatile
+    private var glThread: HandlerThread? = null
+    @Volatile
+    private var glDispatcherRef: CoroutineDispatcher? = null
+
+    private fun ensureGlDispatcher(): CoroutineDispatcher {
+        glDispatcherRef?.let { return it }
+        synchronized(glThreadLock) {
+            glDispatcherRef?.let { return it }
+            val thread = HandlerThread("ExportGL").apply { start() }
+            val dispatcher = Handler(thread.looper).asCoroutineDispatcher("ExportGL")
+            glThread = thread
+            glDispatcherRef = dispatcher
+            return dispatcher
+        }
+    }
 
     override fun export(
         session: EditorSession,
@@ -73,6 +90,7 @@ class ExportPipelineImpl @Inject constructor(
         val totalDurationUs = session.videoClips.sumOf { it.duration } * 1000L
         val exportSpec = detectExportSpec(session)
         val totalFrames = (totalDurationUs / 1_000_000f * exportSpec.frameRate).toInt()
+        val glDispatcher = ensureGlDispatcher()
         // ✅ エクスポート処理全体をIOディスパッチャで実行
         withContext(Dispatchers.IO) {
             Log.d(TAG, "=== Export Started ===")
@@ -295,11 +313,21 @@ class ExportPipelineImpl @Inject constructor(
     }
 
     override fun cleanup() {
-        try {
-            glThread.quitSafely()
-            Log.d(TAG, "ExportPipeline cleanup completed - HandlerThread terminated")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during ExportPipeline cleanup", e)
+        synchronized(glThreadLock) {
+            try {
+                (glDispatcherRef as? java.io.Closeable)?.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing GL dispatcher", e)
+            } finally {
+                glDispatcherRef = null
+            }
+            try {
+                glThread?.quitSafely()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during ExportPipeline cleanup", e)
+            } finally {
+                glThread = null
+            }
         }
     }
 
@@ -436,6 +464,7 @@ private class VideoProcessor(
         var framesInClip = 0
         var isInputDone = false
         var isOutputDone = false
+        val supportsFenceSync = encoderInputSurface.glVersion() >= 3 && decoderOutputSurface.glVersion() >= 3
         try {
             Log.d(TAG, "processClip: Starting decoder")
             decoder.start()
@@ -480,7 +509,13 @@ private class VideoProcessor(
                                 if (sampleSize < 0) {
                                     isInputDone = true
                                 } else {
-                                    val presentationTimeUs = ((sampleTime - clip.startTime * 1000) / clip.speed).toLong()
+                                    val clipStartUs = clip.startTime * 1000
+                                    val rawOffsetUs = sampleTime - clipStartUs
+                                    val presentationTimeUs = if (rawOffsetUs <= 0L) {
+                                        0L
+                                    } else {
+                                        (rawOffsetUs.toDouble() / clip.speed).toLong()
+                                    }
                                     decoder.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, 0)
                                     extractor.advance()
                                 }
@@ -534,44 +569,49 @@ private class VideoProcessor(
 
                             // ★ GPUフェンスで同期(drainの後に移動)
                             withContext(glCoroutineContext) {
-                                Log.d(TAG, "processClip: [GL] creating fence sync for frame $framesInClip")
-                                val sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
-                                if (sync != 0L) {
-                                    val timeoutNs = 50_000_000L // 50ms
-                                    val maxWaitAttempts = 100 // 最大5秒間待機(50ms × 100回)
-                                    var waitCount = 0
-                                    while (waitCount < maxWaitAttempts) {
-                                        val waitResult = GLES30.glClientWaitSync(sync, 0, timeoutNs)
-                                        waitCount++
-                                        Log.v(TAG, "processClip: [GL] glClientWaitSync attempt $waitCount for frame $framesInClip, result=$waitResult")
-                                        when (waitResult) {
-                                            GLES30.GL_ALREADY_SIGNALED,
-                                            GLES30.GL_CONDITION_SATISFIED,
-                                            GLES30.GL_SIGNALED -> {
-                                                Log.d(TAG, "processClip: [GL] fence sync completed for frame $framesInClip after $waitCount attempts")
-                                                break
-                                            }
-                                            GLES30.GL_TIMEOUT_EXPIRED -> {
-                                                Log.w(TAG, "processClip: [GL] fence sync timeout for frame $framesInClip, attempt $waitCount")
-                                                continue
-                                            }
-                                            GLES30.GL_WAIT_FAILED -> {
-                                                Log.e(TAG, "glClientWaitSync failed for frame $framesInClip (GL_WAIT_FAILED)")
-                                                break
-                                            }
-                                            else -> {
-                                                Log.w(TAG, "glClientWaitSync returned unexpected status=$waitResult")
-                                                break
+                                if (supportsFenceSync) {
+                                    Log.d(TAG, "processClip: [GL] creating fence sync for frame $framesInClip")
+                                    val sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+                                    if (sync != 0L) {
+                                        val timeoutNs = 50_000_000L // 50ms
+                                        val maxWaitAttempts = 100 // 最大5秒間待機(50ms × 100回)
+                                        var waitCount = 0
+                                        while (waitCount < maxWaitAttempts) {
+                                            val waitResult = GLES30.glClientWaitSync(sync, 0, timeoutNs)
+                                            waitCount++
+                                            Log.v(TAG, "processClip: [GL] glClientWaitSync attempt $waitCount for frame $framesInClip, result=$waitResult")
+                                            when (waitResult) {
+                                                GLES30.GL_ALREADY_SIGNALED,
+                                                GLES30.GL_CONDITION_SATISFIED,
+                                                GLES30.GL_SIGNALED -> {
+                                                    Log.d(TAG, "processClip: [GL] fence sync completed for frame $framesInClip after $waitCount attempts")
+                                                    break
+                                                }
+                                                GLES30.GL_TIMEOUT_EXPIRED -> {
+                                                    Log.w(TAG, "processClip: [GL] fence sync timeout for frame $framesInClip, attempt $waitCount")
+                                                    continue
+                                                }
+                                                GLES30.GL_WAIT_FAILED -> {
+                                                    Log.e(TAG, "glClientWaitSync failed for frame $framesInClip (GL_WAIT_FAILED)")
+                                                    break
+                                                }
+                                                else -> {
+                                                    Log.w(TAG, "glClientWaitSync returned unexpected status=$waitResult")
+                                                    break
+                                                }
                                             }
                                         }
+                                        if (waitCount >= maxWaitAttempts) {
+                                            Log.e(TAG, "glClientWaitSync exceeded maximum wait attempts ($maxWaitAttempts) for frame $framesInClip")
+                                        }
+                                        GLES30.glDeleteSync(sync)
+                                        Log.d(TAG, "processClip: [GL] fence sync deleted for frame $framesInClip")
+                                    } else {
+                                        Log.w(TAG, "glFenceSync returned 0 (no sync created)")
                                     }
-                                    if (waitCount >= maxWaitAttempts) {
-                                        Log.e(TAG, "glClientWaitSync exceeded maximum wait attempts ($maxWaitAttempts) for frame $framesInClip")
-                                    }
-                                    GLES30.glDeleteSync(sync)
-                                    Log.d(TAG, "processClip: [GL] fence sync deleted for frame $framesInClip")
                                 } else {
-                                    Log.w(TAG, "glFenceSync returned 0 (no sync created)")
+                                    // ES2 ではフェンスが利用できないため強制フラッシュで代替
+                                    GLES20.glFinish()
                                 }
                             }
 

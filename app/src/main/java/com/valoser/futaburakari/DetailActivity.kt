@@ -427,7 +427,11 @@ class DetailActivity : BaseActivity() {
                     withContext(Dispatchers.Default) {
                         // 履歴の未読数更新用に最新投稿番号（Text件数）を反映
                         try {
-                            val latestReplyNo = list.count { it is DetailContent.Text }
+                            val latestReplyNo = list.asSequence()
+                                .filterIsInstance<DetailContent.Text>()
+                                .mapNotNull { it.resNum?.toIntOrNull() }
+                                .maxOrNull()
+                                ?: list.count { it is DetailContent.Text }
                             val threadUrl = currentUrl
                             if (latestReplyNo > 0 && !threadUrl.isNullOrBlank()) {
                                 HistoryManager.applyFetchResult(this@DetailActivity, threadUrl, latestReplyNo)
